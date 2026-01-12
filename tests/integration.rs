@@ -1957,3 +1957,201 @@ fn test_delconsumer_with_pending() {
     let r = redis_cli(16508, &["XGROUP", "DELCONSUMER", "mystream", "mygroup", "consumer1"]);
     assert!(check_int(&r, 2), "Expected 2 pending deleted, got: {}", r);
 }
+
+// ============================================================================
+// Session 15.2: Broadcasting on Writes
+// ============================================================================
+
+#[tokio::test]
+async fn test_integration_lpush_notification() {
+    // Producer-consumer pattern: LPUSH should notify waiting readers
+    use std::collections::HashMap;
+    use std::sync::{Arc, RwLock};
+
+    let db = redlite::Db::open_memory().unwrap();
+    let notifier = Arc::new(RwLock::new(HashMap::new()));
+    db.with_notifier(notifier);
+
+    // Create receiver before LPUSH
+    let mut rx = db.subscribe_key("tasks").await;
+
+    // Spawn task to LPUSH
+    let db_clone = db.clone();
+    let push_task = tokio::spawn(async move {
+        tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+        let len = db_clone.lpush("tasks", &[b"job1"]).unwrap();
+        assert_eq!(len, 1);
+    });
+
+    // Wait for notification (should arrive before timeout)
+    tokio::select! {
+        _ = rx.recv() => {
+            // Successfully received notification
+        }
+        _ = tokio::time::sleep(std::time::Duration::from_secs(1)) => {
+            panic!("Should have received notification from LPUSH");
+        }
+    }
+
+    push_task.await.unwrap();
+}
+
+#[tokio::test]
+async fn test_integration_rpush_notification() {
+    // Producer-consumer pattern: RPUSH should notify waiting readers
+    use std::collections::HashMap;
+    use std::sync::{Arc, RwLock};
+
+    let db = redlite::Db::open_memory().unwrap();
+    let notifier = Arc::new(RwLock::new(HashMap::new()));
+    db.with_notifier(notifier);
+
+    let mut rx = db.subscribe_key("queue").await;
+
+    let db_clone = db.clone();
+    let push_task = tokio::spawn(async move {
+        tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+        let len = db_clone.rpush("queue", &[b"item1"]).unwrap();
+        assert_eq!(len, 1);
+    });
+
+    tokio::select! {
+        _ = rx.recv() => {
+            // Successfully received notification
+        }
+        _ = tokio::time::sleep(std::time::Duration::from_secs(1)) => {
+            panic!("Should have received notification from RPUSH");
+        }
+    }
+
+    push_task.await.unwrap();
+}
+
+#[tokio::test]
+async fn test_integration_xadd_notification() {
+    // Producer-consumer pattern: XADD should notify waiting readers
+    use std::collections::HashMap;
+    use std::sync::{Arc, RwLock};
+
+    let db = redlite::Db::open_memory().unwrap();
+    let notifier = Arc::new(RwLock::new(HashMap::new()));
+    db.with_notifier(notifier);
+
+    let mut rx = db.subscribe_key("events").await;
+
+    let db_clone = db.clone();
+    let push_task = tokio::spawn(async move {
+        tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+        let id = db_clone
+            .xadd("events", None, &[(b"type", b"click")], false, None, None, false)
+            .unwrap();
+        assert!(id.is_some());
+    });
+
+    tokio::select! {
+        _ = rx.recv() => {
+            // Successfully received notification
+        }
+        _ = tokio::time::sleep(std::time::Duration::from_secs(1)) => {
+            panic!("Should have received notification from XADD");
+        }
+    }
+
+    push_task.await.unwrap();
+}
+
+#[tokio::test]
+async fn test_integration_multi_producer_single_consumer() {
+    // Multiple producers, single consumer
+    // All LPUSH operations should notify the waiting reader
+    use std::collections::HashMap;
+    use std::sync::{Arc, RwLock};
+
+    let db = redlite::Db::open_memory().unwrap();
+    let notifier = Arc::new(RwLock::new(HashMap::new()));
+    db.with_notifier(notifier);
+
+    let mut rx1 = db.subscribe_key("work").await;
+    let mut rx2 = db.subscribe_key("work").await;
+
+    // Producer 1
+    let db1 = db.clone();
+    let task1 = tokio::spawn(async move {
+        tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+        db1.lpush("work", &[b"task1"]).unwrap();
+    });
+
+    // Producer 2
+    let db2 = db.clone();
+    let task2 = tokio::spawn(async move {
+        tokio::time::sleep(std::time::Duration::from_millis(30)).await;
+        db2.lpush("work", &[b"task2"]).unwrap();
+    });
+
+    // Consumer 1 should receive first notification
+    tokio::select! {
+        _ = rx1.recv() => {}
+        _ = tokio::time::sleep(std::time::Duration::from_millis(500)) => {
+            panic!("Consumer 1 should receive first notification");
+        }
+    }
+
+    // Consumer 2 should receive second notification
+    tokio::select! {
+        _ = rx2.recv() => {}
+        _ = tokio::time::sleep(std::time::Duration::from_millis(500)) => {
+            panic!("Consumer 2 should receive second notification");
+        }
+    }
+
+    task1.await.unwrap();
+    task2.await.unwrap();
+}
+
+#[tokio::test]
+async fn test_integration_concurrent_writes_same_key() {
+    // Concurrent writes to the same key should each trigger notification
+    use std::collections::HashMap;
+    use std::sync::{Arc, RwLock};
+
+    let db = redlite::Db::open_memory().unwrap();
+    let notifier = Arc::new(RwLock::new(HashMap::new()));
+    db.with_notifier(notifier);
+
+    let mut rx1 = db.subscribe_key("counter").await;
+    let mut rx2 = db.subscribe_key("counter").await;
+    let mut rx3 = db.subscribe_key("counter").await;
+
+    // Spawn three concurrent RPUSH operations
+    let db1 = db.clone();
+    let task1 = tokio::spawn(async move {
+        tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+        db1.rpush("counter", &[b"1"]).unwrap();
+    });
+
+    let db2 = db.clone();
+    let task2 = tokio::spawn(async move {
+        tokio::time::sleep(std::time::Duration::from_millis(20)).await;
+        db2.rpush("counter", &[b"2"]).unwrap();
+    });
+
+    let db3 = db.clone();
+    let task3 = tokio::spawn(async move {
+        tokio::time::sleep(std::time::Duration::from_millis(30)).await;
+        db3.rpush("counter", &[b"3"]).unwrap();
+    });
+
+    // Each receiver should get at least one notification
+    for mut rx in [rx1, rx2, rx3] {
+        tokio::select! {
+            _ = rx.recv() => {}
+            _ = tokio::time::sleep(std::time::Duration::from_millis(500)) => {
+                panic!("Receiver should have gotten notification");
+            }
+        }
+    }
+
+    task1.await.unwrap();
+    task2.await.unwrap();
+    task3.await.unwrap();
+}

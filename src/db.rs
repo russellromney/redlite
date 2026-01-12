@@ -1532,6 +1532,18 @@ impl Db {
             params![now, key_id],
         )?;
 
+        // Release lock before async notification
+        drop(conn);
+
+        // Notify waiting readers in server mode
+        if self.is_server_mode() {
+            let key = key.to_string();
+            let db = self.clone();
+            tokio::spawn(async move {
+                let _ = db.notify_key(&key).await;
+            });
+        }
+
         Ok(length)
     }
 
@@ -1591,6 +1603,18 @@ impl Db {
             "UPDATE keys SET updated_at = ?1 WHERE id = ?2",
             params![now, key_id],
         )?;
+
+        // Release lock before async notification
+        drop(conn);
+
+        // Notify waiting readers in server mode
+        if self.is_server_mode() {
+            let key = key.to_string();
+            let db = self.clone();
+            tokio::spawn(async move {
+                let _ = db.notify_key(&key).await;
+            });
+        }
 
         Ok(length)
     }
@@ -3234,6 +3258,18 @@ impl Db {
         // Apply MINID trimming
         if let Some(min) = minid {
             self.trim_stream_minid(&conn, key_id, min)?;
+        }
+
+        // Release lock before async notification
+        drop(conn);
+
+        // Notify waiting readers in server mode
+        if self.is_server_mode() {
+            let key = key.to_string();
+            let db = self.clone();
+            tokio::spawn(async move {
+                let _ = db.notify_key(&key).await;
+            });
         }
 
         Ok(Some(entry_id))
@@ -7936,6 +7972,164 @@ mod tests {
             }
             _ = tokio::time::sleep(std::time::Duration::from_millis(50)) => {
                 // Expected - key2 doesn't fire
+            }
+        }
+    }
+
+    #[tokio::test]
+    async fn test_lpush_broadcasts_in_server_mode() {
+        // LPUSH should send notification after successful insert
+        let db = Db::open_memory().unwrap();
+        let notifier = Arc::new(RwLock::new(HashMap::new()));
+        db.with_notifier(notifier);
+
+        let mut rx = db.subscribe_key("mylist").await;
+
+        // LPUSH should broadcast
+        let len = db.lpush("mylist", &[b"value1"]).unwrap();
+        assert_eq!(len, 1);
+
+        // Wait for notification
+        tokio::select! {
+            result = rx.recv() => {
+                assert!(result.is_ok());
+            }
+            _ = tokio::time::sleep(std::time::Duration::from_millis(100)) => {
+                panic!("LPUSH should have broadcast notification");
+            }
+        }
+    }
+
+    #[tokio::test]
+    async fn test_rpush_broadcasts_in_server_mode() {
+        // RPUSH should send notification after successful insert
+        let db = Db::open_memory().unwrap();
+        let notifier = Arc::new(RwLock::new(HashMap::new()));
+        db.with_notifier(notifier);
+
+        let mut rx = db.subscribe_key("mylist").await;
+
+        // RPUSH should broadcast
+        let len = db.rpush("mylist", &[b"value1"]).unwrap();
+        assert_eq!(len, 1);
+
+        // Wait for notification
+        tokio::select! {
+            result = rx.recv() => {
+                assert!(result.is_ok());
+            }
+            _ = tokio::time::sleep(std::time::Duration::from_millis(100)) => {
+                panic!("RPUSH should have broadcast notification");
+            }
+        }
+    }
+
+    #[tokio::test]
+    async fn test_xadd_broadcasts_in_server_mode() {
+        // XADD should send notification after stream entry added
+        let db = Db::open_memory().unwrap();
+        let notifier = Arc::new(RwLock::new(HashMap::new()));
+        db.with_notifier(notifier);
+
+        let mut rx = db.subscribe_key("mystream").await;
+
+        // XADD should broadcast
+        let id = db
+            .xadd(
+                "mystream",
+                None,
+                &[(b"field", b"value")],
+                false,
+                None,
+                None,
+                false,
+            )
+            .unwrap();
+        assert!(id.is_some());
+
+        // Wait for notification
+        tokio::select! {
+            result = rx.recv() => {
+                assert!(result.is_ok());
+            }
+            _ = tokio::time::sleep(std::time::Duration::from_millis(100)) => {
+                panic!("XADD should have broadcast notification");
+            }
+        }
+    }
+
+    #[test]
+    fn test_lpush_embedded_mode_no_crash() {
+        // LPUSH in embedded mode should not crash
+        let db = Db::open_memory().unwrap();
+        // Don't attach notifier - this is embedded mode
+
+        // Should complete without error
+        let len = db.lpush("mylist", &[b"value1"]).unwrap();
+        assert_eq!(len, 1);
+    }
+
+    #[test]
+    fn test_rpush_embedded_mode_no_crash() {
+        // RPUSH in embedded mode should not crash
+        let db = Db::open_memory().unwrap();
+        // Don't attach notifier - this is embedded mode
+
+        // Should complete without error
+        let len = db.rpush("mylist", &[b"value1"]).unwrap();
+        assert_eq!(len, 1);
+    }
+
+    #[test]
+    fn test_xadd_embedded_mode_no_crash() {
+        // XADD in embedded mode should not crash
+        let db = Db::open_memory().unwrap();
+        // Don't attach notifier - this is embedded mode
+
+        // Should complete without error
+        let id = db
+            .xadd(
+                "mystream",
+                None,
+                &[(b"field", b"value")],
+                false,
+                None,
+                None,
+                false,
+            )
+            .unwrap();
+        assert!(id.is_some());
+    }
+
+    #[tokio::test]
+    async fn test_multiple_lpush_broadcasts() {
+        // Multiple LPUSH operations should each trigger notifications
+        let db = Db::open_memory().unwrap();
+        let notifier = Arc::new(RwLock::new(HashMap::new()));
+        db.with_notifier(notifier);
+
+        let mut rx1 = db.subscribe_key("mylist").await;
+        let mut rx2 = db.subscribe_key("mylist").await;
+
+        // First LPUSH
+        db.lpush("mylist", &[b"value1"]).unwrap();
+        tokio::select! {
+            result = rx1.recv() => {
+                assert!(result.is_ok());
+            }
+            _ = tokio::time::sleep(std::time::Duration::from_millis(50)) => {
+                panic!("First LPUSH should broadcast");
+            }
+        }
+
+        // Second LPUSH
+        db.lpush("mylist", &[b"value2"]).unwrap();
+        tokio::select! {
+            result = rx2.recv() => {
+                assert!(result.is_ok());
+            }
+            _ = tokio::time::sleep(std::time::Duration::from_millis(50)) => {
+                panic!("Second LPUSH should broadcast");
             }
         }
     }
