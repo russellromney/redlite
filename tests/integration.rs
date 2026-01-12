@@ -60,6 +60,7 @@ fn redis_cli_n(port: u16, db: i32, args: &[&str]) -> String {
     String::from_utf8_lossy(&output.stdout).trim().to_string()
 }
 
+
 #[test]
 fn test_ping() {
     let _server = start_server(16380);
@@ -2212,5 +2213,31 @@ fn test_pubsub_large_message() {
     let large_msg = "x".repeat(10000);
     let result = redis_cli(17008, &["PUBLISH", "ch", &large_msg]);
     assert_eq!(result, "0");
+}
+
+// --- Transaction tests (MULTI/EXEC/DISCARD) ---
+
+#[test]
+fn test_multi_ok() {
+    let _server = start_server(17009);
+
+    let result = redis_cli(17009, &["MULTI"]);
+    assert_eq!(result, "OK");
+}
+
+#[test]
+fn test_discard_without_multi() {
+    let _server = start_server(17011);
+
+    let result = redis_cli(17011, &["DISCARD"]);
+    assert!(result.to_lowercase().contains("err"));
+}
+
+#[test]
+fn test_exec_without_multi() {
+    let _server = start_server(17012);
+
+    let result = redis_cli(17012, &["EXEC"]);
+    assert!(result.to_lowercase().contains("err"));
 }
 

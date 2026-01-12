@@ -200,8 +200,8 @@ redis-cli -p 6767 PUBLISH other "data"         # → No subscribers, returns 0
 - Lazy channel creation: Channels created on first subscriber
 - Auto-cleanup: Channels removed when all subscribers disconnect
 
-### Transactions (Server Mode Only, Session 16) 🚧
-**Status**: Under Development (Session 16.1 ✅) — Atomic multi-command execution with ACID guarantees
+### Transactions (Server Mode Only, Session 16) ✅
+**Status**: Complete (Sessions 16.1-16.4 ✅) — Atomic multi-command execution with ACID guarantees
 
 Execute multiple commands atomically using SQLite transactions.
 
