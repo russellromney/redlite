@@ -124,3 +124,474 @@ fn test_set_xx() {
     let value = redis_cli(16386, &["GET", "xxkey"]);
     assert_eq!(value, "updated");
 }
+
+// --- Session 2: Key commands integration tests ---
+
+// Helper to check integer response (handles both "2" and "(integer) 2" formats)
+fn check_int(result: &str, expected: i64) -> bool {
+    result == expected.to_string() || result == format!("(integer) {}", expected)
+}
+
+#[test]
+fn test_del() {
+    let _server = start_server(16390);
+
+    redis_cli(16390, &["SET", "k1", "v1"]);
+    redis_cli(16390, &["SET", "k2", "v2"]);
+
+    let result = redis_cli(16390, &["DEL", "k1", "k2", "k3"]);
+    assert!(check_int(&result, 2), "Expected 2, got: {}", result);
+
+    let get1 = redis_cli(16390, &["GET", "k1"]);
+    let get2 = redis_cli(16390, &["GET", "k2"]);
+    assert!(get1.is_empty() || get1 == "(nil)");
+    assert!(get2.is_empty() || get2 == "(nil)");
+}
+
+#[test]
+fn test_exists() {
+    let _server = start_server(16391);
+
+    redis_cli(16391, &["SET", "k1", "v1"]);
+    redis_cli(16391, &["SET", "k2", "v2"]);
+
+    let r1 = redis_cli(16391, &["EXISTS", "k1"]);
+    assert!(check_int(&r1, 1), "Expected 1, got: {}", r1);
+
+    let r2 = redis_cli(16391, &["EXISTS", "k1", "k2", "k3"]);
+    assert!(check_int(&r2, 2), "Expected 2, got: {}", r2);
+
+    let r3 = redis_cli(16391, &["EXISTS", "nonexistent"]);
+    assert!(check_int(&r3, 0), "Expected 0, got: {}", r3);
+}
+
+#[test]
+fn test_expire_ttl() {
+    let _server = start_server(16392);
+
+    redis_cli(16392, &["SET", "key", "value"]);
+
+    // Key with no expiry should return -1
+    let ttl_none = redis_cli(16392, &["TTL", "key"]);
+    assert!(check_int(&ttl_none, -1), "Expected -1, got: {}", ttl_none);
+
+    // Set expiration
+    let expire_result = redis_cli(16392, &["EXPIRE", "key", "100"]);
+    assert!(
+        check_int(&expire_result, 1),
+        "Expected 1, got: {}",
+        expire_result
+    );
+
+    // TTL should be around 99-100
+    let ttl = redis_cli(16392, &["TTL", "key"]);
+    assert!(ttl.contains("99") || ttl.contains("100"));
+
+    // Non-existent key should return -2
+    let ttl_nonexistent = redis_cli(16392, &["TTL", "nonexistent"]);
+    assert!(
+        check_int(&ttl_nonexistent, -2),
+        "Expected -2, got: {}",
+        ttl_nonexistent
+    );
+
+    // EXPIRE on non-existent key should return 0
+    let expire_nonexistent = redis_cli(16392, &["EXPIRE", "nonexistent", "100"]);
+    assert!(
+        check_int(&expire_nonexistent, 0),
+        "Expected 0, got: {}",
+        expire_nonexistent
+    );
+}
+
+#[test]
+fn test_pttl() {
+    let _server = start_server(16393);
+
+    redis_cli(16393, &["SET", "key", "value", "EX", "10"]);
+
+    let pttl = redis_cli(16393, &["PTTL", "key"]);
+    // Should be close to 10000ms
+    assert!(pttl.contains("99") || pttl.contains("100"));
+
+    // No expiry
+    redis_cli(16393, &["SET", "noexp", "value"]);
+    let pttl_none = redis_cli(16393, &["PTTL", "noexp"]);
+    assert!(
+        check_int(&pttl_none, -1),
+        "Expected -1, got: {}",
+        pttl_none
+    );
+
+    // Non-existent
+    let pttl_nonexistent = redis_cli(16393, &["PTTL", "nonexistent"]);
+    assert!(
+        check_int(&pttl_nonexistent, -2),
+        "Expected -2, got: {}",
+        pttl_nonexistent
+    );
+}
+
+#[test]
+fn test_type() {
+    let _server = start_server(16394);
+
+    redis_cli(16394, &["SET", "mykey", "value"]);
+    assert_eq!(redis_cli(16394, &["TYPE", "mykey"]), "string");
+    assert_eq!(redis_cli(16394, &["TYPE", "nonexistent"]), "none");
+}
+
+#[test]
+fn test_keys() {
+    let _server = start_server(16395);
+
+    redis_cli(16395, &["SET", "foo", "1"]);
+    redis_cli(16395, &["SET", "foobar", "2"]);
+    redis_cli(16395, &["SET", "bar", "3"]);
+
+    let result = redis_cli(16395, &["KEYS", "foo*"]);
+    assert!(result.contains("foo"));
+    assert!(result.contains("foobar"));
+    // bar should not be in results for foo* pattern
+}
+
+#[test]
+fn test_scan() {
+    let _server = start_server(16396);
+
+    for i in 0..5 {
+        redis_cli(16396, &["SET", &format!("key{}", i), "value"]);
+    }
+
+    let result = redis_cli(16396, &["SCAN", "0"]);
+    // Should return cursor and keys
+    assert!(result.contains("key"));
+}
+
+#[test]
+fn test_scan_match() {
+    let _server = start_server(16397);
+
+    redis_cli(16397, &["SET", "user:1", "a"]);
+    redis_cli(16397, &["SET", "user:2", "b"]);
+    redis_cli(16397, &["SET", "other:1", "c"]);
+
+    let result = redis_cli(16397, &["SCAN", "0", "MATCH", "user:*"]);
+    assert!(result.contains("user:1"));
+    assert!(result.contains("user:2"));
+    assert!(!result.contains("other:1"));
+}
+
+#[test]
+fn test_scan_count() {
+    let _server = start_server(16398);
+
+    for i in 0..10 {
+        redis_cli(16398, &["SET", &format!("key{}", i), "value"]);
+    }
+
+    let result = redis_cli(16398, &["SCAN", "0", "COUNT", "3"]);
+    // Should contain key entries
+    assert!(result.contains("key"), "Expected keys, got: {}", result);
+}
+
+// --- Session 3: String operations integration tests ---
+
+#[test]
+fn test_incr_decr() {
+    let _server = start_server(16400);
+
+    // INCR on non-existent key
+    let r1 = redis_cli(16400, &["INCR", "counter"]);
+    assert!(check_int(&r1, 1), "Expected 1, got: {}", r1);
+
+    let r2 = redis_cli(16400, &["INCR", "counter"]);
+    assert!(check_int(&r2, 2), "Expected 2, got: {}", r2);
+
+    // DECR
+    let r3 = redis_cli(16400, &["DECR", "counter"]);
+    assert!(check_int(&r3, 1), "Expected 1, got: {}", r3);
+
+    // INCR existing integer
+    redis_cli(16400, &["SET", "num", "10"]);
+    let r4 = redis_cli(16400, &["INCR", "num"]);
+    assert!(check_int(&r4, 11), "Expected 11, got: {}", r4);
+}
+
+#[test]
+fn test_incrby_decrby() {
+    let _server = start_server(16401);
+
+    redis_cli(16401, &["SET", "counter", "100"]);
+
+    let r1 = redis_cli(16401, &["INCRBY", "counter", "50"]);
+    assert!(check_int(&r1, 150), "Expected 150, got: {}", r1);
+
+    let r2 = redis_cli(16401, &["DECRBY", "counter", "30"]);
+    assert!(check_int(&r2, 120), "Expected 120, got: {}", r2);
+
+    // INCRBY on non-existent key
+    let r3 = redis_cli(16401, &["INCRBY", "newkey", "5"]);
+    assert!(check_int(&r3, 5), "Expected 5, got: {}", r3);
+}
+
+#[test]
+fn test_incrbyfloat() {
+    let _server = start_server(16402);
+
+    redis_cli(16402, &["SET", "pi", "3.14"]);
+
+    let result = redis_cli(16402, &["INCRBYFLOAT", "pi", "0.01"]);
+    assert!(
+        result.contains("3.15"),
+        "Expected 3.15, got: {}",
+        result
+    );
+}
+
+#[test]
+fn test_mget_mset() {
+    let _server = start_server(16403);
+
+    // MSET
+    let mset_result = redis_cli(16403, &["MSET", "a", "1", "b", "2", "c", "3"]);
+    assert_eq!(mset_result, "OK");
+
+    // MGET
+    let mget_result = redis_cli(16403, &["MGET", "a", "b", "c", "d"]);
+    assert!(mget_result.contains("1"));
+    assert!(mget_result.contains("2"));
+    assert!(mget_result.contains("3"));
+}
+
+#[test]
+fn test_append_strlen() {
+    let _server = start_server(16404);
+
+    // APPEND to non-existent
+    let r1 = redis_cli(16404, &["APPEND", "msg", "Hello"]);
+    assert!(check_int(&r1, 5), "Expected 5, got: {}", r1);
+
+    // APPEND to existing
+    let r2 = redis_cli(16404, &["APPEND", "msg", " World"]);
+    assert!(check_int(&r2, 11), "Expected 11, got: {}", r2);
+
+    // Verify content
+    let content = redis_cli(16404, &["GET", "msg"]);
+    assert_eq!(content, "Hello World");
+
+    // STRLEN
+    let len = redis_cli(16404, &["STRLEN", "msg"]);
+    assert!(check_int(&len, 11), "Expected 11, got: {}", len);
+
+    // STRLEN non-existent
+    let len_none = redis_cli(16404, &["STRLEN", "nonexistent"]);
+    assert!(check_int(&len_none, 0), "Expected 0, got: {}", len_none);
+}
+
+#[test]
+fn test_getrange() {
+    let _server = start_server(16405);
+
+    redis_cli(16405, &["SET", "msg", "Hello World"]);
+
+    // Normal range
+    let r1 = redis_cli(16405, &["GETRANGE", "msg", "0", "4"]);
+    assert_eq!(r1, "Hello");
+
+    // Negative indices
+    let r2 = redis_cli(16405, &["GETRANGE", "msg", "-5", "-1"]);
+    assert_eq!(r2, "World");
+}
+
+#[test]
+fn test_setrange() {
+    let _server = start_server(16406);
+
+    redis_cli(16406, &["SET", "msg", "Hello World"]);
+
+    // Overwrite
+    let r1 = redis_cli(16406, &["SETRANGE", "msg", "6", "Redis"]);
+    assert!(check_int(&r1, 11), "Expected 11, got: {}", r1);
+
+    let content = redis_cli(16406, &["GET", "msg"]);
+    assert_eq!(content, "Hello Redis");
+}
+
+// --- Session 6: Hash operations integration tests ---
+
+#[test]
+fn test_hset_hget() {
+    let _server = start_server(16410);
+
+    // HSET new field
+    let r1 = redis_cli(16410, &["HSET", "myhash", "field1", "value1"]);
+    assert!(check_int(&r1, 1), "Expected 1, got: {}", r1);
+
+    // HGET
+    let r2 = redis_cli(16410, &["HGET", "myhash", "field1"]);
+    assert_eq!(r2, "value1");
+
+    // HSET update existing field
+    let r3 = redis_cli(16410, &["HSET", "myhash", "field1", "value2"]);
+    assert!(check_int(&r3, 0), "Expected 0, got: {}", r3);
+
+    // HGET updated value
+    let r4 = redis_cli(16410, &["HGET", "myhash", "field1"]);
+    assert_eq!(r4, "value2");
+
+    // HGET non-existent field
+    let r5 = redis_cli(16410, &["HGET", "myhash", "nonexistent"]);
+    assert!(r5.is_empty() || r5 == "(nil)");
+}
+
+#[test]
+fn test_hset_multiple() {
+    let _server = start_server(16411);
+
+    // HSET multiple fields
+    let r1 = redis_cli(16411, &["HSET", "myhash", "f1", "v1", "f2", "v2", "f3", "v3"]);
+    assert!(check_int(&r1, 3), "Expected 3, got: {}", r1);
+
+    assert_eq!(redis_cli(16411, &["HGET", "myhash", "f1"]), "v1");
+    assert_eq!(redis_cli(16411, &["HGET", "myhash", "f2"]), "v2");
+    assert_eq!(redis_cli(16411, &["HGET", "myhash", "f3"]), "v3");
+}
+
+#[test]
+fn test_hmget() {
+    let _server = start_server(16412);
+
+    redis_cli(16412, &["HSET", "myhash", "f1", "v1", "f2", "v2"]);
+
+    let result = redis_cli(16412, &["HMGET", "myhash", "f1", "f2", "f3"]);
+    assert!(result.contains("v1"));
+    assert!(result.contains("v2"));
+}
+
+#[test]
+fn test_hgetall() {
+    let _server = start_server(16413);
+
+    redis_cli(16413, &["HSET", "myhash", "f1", "v1", "f2", "v2"]);
+
+    let result = redis_cli(16413, &["HGETALL", "myhash"]);
+    assert!(result.contains("f1"));
+    assert!(result.contains("v1"));
+    assert!(result.contains("f2"));
+    assert!(result.contains("v2"));
+}
+
+#[test]
+fn test_hdel() {
+    let _server = start_server(16414);
+
+    redis_cli(16414, &["HSET", "myhash", "f1", "v1", "f2", "v2", "f3", "v3"]);
+
+    // Delete one field
+    let r1 = redis_cli(16414, &["HDEL", "myhash", "f1"]);
+    assert!(check_int(&r1, 1), "Expected 1, got: {}", r1);
+
+    // Verify deleted
+    let r2 = redis_cli(16414, &["HGET", "myhash", "f1"]);
+    assert!(r2.is_empty() || r2 == "(nil)");
+
+    // Delete multiple fields (including non-existent)
+    let r3 = redis_cli(16414, &["HDEL", "myhash", "f2", "f3", "f4"]);
+    assert!(check_int(&r3, 2), "Expected 2, got: {}", r3);
+}
+
+#[test]
+fn test_hexists() {
+    let _server = start_server(16415);
+
+    redis_cli(16415, &["HSET", "myhash", "field", "value"]);
+
+    let r1 = redis_cli(16415, &["HEXISTS", "myhash", "field"]);
+    assert!(check_int(&r1, 1), "Expected 1, got: {}", r1);
+
+    let r2 = redis_cli(16415, &["HEXISTS", "myhash", "nonexistent"]);
+    assert!(check_int(&r2, 0), "Expected 0, got: {}", r2);
+
+    let r3 = redis_cli(16415, &["HEXISTS", "nonexistent", "field"]);
+    assert!(check_int(&r3, 0), "Expected 0, got: {}", r3);
+}
+
+#[test]
+fn test_hkeys_hvals() {
+    let _server = start_server(16416);
+
+    redis_cli(16416, &["HSET", "myhash", "f1", "v1", "f2", "v2"]);
+
+    let keys = redis_cli(16416, &["HKEYS", "myhash"]);
+    assert!(keys.contains("f1"));
+    assert!(keys.contains("f2"));
+
+    let vals = redis_cli(16416, &["HVALS", "myhash"]);
+    assert!(vals.contains("v1"));
+    assert!(vals.contains("v2"));
+}
+
+#[test]
+fn test_hlen() {
+    let _server = start_server(16417);
+
+    // Non-existent key
+    let r1 = redis_cli(16417, &["HLEN", "nonexistent"]);
+    assert!(check_int(&r1, 0), "Expected 0, got: {}", r1);
+
+    redis_cli(16417, &["HSET", "myhash", "f1", "v1", "f2", "v2"]);
+
+    let r2 = redis_cli(16417, &["HLEN", "myhash"]);
+    assert!(check_int(&r2, 2), "Expected 2, got: {}", r2);
+}
+
+#[test]
+fn test_hincrby() {
+    let _server = start_server(16418);
+
+    // HINCRBY on non-existent field
+    let r1 = redis_cli(16418, &["HINCRBY", "myhash", "counter", "5"]);
+    assert!(check_int(&r1, 5), "Expected 5, got: {}", r1);
+
+    let r2 = redis_cli(16418, &["HINCRBY", "myhash", "counter", "10"]);
+    assert!(check_int(&r2, 15), "Expected 15, got: {}", r2);
+
+    let r3 = redis_cli(16418, &["HINCRBY", "myhash", "counter", "-3"]);
+    assert!(check_int(&r3, 12), "Expected 12, got: {}", r3);
+}
+
+#[test]
+fn test_hincrbyfloat() {
+    let _server = start_server(16419);
+
+    redis_cli(16419, &["HSET", "myhash", "pi", "3.14"]);
+
+    let result = redis_cli(16419, &["HINCRBYFLOAT", "myhash", "pi", "0.01"]);
+    assert!(result.contains("3.15"), "Expected 3.15, got: {}", result);
+}
+
+#[test]
+fn test_hsetnx() {
+    let _server = start_server(16420);
+
+    // First HSETNX should succeed
+    let r1 = redis_cli(16420, &["HSETNX", "myhash", "field", "value1"]);
+    assert!(check_int(&r1, 1), "Expected 1, got: {}", r1);
+
+    // Second HSETNX should fail
+    let r2 = redis_cli(16420, &["HSETNX", "myhash", "field", "value2"]);
+    assert!(check_int(&r2, 0), "Expected 0, got: {}", r2);
+
+    // Original value preserved
+    let value = redis_cli(16420, &["HGET", "myhash", "field"]);
+    assert_eq!(value, "value1");
+}
+
+#[test]
+fn test_hash_type() {
+    let _server = start_server(16421);
+
+    redis_cli(16421, &["HSET", "myhash", "field", "value"]);
+    assert_eq!(redis_cli(16421, &["TYPE", "myhash"]), "hash");
+}
