@@ -172,7 +172,19 @@ Quick reference for all implemented Redis commands. For detailed progress, see [
 |---------|-------------|
 | VACUUM | Delete expired keys, run SQLite VACUUM |
 | KEYINFO | Get key metadata (type, ttl, created_at, updated_at) |
-| HISTORY | Track and query historical data (Session 17) |
+
+### History Tracking (Session 17) ✅
+
+| Command | Description |
+|---------|-------------|
+| HISTORY ENABLE | Enable history tracking (global/database/key level) with optional retention |
+| HISTORY DISABLE | Disable history tracking (global/database/key level) |
+| HISTORY GET | Query historical entries for a key (with LIMIT, SINCE, UNTIL filters) |
+| HISTORY GETAT | Time-travel query: get state of key at specific timestamp |
+| HISTORY LIST | List keys with history tracking enabled (with optional PATTERN) |
+| HISTORY STATS | Get history statistics (total entries, timestamps, storage bytes) |
+| HISTORY CLEAR | Clear history for a key (optionally before timestamp) |
+| HISTORY PRUNE | Delete all history before timestamp across all keys |
 
 ### List & Key Operations (V2+) ✅
 
@@ -256,3 +268,35 @@ PUBLISH channel1 "message"
 ```
 
 Each subscriber receives published messages via RESP3 push notifications. Messages are lost if no active subscribers.
+
+### On History Tracking (HISTORY)
+
+Implemented in Session 17. Track value changes per key with time-travel queries.
+
+```
+# Enable history for a key (keep last 100 versions)
+HISTORY ENABLE KEY mykey RETENTION COUNT 100
+
+# Write values
+SET mykey "v1"
+SET mykey "v2"
+SET mykey "v3"
+
+# Query history
+HISTORY GET mykey LIMIT 10
+→ [version 1, 2, 3, ...]
+
+# Time-travel query
+HISTORY GETAT mykey <timestamp>
+→ State of key at that timestamp
+
+# Cleanup
+HISTORY CLEAR mykey BEFORE <timestamp>
+HISTORY PRUNE BEFORE <timestamp>
+```
+
+**Three-tier opt-in:** Configure at global, database (0-15), or key level with independent retention policies (unlimited, time-based, count-based).
+
+**Available in:** Both embedded library mode and server mode (Session 17+).
+
+See [History Tracking](/reference/history) documentation for complete details.
