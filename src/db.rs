@@ -419,12 +419,12 @@ impl Db {
 
         let (current_val, preserve_ttl): (i64, Option<i64>) = match result {
             Ok((value, expire_at)) => {
-                // Check expiration
+                // Check expiration - if expired, treat as 0 and clear TTL
+                // Lazy expiration: upsert will overwrite the expired data
                 if let Some(exp) = expire_at {
                     if exp <= now {
-                        (0, None) // Expired, treat as non-existent
+                        (0, None)
                     } else {
-                        // Parse as integer, preserve TTL
                         let s = std::str::from_utf8(&value).map_err(|_| KvError::NotInteger)?;
                         let val = s.parse().map_err(|_| KvError::NotInteger)?;
                         (val, Some(exp))
@@ -432,7 +432,7 @@ impl Db {
                 } else {
                     let s = std::str::from_utf8(&value).map_err(|_| KvError::NotInteger)?;
                     let val = s.parse().map_err(|_| KvError::NotInteger)?;
-                    (val, None) // No TTL to preserve
+                    (val, None)
                 }
             }
             Err(rusqlite::Error::QueryReturnedNoRows) => (0, None),
@@ -442,20 +442,16 @@ impl Db {
         let new_val = current_val + increment;
         let new_val_bytes = new_val.to_string().into_bytes();
 
-        // Upsert key (preserve existing TTL if key existed)
-        conn.execute(
+        // Upsert key and get key_id in one statement (RETURNING eliminates extra SELECT)
+        let key_id: i64 = conn.query_row(
             "INSERT INTO keys (db, key, type, expire_at, updated_at)
              VALUES (?1, ?2, ?3, ?4, ?5)
              ON CONFLICT(db, key) DO UPDATE SET
                  type = excluded.type,
-                 updated_at = excluded.updated_at",
+                 expire_at = excluded.expire_at,
+                 updated_at = excluded.updated_at
+             RETURNING id",
             params![db, key, KeyType::String as i32, preserve_ttl, now],
-        )?;
-
-        // Get key_id
-        let key_id: i64 = conn.query_row(
-            "SELECT id FROM keys WHERE db = ?1 AND key = ?2",
-            params![db, key],
             |row| row.get(0),
         )?;
 
@@ -480,22 +476,24 @@ impl Db {
         let db = self.current_db();
         let now = Self::now_ms();
 
-        // Get current value and TTL
-        let result: std::result::Result<(Vec<u8>, Option<i64>), _> = conn.query_row(
-            "SELECT s.value, k.expire_at
+        // Get current value, TTL, and key_id
+        let result: std::result::Result<(i64, Vec<u8>, Option<i64>), _> = conn.query_row(
+            "SELECT k.id, s.value, k.expire_at
              FROM keys k
              JOIN strings s ON s.key_id = k.id
              WHERE k.db = ?1 AND k.key = ?2",
             params![db, key],
-            |row| Ok((row.get(0)?, row.get(1)?)),
+            |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
         );
 
         let (current_val, preserve_ttl): (f64, Option<i64>) = match result {
-            Ok((value, expire_at)) => {
+            Ok((key_id, value, expire_at)) => {
                 // Check expiration
                 if let Some(exp) = expire_at {
                     if exp <= now {
-                        (0.0, None) // Expired, treat as non-existent
+                        // Expired - delete the old key first, then treat as non-existent
+                        conn.execute("DELETE FROM keys WHERE id = ?1", params![key_id])?;
+                        (0.0, None)
                     } else {
                         let s = std::str::from_utf8(&value).map_err(|_| KvError::NotFloat)?;
                         let val = s.parse().map_err(|_| KvError::NotFloat)?;
@@ -524,20 +522,16 @@ impl Db {
 
         let new_val_bytes = formatted.as_bytes();
 
-        // Upsert key (preserve existing TTL if key existed)
-        conn.execute(
+        // Upsert key and get key_id in one statement
+        let key_id: i64 = conn.query_row(
             "INSERT INTO keys (db, key, type, expire_at, updated_at)
              VALUES (?1, ?2, ?3, ?4, ?5)
              ON CONFLICT(db, key) DO UPDATE SET
                  type = excluded.type,
-                 updated_at = excluded.updated_at",
+                 expire_at = excluded.expire_at,
+                 updated_at = excluded.updated_at
+             RETURNING id",
             params![db, key, KeyType::String as i32, preserve_ttl, now],
-        )?;
-
-        // Get key_id
-        let key_id: i64 = conn.query_row(
-            "SELECT id FROM keys WHERE db = ?1 AND key = ?2",
-            params![db, key],
             |row| row.get(0),
         )?;
 
@@ -1187,6 +1181,42 @@ impl Db {
     /// Gap size for list positioning (allows efficient inserts without reindexing)
     const LIST_GAP: i64 = 1_000_000;
 
+    /// Threshold for triggering rebalance (90% of i64 range)
+    const LIST_POS_MIN_THRESHOLD: i64 = i64::MIN / 10 * 9; // -8_301_034_833_169_298_227
+    const LIST_POS_MAX_THRESHOLD: i64 = i64::MAX / 10 * 9; // 8_301_034_833_169_298_227
+
+    /// Rebalance list positions to prevent overflow
+    /// Reassigns all positions starting from 0 with fresh gaps
+    fn rebalance_list(&self, conn: &Connection, key_id: i64) -> Result<()> {
+        // Get all values in order
+        let mut stmt = conn.prepare(
+            "SELECT pos, value FROM lists WHERE key_id = ?1 ORDER BY pos ASC",
+        )?;
+        let rows = stmt.query_map(params![key_id], |row| {
+            Ok((row.get::<_, i64>(0)?, row.get::<_, Vec<u8>>(1)?))
+        })?;
+
+        let items: Vec<(i64, Vec<u8>)> = rows.filter_map(|r| r.ok()).collect();
+
+        if items.is_empty() {
+            return Ok(());
+        }
+
+        // Delete all existing entries
+        conn.execute("DELETE FROM lists WHERE key_id = ?1", params![key_id])?;
+
+        // Reinsert with fresh positions starting from LIST_GAP
+        for (i, (_, value)) in items.iter().enumerate() {
+            let new_pos = ((i as i64) + 1) * Self::LIST_GAP;
+            conn.execute(
+                "INSERT INTO lists (key_id, pos, value) VALUES (?1, ?2, ?3)",
+                params![key_id, new_pos, value],
+            )?;
+        }
+
+        Ok(())
+    }
+
     /// Helper to get or create a list key, returns key_id
     fn get_or_create_list_key(&self, conn: &Connection, key: &str) -> Result<i64> {
         let db = self.current_db();
@@ -1270,8 +1300,8 @@ impl Db {
         let conn = self.conn.lock().unwrap_or_else(|e| e.into_inner());
         let key_id = self.get_or_create_list_key(&conn, key)?;
 
-        // Get current min position (or start at 0 if empty)
-        let min_pos: i64 = conn
+        // Get current min position (or start at LIST_GAP if empty)
+        let mut min_pos: i64 = conn
             .query_row(
                 "SELECT MIN(pos) FROM lists WHERE key_id = ?1",
                 params![key_id],
@@ -1279,6 +1309,21 @@ impl Db {
             )
             .unwrap_or(None)
             .unwrap_or(Self::LIST_GAP);
+
+        // Check if we would overflow - rebalance if needed
+        let new_min = min_pos.saturating_sub((values.len() as i64) * Self::LIST_GAP);
+        if new_min < Self::LIST_POS_MIN_THRESHOLD {
+            self.rebalance_list(&conn, key_id)?;
+            // Get fresh min position after rebalance
+            min_pos = conn
+                .query_row(
+                    "SELECT MIN(pos) FROM lists WHERE key_id = ?1",
+                    params![key_id],
+                    |row| row.get::<_, Option<i64>>(0),
+                )
+                .unwrap_or(None)
+                .unwrap_or(Self::LIST_GAP);
+        }
 
         // Insert values in reverse order (so first value ends up at head)
         for (i, value) in values.iter().enumerate() {
@@ -1316,7 +1361,7 @@ impl Db {
         let key_id = self.get_or_create_list_key(&conn, key)?;
 
         // Get current max position (or start at 0 if empty)
-        let max_pos: i64 = conn
+        let mut max_pos: i64 = conn
             .query_row(
                 "SELECT MAX(pos) FROM lists WHERE key_id = ?1",
                 params![key_id],
@@ -1324,6 +1369,21 @@ impl Db {
             )
             .unwrap_or(None)
             .unwrap_or(0);
+
+        // Check if we would overflow - rebalance if needed
+        let new_max = max_pos.saturating_add((values.len() as i64) * Self::LIST_GAP);
+        if new_max > Self::LIST_POS_MAX_THRESHOLD {
+            self.rebalance_list(&conn, key_id)?;
+            // Get fresh max position after rebalance
+            max_pos = conn
+                .query_row(
+                    "SELECT MAX(pos) FROM lists WHERE key_id = ?1",
+                    params![key_id],
+                    |row| row.get::<_, Option<i64>>(0),
+                )
+                .unwrap_or(None)
+                .unwrap_or(0);
+        }
 
         // Insert values in order
         for (i, value) in values.iter().enumerate() {
