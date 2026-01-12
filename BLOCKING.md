@@ -67,19 +67,26 @@ XREADGROUP GROUP mygroup consumer1 BLOCK 5000 STREAMS mystream >
 
 ## Implementation (Session 15 Roadmap)
 
-### Session 15.1: Notification Infrastructure
-- Add notification system to `Server` struct
-- Add notifier field to `Db` for server mode detection
-- Implement helper methods for subscription
+### Session 15.1: Notification Infrastructure ✅
+- [x] Add notification system to `Server` struct using `tokio::sync::broadcast`
+- [x] Add optional notifier field to `Db` for server mode detection
+- [x] Implement helper methods: `is_server_mode()`, `notify_key()`, `subscribe_key()`
+- [x] Attach notifier in `handle_connection()` for each server connection
+- [x] 7 unit tests covering all notification paths, 340 total tests passing
 
-### Session 15.2: Broadcasting on Writes
-- Make LPUSH/RPUSH/XADD broadcast notifications
-- Implement channel cleanup
+### Session 15.2: Broadcasting on Writes (Next)
+- [ ] Make LPUSH broadcast notification after insert
+- [ ] Make RPUSH broadcast notification after insert
+- [ ] Make XADD broadcast notification after insert
+- [ ] Implement channel cleanup (remove unused channels)
+- [ ] Add integration tests with concurrent writes
 
-### Session 15.3: Blocking Commands
-- Make execute_command async
-- Implement BLPOP, BRPOP, XREAD BLOCK, XREADGROUP BLOCK
-- Add comprehensive tests
+### Session 15.3: Blocking Commands (After 15.2)
+- [ ] Make execute_command async
+- [ ] Implement BLPOP, BRPOP with timeout handling
+- [ ] Implement XREAD BLOCK with timeout handling
+- [ ] Implement XREADGROUP BLOCK with timeout handling
+- [ ] Add comprehensive integration tests with multiple clients
 
 ## Architecture
 
@@ -89,10 +96,13 @@ Blocking reads use tokio's `broadcast` channels:
 // Server holds a map of key → broadcast channel
 notifier: Arc<RwLock<HashMap<String, broadcast::Sender<()>>>>
 
-// When a write happens (LPUSH, XADD):
-self.notify_key("mykey").await;  // Wake all waiters
+// Database attached to notifier in server mode (Session 15.1 ✅)
+db.with_notifier(notifier);  // Enables server mode features
 
-// When blocking (BLPOP):
+// When a write happens (LPUSH, XADD) — coming in Session 15.2:
+db.notify_key("mykey").await;  // Wake all waiters
+
+// When blocking (BLPOP) — coming in Session 15.3:
 let mut rx = db.subscribe_key("mylist").await;
 loop {
     // Try immediate pop
@@ -106,6 +116,14 @@ loop {
     }
 }
 ```
+
+### Current Status (Session 15.1)
+- ✅ Notification infrastructure ready
+- ✅ Server mode detection via `is_server_mode()`
+- ✅ Key subscription channels via `subscribe_key()`
+- ✅ Notification sending via `notify_key()` (channels created lazily)
+- ✅ Embedded mode safely returns closed channels
+- ⏳ Blocking commands implementation (coming in 15.2-15.3)
 
 ## Edge Cases
 

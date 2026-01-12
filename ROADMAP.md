@@ -166,16 +166,16 @@ Incremental implementation plan. Each session = one commit = one testable featur
 - [x] XINFO GROUPS key
 - [x] XINFO CONSUMERS key groupname
 - [x] Unit tests (15 new tests) + integration tests (20 new tests)
-- [x] **Test:** 210 unit tests + 121 integration tests passing
+- [x] **Test:** 210 unit tests + 121 integration tests passing (before Session 15.1)
 
-### Session 15.1: Blocking Reads — Notification Infrastructure
-- [ ] Server: Add `notify: Arc<RwLock<HashMap<String, broadcast::Sender<()>>>>` for key notifications
-- [ ] Db/DbCore: Add optional notifier field for server mode detection
-- [ ] Add helper methods: `is_server_mode()`, `notify_key()`, `subscribe_key()`
-- [ ] Update `Server::new()` to initialize and pass notifier
-- [ ] Update `handle_connection()` to have notifier context
-- [ ] Embedded mode returns error for blocking operations
-- [ ] **Test:** Notification system works, embedded mode rejects blocking
+### Session 15.1: Blocking Reads — Notification Infrastructure ✅
+- [x] Server: Add `notify: Arc<RwLock<HashMap<String, broadcast::Sender<()>>>>` for key notifications
+- [x] Db/DbCore: Add optional notifier field for server mode detection
+- [x] Add helper methods: `is_server_mode()`, `notify_key()`, `subscribe_key()`
+- [x] Update `Server::new()` to initialize and pass notifier
+- [x] Update `handle_connection()` to have notifier context
+- [x] Embedded mode returns Closed for blocking operations (subscribe_key)
+- [x] **Test:** 7 unit tests, all 340 tests passing (217 lib + 121 integration + 2 doc)
 
 ### Session 15.2: Blocking Reads — Broadcasting on Writes
 - [ ] Make LPUSH broadcast to channel after insert

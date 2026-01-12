@@ -1015,16 +1015,19 @@ mod router;
 
 pub use router::CommandRouter;
 
+/// TCP Server with broadcast-based notifications for blocking reads (Session 15.1+)
 pub struct Server {
-    db: Arc<Db>,
-    router: CommandRouter,
+    db: Db,
+    /// Key → broadcast channel sender map for notifications
+    /// Used by blocking operations (BLPOP, BRPOP, XREAD BLOCK)
+    notifier: Arc<RwLock<HashMap<String, broadcast::Sender<()>>>>,
 }
 
 impl Server {
-    pub fn new(db: Arc<Db>) -> Self {
+    pub fn new(db: Db) -> Self {
         Self {
             db,
-            router: CommandRouter::new(),
+            notifier: Arc::new(RwLock::new(HashMap::new())),
         }
     }
 
@@ -1036,11 +1039,14 @@ impl Server {
             let (socket, peer_addr) = listener.accept().await?;
             tracing::debug!("Connection from {}", peer_addr);
 
-            let db = Arc::clone(&self.db);
-            let router = CommandRouter::new();
+            // Create a new session for this connection
+            let session = self.db.session();
+
+            // Clone notifier for this connection
+            let notifier = Arc::clone(&self.notifier);
 
             tokio::spawn(async move {
-                if let Err(e) = handle_connection(socket, db, router).await {
+                if let Err(e) = handle_connection(socket, session, notifier).await {
                     tracing::error!("Connection error: {}", e);
                 }
             });
@@ -1048,18 +1054,23 @@ impl Server {
     }
 }
 
+/// Handle a single client connection
+/// Attaches the notifier to enable server-mode features like blocking operations
 async fn handle_connection(
     socket: TcpStream,
-    db: Arc<Db>,
-    router: CommandRouter,
+    mut db: Db,
+    notifier: Arc<RwLock<HashMap<String, broadcast::Sender<()>>>>,
 ) -> std::io::Result<()> {
+    // Attach notifier to database for server mode
+    db.with_notifier(notifier);
+
     let (reader, mut writer) = socket.into_split();
     let mut reader = RespReader::new(reader);
 
     loop {
         match reader.read_command().await? {
             Some(args) => {
-                let response = router.execute(&db, &args);
+                let response = execute_command(&mut db, &args);
                 writer.write_all(&response.encode()).await?;
                 writer.flush().await?;
 

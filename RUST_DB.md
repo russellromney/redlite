@@ -1,21 +1,39 @@
 # Redlite Database Implementation
 
-## Core Db Struct
+## Core Db Struct (Session 15.1+)
+
+The database uses a two-tier architecture:
+- **DbCore**: Shared backend (SQLite connection, autovacuum state, optional notifier)
+- **Db**: Per-session wrapper (selected database, notifier reference)
 
 ```rust
 // src/db.rs
 
 use rusqlite::{Connection, params};
-use std::sync::Mutex;
+use std::sync::{Arc, Mutex, RwLock};
+use std::collections::HashMap;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
+use tokio::sync::broadcast;
 
 use crate::error::{KvError, Result};
 use crate::types::{KeyType, SetOptions};
 
-pub struct Db {
+/// Shared database backend
+struct DbCore {
     conn: Mutex<Connection>,
-    path: String,
-    current_db: Mutex<i32>,
+    autovacuum_enabled: AtomicBool,
+    last_cleanup: AtomicI64,
+    autovacuum_interval_ms: AtomicI64,
+    /// Optional notifier for server mode (None for embedded mode)
+    /// Maps key name to broadcast sender for notifications (Session 15.1+)
+    notifier: RwLock<Option<Arc<RwLock<HashMap<String, broadcast::Sender<()>>>>>>,
+}
+
+/// Per-session database wrapper
+#[derive(Clone)]
+pub struct Db {
+    core: Arc<DbCore>,
+    selected_db: i32,  // Current database (0-15)
 }
 
 impl Db {
@@ -23,17 +41,25 @@ impl Db {
     pub fn open(path: &str) -> Result<Self> {
         let conn = Connection::open(path)?;
 
-        // Enable WAL mode and foreign keys
+        // Enable WAL mode and optimize pragmas
         conn.execute_batch(
             "PRAGMA journal_mode = WAL;
+             PRAGMA synchronous = NORMAL;
              PRAGMA foreign_keys = ON;
              PRAGMA busy_timeout = 5000;"
         )?;
 
-        let db = Self {
+        let core = Arc::new(DbCore {
             conn: Mutex::new(conn),
-            path: path.to_string(),
-            current_db: Mutex::new(0),
+            autovacuum_enabled: AtomicBool::new(true),
+            last_cleanup: AtomicI64::new(0),
+            autovacuum_interval_ms: AtomicI64::new(DEFAULT_AUTOVACUUM_INTERVAL_MS),
+            notifier: RwLock::new(None),  // Embedded mode by default
+        });
+
+        let db = Self {
+            core,
+            selected_db: 0,
         };
 
         db.migrate()?;
@@ -45,9 +71,18 @@ impl Db {
         Self::open(":memory:")
     }
 
+    /// Create a new session sharing the same database backend
+    /// The new session starts at database 0
+    pub fn session(&self) -> Self {
+        Self {
+            core: Arc::clone(&self.core),
+            selected_db: 0,
+        }
+    }
+
     /// Run schema migrations
     fn migrate(&self) -> Result<()> {
-        let conn = self.conn.lock().unwrap();
+        let conn = self.core.conn.lock().unwrap_or_else(|e| e.into_inner());
         conn.execute_batch(include_str!("schema.sql"))?;
         Ok(())
     }
@@ -594,6 +629,56 @@ impl Db {
             Err(rusqlite::Error::QueryReturnedNoRows) => Ok(None),
             Err(e) => Err(e.into()),
         }
+    }
+
+    // Server mode notification methods (Session 15.1+)
+
+    /// Check if database is in server mode (has notifier attached)
+    pub fn is_server_mode(&self) -> bool {
+        self.core.notifier.read().unwrap().is_some()
+    }
+
+    /// Send notification to all subscribers of a key
+    /// (no-op if not in server mode)
+    pub async fn notify_key(&self, key: &str) -> Result<()> {
+        if let Some(notifier) = self.core.notifier.read().unwrap().as_ref() {
+            let map = notifier.read().unwrap();
+            if let Some(sender) = map.get(key) {
+                let _ = sender.send(());
+            }
+        }
+        Ok(())
+    }
+
+    /// Subscribe to notifications for a key
+    /// - In server mode: returns active broadcast receiver
+    /// - In embedded mode: returns closed receiver (fails immediately)
+    pub async fn subscribe_key(&self, key: &str) -> broadcast::Receiver<()> {
+        if let Some(notifier) = self.core.notifier.read().unwrap().as_ref() {
+            let notifier = Arc::clone(notifier);
+            let mut map = notifier.write().unwrap();
+            let sender = map
+                .entry(key.to_string())
+                .or_insert_with(|| {
+                    let (tx, _) = broadcast::channel(128);
+                    tx
+                })
+                .clone();
+            sender.subscribe()
+        } else {
+            // For embedded mode - return a closed receiver
+            let (tx, rx) = broadcast::channel(1);
+            drop(tx); // Sender dropped, receiver returns Closed
+            rx
+        }
+    }
+
+    /// Attach notifier to database for server mode
+    pub fn with_notifier(
+        &self,
+        notifier: Arc<RwLock<HashMap<String, broadcast::Sender<()>>>>,
+    ) {
+        *self.core.notifier.write().unwrap() = Some(notifier);
     }
 }
 ```
