@@ -13,6 +13,7 @@ SQLite-backed Redis-compatible embedded key-value store written in Rust.
   - Key metadata: `KEYINFO mykey` (type, ttl, created_at, updated_at)
   - Manual cleanup: `VACUUM` (delete expired + reclaim disk)
   - Auto cleanup: `AUTOVACUUM ON` (default, cleans every 60s)
+  - Transactions: `MULTI`/`EXEC`/`DISCARD` (atomic multi-command execution)
   - **Planned**: Version history, time-travel queries, full-text search
 
 ## Install
@@ -198,6 +199,34 @@ redis-cli -p 6767 PUBLISH other "data"         # → No subscribers, returns 0
 - Broadcast delivery: Multiple subscribers receive same message
 - Lazy channel creation: Channels created on first subscriber
 - Auto-cleanup: Channels removed when all subscribers disconnect
+
+### Transactions (Server Mode Only, Session 16) 🚧
+**Status**: Under Development (Session 16.1 ✅) — Atomic multi-command execution with ACID guarantees
+
+Execute multiple commands atomically using SQLite transactions.
+
+```bash
+# Terminal: Execute multiple commands atomically
+redis-cli -p 6767 MULTI
+redis-cli -p 6767 SET counter 0
+redis-cli -p 6767 INCR counter
+redis-cli -p 6767 INCR counter
+redis-cli -p 6767 GET counter
+redis-cli -p 6767 EXEC  # Returns: [OK, (integer) 1, (integer) 2, "0"]
+```
+
+**Commands:**
+- `MULTI` — Enter transaction mode, queue subsequent commands
+- `EXEC` — Execute all queued commands atomically in a single SQLite transaction
+- `DISCARD` — Cancel transaction and clear the command queue
+
+**Characteristics:**
+- Atomic execution: All commands succeed or all rollback (no partial writes)
+- SQLite-backed: True ACID transactions with durability
+- Per-connection: Each connection has independent transaction state
+- Queueing: Commands return "QUEUED" immediately in transaction mode
+- Error handling: Transaction aborted if any command fails, all changes rolled back
+- Restrictions: WATCH/UNWATCH, blocking commands, and pub/sub commands not allowed in transactions
 
 ### Server
 - `PING`, `ECHO`, `QUIT`, `COMMAND`

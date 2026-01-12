@@ -12,11 +12,14 @@ pub struct PubSubMessage {
 }
 
 /// Command queued during MULTI
+///
+/// Stores a command for deferred execution in a transaction.
+/// Commands are buffered as-is and executed atomically on EXEC.
 #[derive(Debug, Clone)]
 pub struct QueuedCommand {
-    /// Command name (uppercase)
+    /// Command name (uppercase) for dispatcher routing
     pub cmd: String,
-    /// Command arguments (raw bytes)
+    /// Command arguments (raw bytes, no parsing overhead)
     pub args: Vec<Vec<u8>>,
 }
 
