@@ -1,13 +1,39 @@
 use rusqlite::{params, Connection};
-use std::sync::Mutex;
+use std::sync::{Arc, Mutex};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use crate::error::{KvError, Result};
 use crate::types::{KeyType, SetOptions, ZMember};
 
-pub struct Db {
+/// Shared database backend (SQLite connection)
+struct DbCore {
     conn: Mutex<Connection>,
-    current_db: Mutex<i32>,
+}
+
+/// Database session with per-instance selected database.
+///
+/// Each `Db` instance has its own `selected_db` state, allowing multiple
+/// sessions to operate on different Redis databases concurrently.
+///
+/// # Example
+/// ```
+/// use redlite::Db;
+///
+/// let db = Db::open(":memory:").unwrap();
+/// db.set("key", b"value", None).unwrap();
+///
+/// // Create another session for a different database
+/// let mut db2 = db.session();
+/// db2.select(1).unwrap();
+/// db2.set("key", b"other", None).unwrap();
+///
+/// // Original session still sees db 0
+/// assert_eq!(db.get("key").unwrap(), Some(b"value".to_vec()));
+/// ```
+#[derive(Clone)]
+pub struct Db {
+    core: Arc<DbCore>,
+    selected_db: i32,
 }
 
 impl Db {
@@ -23,9 +49,13 @@ impl Db {
              PRAGMA busy_timeout = 5000;",
         )?;
 
-        let db = Self {
+        let core = Arc::new(DbCore {
             conn: Mutex::new(conn),
-            current_db: Mutex::new(0),
+        });
+
+        let db = Self {
+            core,
+            selected_db: 0,
         };
 
         db.migrate()?;
@@ -37,25 +67,34 @@ impl Db {
         Self::open(":memory:")
     }
 
+    /// Create a new session sharing the same database backend.
+    /// The new session starts at database 0.
+    pub fn session(&self) -> Self {
+        Self {
+            core: Arc::clone(&self.core),
+            selected_db: 0,
+        }
+    }
+
     /// Run schema migrations
     fn migrate(&self) -> Result<()> {
-        let conn = self.conn.lock().unwrap_or_else(|e| e.into_inner());
+        let conn = self.core.conn.lock().unwrap_or_else(|e| e.into_inner());
         conn.execute_batch(include_str!("schema.sql"))?;
         Ok(())
     }
 
     /// Select a database (0-15)
-    pub fn select(&self, db: i32) -> Result<()> {
+    pub fn select(&mut self, db: i32) -> Result<()> {
         if !(0..=15).contains(&db) {
             return Err(KvError::SyntaxError);
         }
-        *self.current_db.lock().unwrap_or_else(|e| e.into_inner()) = db;
+        self.selected_db = db;
         Ok(())
     }
 
     /// Get current database number
     pub fn current_db(&self) -> i32 {
-        *self.current_db.lock().unwrap_or_else(|e| e.into_inner())
+        self.selected_db
     }
 
     /// Current time in milliseconds since epoch
@@ -68,8 +107,8 @@ impl Db {
 
     /// GET key
     pub fn get(&self, key: &str) -> Result<Option<Vec<u8>>> {
-        let conn = self.conn.lock().unwrap_or_else(|e| e.into_inner());
-        let db = self.current_db();
+        let conn = self.core.conn.lock().unwrap_or_else(|e| e.into_inner());
+        let db = self.selected_db;
         let now = Self::now_ms();
 
         let result: std::result::Result<(Vec<u8>, Option<i64>), _> = conn.query_row(
@@ -114,8 +153,8 @@ impl Db {
 
     /// SET with options, returns whether the key was set
     pub fn set_opts(&self, key: &str, value: &[u8], opts: SetOptions) -> Result<bool> {
-        let conn = self.conn.lock().unwrap_or_else(|e| e.into_inner());
-        let db = self.current_db();
+        let conn = self.core.conn.lock().unwrap_or_else(|e| e.into_inner());
+        let db = self.selected_db;
         let now = Self::now_ms();
 
         let expire_at: Option<i64> = opts.ttl.map(|d| now + d.as_millis() as i64);
@@ -171,8 +210,8 @@ impl Db {
             return Ok(0);
         }
 
-        let conn = self.conn.lock().unwrap_or_else(|e| e.into_inner());
-        let db = self.current_db();
+        let conn = self.core.conn.lock().unwrap_or_else(|e| e.into_inner());
+        let db = self.selected_db;
 
         let placeholders: String = (0..keys.len())
             .map(|i| format!("?{}", i + 2))
@@ -197,8 +236,8 @@ impl Db {
 
     /// TYPE key - returns key type or None if not found
     pub fn key_type(&self, key: &str) -> Result<Option<KeyType>> {
-        let conn = self.conn.lock().unwrap_or_else(|e| e.into_inner());
-        let db = self.current_db();
+        let conn = self.core.conn.lock().unwrap_or_else(|e| e.into_inner());
+        let db = self.selected_db;
         let now = Self::now_ms();
 
         let result: std::result::Result<i32, _> = conn.query_row(
@@ -218,8 +257,8 @@ impl Db {
 
     /// TTL key - returns remaining TTL in seconds (-2 if no key, -1 if no expiry)
     pub fn ttl(&self, key: &str) -> Result<i64> {
-        let conn = self.conn.lock().unwrap_or_else(|e| e.into_inner());
-        let db = self.current_db();
+        let conn = self.core.conn.lock().unwrap_or_else(|e| e.into_inner());
+        let db = self.selected_db;
         let now = Self::now_ms();
 
         let result: std::result::Result<Option<i64>, _> = conn.query_row(
@@ -240,8 +279,8 @@ impl Db {
 
     /// PTTL key - returns remaining TTL in milliseconds (-2 if no key, -1 if no expiry)
     pub fn pttl(&self, key: &str) -> Result<i64> {
-        let conn = self.conn.lock().unwrap_or_else(|e| e.into_inner());
-        let db = self.current_db();
+        let conn = self.core.conn.lock().unwrap_or_else(|e| e.into_inner());
+        let db = self.selected_db;
         let now = Self::now_ms();
 
         let result: std::result::Result<Option<i64>, _> = conn.query_row(
@@ -266,8 +305,8 @@ impl Db {
             return Ok(0);
         }
 
-        let conn = self.conn.lock().unwrap_or_else(|e| e.into_inner());
-        let db = self.current_db();
+        let conn = self.core.conn.lock().unwrap_or_else(|e| e.into_inner());
+        let db = self.selected_db;
         let now = Self::now_ms();
 
         // Count each key individually (duplicates count separately per Redis semantics)
@@ -292,8 +331,8 @@ impl Db {
 
     /// EXPIRE key seconds - set TTL on key
     pub fn expire(&self, key: &str, seconds: i64) -> Result<bool> {
-        let conn = self.conn.lock().unwrap_or_else(|e| e.into_inner());
-        let db = self.current_db();
+        let conn = self.core.conn.lock().unwrap_or_else(|e| e.into_inner());
+        let db = self.selected_db;
         let now = Self::now_ms();
         let expire_at = now + (seconds * 1000);
 
@@ -310,8 +349,8 @@ impl Db {
 
     /// KEYS pattern - return all keys matching glob pattern
     pub fn keys(&self, pattern: &str) -> Result<Vec<String>> {
-        let conn = self.conn.lock().unwrap_or_else(|e| e.into_inner());
-        let db = self.current_db();
+        let conn = self.core.conn.lock().unwrap_or_else(|e| e.into_inner());
+        let db = self.selected_db;
         let now = Self::now_ms();
 
         let mut stmt = conn.prepare(
@@ -338,8 +377,8 @@ impl Db {
         pattern: Option<&str>,
         count: usize,
     ) -> Result<(u64, Vec<String>)> {
-        let conn = self.conn.lock().unwrap_or_else(|e| e.into_inner());
-        let db = self.current_db();
+        let conn = self.core.conn.lock().unwrap_or_else(|e| e.into_inner());
+        let db = self.selected_db;
         let now = Self::now_ms();
 
         let sql = match pattern {
@@ -403,8 +442,8 @@ impl Db {
 
     /// INCRBY key increment - increment by integer amount
     pub fn incrby(&self, key: &str, increment: i64) -> Result<i64> {
-        let conn = self.conn.lock().unwrap_or_else(|e| e.into_inner());
-        let db = self.current_db();
+        let conn = self.core.conn.lock().unwrap_or_else(|e| e.into_inner());
+        let db = self.selected_db;
         let now = Self::now_ms();
 
         // Get current value and TTL
@@ -472,8 +511,8 @@ impl Db {
 
     /// INCRBYFLOAT key increment - increment by float amount
     pub fn incrbyfloat(&self, key: &str, increment: f64) -> Result<String> {
-        let conn = self.conn.lock().unwrap_or_else(|e| e.into_inner());
-        let db = self.current_db();
+        let conn = self.core.conn.lock().unwrap_or_else(|e| e.into_inner());
+        let db = self.selected_db;
         let now = Self::now_ms();
 
         // Get current value, TTL, and key_id
@@ -558,8 +597,8 @@ impl Db {
             return Ok(());
         }
 
-        let conn = self.conn.lock().unwrap_or_else(|e| e.into_inner());
-        let db = self.current_db();
+        let conn = self.core.conn.lock().unwrap_or_else(|e| e.into_inner());
+        let db = self.selected_db;
         let now = Self::now_ms();
 
         // Use a transaction for atomicity
@@ -609,8 +648,8 @@ impl Db {
 
     /// APPEND key value - append to string, create if not exists
     pub fn append(&self, key: &str, value: &[u8]) -> Result<i64> {
-        let conn = self.conn.lock().unwrap_or_else(|e| e.into_inner());
-        let db = self.current_db();
+        let conn = self.core.conn.lock().unwrap_or_else(|e| e.into_inner());
+        let db = self.selected_db;
         let now = Self::now_ms();
 
         // Get current value
@@ -742,7 +781,7 @@ impl Db {
 
     /// Helper to get or create a hash key, returns key_id
     fn get_or_create_hash_key(&self, conn: &Connection, key: &str) -> Result<i64> {
-        let db = self.current_db();
+        let db = self.selected_db;
         let now = Self::now_ms();
 
         // Check if key exists and is correct type
@@ -774,7 +813,7 @@ impl Db {
     }
 
     fn create_hash_key(&self, conn: &Connection, key: &str) -> Result<i64> {
-        let db = self.current_db();
+        let db = self.selected_db;
         let now = Self::now_ms();
 
         conn.execute(
@@ -787,7 +826,7 @@ impl Db {
 
     /// Helper to get hash key_id if it exists and is not expired
     fn get_hash_key_id(&self, conn: &Connection, key: &str) -> Result<Option<i64>> {
-        let db = self.current_db();
+        let db = self.selected_db;
         let now = Self::now_ms();
 
         let result: std::result::Result<(i64, i32, Option<i64>), _> = conn.query_row(
@@ -821,7 +860,7 @@ impl Db {
             return Ok(0);
         }
 
-        let conn = self.conn.lock().unwrap_or_else(|e| e.into_inner());
+        let conn = self.core.conn.lock().unwrap_or_else(|e| e.into_inner());
         let key_id = self.get_or_create_hash_key(&conn, key)?;
 
         let mut new_fields = 0i64;
@@ -859,7 +898,7 @@ impl Db {
 
     /// HGET key field - get hash field value
     pub fn hget(&self, key: &str, field: &str) -> Result<Option<Vec<u8>>> {
-        let conn = self.conn.lock().unwrap_or_else(|e| e.into_inner());
+        let conn = self.core.conn.lock().unwrap_or_else(|e| e.into_inner());
 
         let key_id = match self.get_hash_key_id(&conn, key)? {
             Some(id) => id,
@@ -881,7 +920,7 @@ impl Db {
 
     /// HMGET key field [field ...] - get multiple hash field values
     pub fn hmget(&self, key: &str, fields: &[&str]) -> Result<Vec<Option<Vec<u8>>>> {
-        let conn = self.conn.lock().unwrap_or_else(|e| e.into_inner());
+        let conn = self.core.conn.lock().unwrap_or_else(|e| e.into_inner());
 
         let key_id = match self.get_hash_key_id(&conn, key)? {
             Some(id) => id,
@@ -908,7 +947,7 @@ impl Db {
 
     /// HGETALL key - get all field-value pairs
     pub fn hgetall(&self, key: &str) -> Result<Vec<(String, Vec<u8>)>> {
-        let conn = self.conn.lock().unwrap_or_else(|e| e.into_inner());
+        let conn = self.core.conn.lock().unwrap_or_else(|e| e.into_inner());
 
         let key_id = match self.get_hash_key_id(&conn, key)? {
             Some(id) => id,
@@ -934,7 +973,7 @@ impl Db {
             return Ok(0);
         }
 
-        let conn = self.conn.lock().unwrap_or_else(|e| e.into_inner());
+        let conn = self.core.conn.lock().unwrap_or_else(|e| e.into_inner());
 
         let key_id = match self.get_hash_key_id(&conn, key)? {
             Some(id) => id,
@@ -975,7 +1014,7 @@ impl Db {
 
     /// HEXISTS key field - check if field exists in hash
     pub fn hexists(&self, key: &str, field: &str) -> Result<bool> {
-        let conn = self.conn.lock().unwrap_or_else(|e| e.into_inner());
+        let conn = self.core.conn.lock().unwrap_or_else(|e| e.into_inner());
 
         let key_id = match self.get_hash_key_id(&conn, key)? {
             Some(id) => id,
@@ -995,7 +1034,7 @@ impl Db {
 
     /// HKEYS key - get all field names
     pub fn hkeys(&self, key: &str) -> Result<Vec<String>> {
-        let conn = self.conn.lock().unwrap_or_else(|e| e.into_inner());
+        let conn = self.core.conn.lock().unwrap_or_else(|e| e.into_inner());
 
         let key_id = match self.get_hash_key_id(&conn, key)? {
             Some(id) => id,
@@ -1015,7 +1054,7 @@ impl Db {
 
     /// HVALS key - get all values
     pub fn hvals(&self, key: &str) -> Result<Vec<Vec<u8>>> {
-        let conn = self.conn.lock().unwrap_or_else(|e| e.into_inner());
+        let conn = self.core.conn.lock().unwrap_or_else(|e| e.into_inner());
 
         let key_id = match self.get_hash_key_id(&conn, key)? {
             Some(id) => id,
@@ -1035,7 +1074,7 @@ impl Db {
 
     /// HLEN key - get number of fields in hash
     pub fn hlen(&self, key: &str) -> Result<i64> {
-        let conn = self.conn.lock().unwrap_or_else(|e| e.into_inner());
+        let conn = self.core.conn.lock().unwrap_or_else(|e| e.into_inner());
 
         let key_id = match self.get_hash_key_id(&conn, key)? {
             Some(id) => id,
@@ -1053,7 +1092,7 @@ impl Db {
 
     /// HINCRBY key field increment - increment hash field by integer
     pub fn hincrby(&self, key: &str, field: &str, increment: i64) -> Result<i64> {
-        let conn = self.conn.lock().unwrap_or_else(|e| e.into_inner());
+        let conn = self.core.conn.lock().unwrap_or_else(|e| e.into_inner());
         let key_id = self.get_or_create_hash_key(&conn, key)?;
 
         // Get current value
@@ -1094,7 +1133,7 @@ impl Db {
 
     /// HINCRBYFLOAT key field increment - increment hash field by float
     pub fn hincrbyfloat(&self, key: &str, field: &str, increment: f64) -> Result<String> {
-        let conn = self.conn.lock().unwrap_or_else(|e| e.into_inner());
+        let conn = self.core.conn.lock().unwrap_or_else(|e| e.into_inner());
         let key_id = self.get_or_create_hash_key(&conn, key)?;
 
         // Get current value
@@ -1144,7 +1183,7 @@ impl Db {
 
     /// HSETNX key field value - set field only if it doesn't exist
     pub fn hsetnx(&self, key: &str, field: &str, value: &[u8]) -> Result<bool> {
-        let conn = self.conn.lock().unwrap_or_else(|e| e.into_inner());
+        let conn = self.core.conn.lock().unwrap_or_else(|e| e.into_inner());
         let key_id = self.get_or_create_hash_key(&conn, key)?;
 
         // Check if field exists
@@ -1219,7 +1258,7 @@ impl Db {
 
     /// Helper to get or create a list key, returns key_id
     fn get_or_create_list_key(&self, conn: &Connection, key: &str) -> Result<i64> {
-        let db = self.current_db();
+        let db = self.selected_db;
         let now = Self::now_ms();
 
         let existing: std::result::Result<(i64, i32, Option<i64>), _> = conn.query_row(
@@ -1250,7 +1289,7 @@ impl Db {
     }
 
     fn create_list_key(&self, conn: &Connection, key: &str) -> Result<i64> {
-        let db = self.current_db();
+        let db = self.selected_db;
         let now = Self::now_ms();
 
         conn.execute(
@@ -1263,7 +1302,7 @@ impl Db {
 
     /// Helper to get list key_id if it exists and is not expired
     fn get_list_key_id(&self, conn: &Connection, key: &str) -> Result<Option<i64>> {
-        let db = self.current_db();
+        let db = self.selected_db;
         let now = Self::now_ms();
 
         let result: std::result::Result<(i64, i32, Option<i64>), _> = conn.query_row(
@@ -1297,7 +1336,7 @@ impl Db {
             return Ok(0);
         }
 
-        let conn = self.conn.lock().unwrap_or_else(|e| e.into_inner());
+        let conn = self.core.conn.lock().unwrap_or_else(|e| e.into_inner());
         let key_id = self.get_or_create_list_key(&conn, key)?;
 
         // Get current min position (or start at LIST_GAP if empty)
@@ -1357,7 +1396,7 @@ impl Db {
             return Ok(0);
         }
 
-        let conn = self.conn.lock().unwrap_or_else(|e| e.into_inner());
+        let conn = self.core.conn.lock().unwrap_or_else(|e| e.into_inner());
         let key_id = self.get_or_create_list_key(&conn, key)?;
 
         // Get current max position (or start at 0 if empty)
@@ -1413,7 +1452,7 @@ impl Db {
 
     /// LPOP key [count] - remove and return elements from head
     pub fn lpop(&self, key: &str, count: Option<usize>) -> Result<Vec<Vec<u8>>> {
-        let conn = self.conn.lock().unwrap_or_else(|e| e.into_inner());
+        let conn = self.core.conn.lock().unwrap_or_else(|e| e.into_inner());
 
         let key_id = match self.get_list_key_id(&conn, key)? {
             Some(id) => id,
@@ -1469,7 +1508,7 @@ impl Db {
 
     /// RPOP key [count] - remove and return elements from tail
     pub fn rpop(&self, key: &str, count: Option<usize>) -> Result<Vec<Vec<u8>>> {
-        let conn = self.conn.lock().unwrap_or_else(|e| e.into_inner());
+        let conn = self.core.conn.lock().unwrap_or_else(|e| e.into_inner());
 
         let key_id = match self.get_list_key_id(&conn, key)? {
             Some(id) => id,
@@ -1525,7 +1564,7 @@ impl Db {
 
     /// LLEN key - get list length
     pub fn llen(&self, key: &str) -> Result<i64> {
-        let conn = self.conn.lock().unwrap_or_else(|e| e.into_inner());
+        let conn = self.core.conn.lock().unwrap_or_else(|e| e.into_inner());
 
         let key_id = match self.get_list_key_id(&conn, key)? {
             Some(id) => id,
@@ -1543,7 +1582,7 @@ impl Db {
 
     /// LRANGE key start stop - get range of elements
     pub fn lrange(&self, key: &str, start: i64, stop: i64) -> Result<Vec<Vec<u8>>> {
-        let conn = self.conn.lock().unwrap_or_else(|e| e.into_inner());
+        let conn = self.core.conn.lock().unwrap_or_else(|e| e.into_inner());
 
         let key_id = match self.get_list_key_id(&conn, key)? {
             Some(id) => id,
@@ -1596,7 +1635,7 @@ impl Db {
 
     /// LINDEX key index - get element by index
     pub fn lindex(&self, key: &str, index: i64) -> Result<Option<Vec<u8>>> {
-        let conn = self.conn.lock().unwrap_or_else(|e| e.into_inner());
+        let conn = self.core.conn.lock().unwrap_or_else(|e| e.into_inner());
 
         let key_id = match self.get_list_key_id(&conn, key)? {
             Some(id) => id,
@@ -1637,7 +1676,7 @@ impl Db {
 
     /// LSET key index element - set element at index
     pub fn lset(&self, key: &str, index: i64, value: &[u8]) -> Result<()> {
-        let conn = self.conn.lock().unwrap_or_else(|e| e.into_inner());
+        let conn = self.core.conn.lock().unwrap_or_else(|e| e.into_inner());
 
         let key_id = match self.get_list_key_id(&conn, key)? {
             Some(id) => id,
@@ -1687,7 +1726,7 @@ impl Db {
 
     /// LTRIM key start stop - trim list to specified range
     pub fn ltrim(&self, key: &str, start: i64, stop: i64) -> Result<()> {
-        let conn = self.conn.lock().unwrap_or_else(|e| e.into_inner());
+        let conn = self.core.conn.lock().unwrap_or_else(|e| e.into_inner());
 
         let key_id = match self.get_list_key_id(&conn, key)? {
             Some(id) => id,
@@ -1775,7 +1814,7 @@ impl Db {
 
     /// Helper to create a new set key
     fn create_set_key(&self, conn: &Connection, key: &str) -> Result<i64> {
-        let db = self.current_db();
+        let db = self.selected_db;
         let now = Self::now_ms();
 
         conn.execute(
@@ -1795,7 +1834,7 @@ impl Db {
 
     /// Get or create a set key, returns key_id
     fn get_or_create_set_key(&self, conn: &Connection, key: &str) -> Result<i64> {
-        let db = self.current_db();
+        let db = self.selected_db;
         let now = Self::now_ms();
 
         let existing: std::result::Result<(i64, i32, Option<i64>), _> = conn.query_row(
@@ -1827,7 +1866,7 @@ impl Db {
 
     /// Get set key_id if it exists and is valid
     fn get_set_key_id(&self, conn: &Connection, key: &str) -> Result<Option<i64>> {
-        let db = self.current_db();
+        let db = self.selected_db;
         let now = Self::now_ms();
 
         let result: std::result::Result<(i64, i32, Option<i64>), _> = conn.query_row(
@@ -1861,7 +1900,7 @@ impl Db {
             return Ok(0);
         }
 
-        let conn = self.conn.lock().unwrap_or_else(|e| e.into_inner());
+        let conn = self.core.conn.lock().unwrap_or_else(|e| e.into_inner());
         let key_id = self.get_or_create_set_key(&conn, key)?;
 
         let mut added = 0i64;
@@ -1889,7 +1928,7 @@ impl Db {
             return Ok(0);
         }
 
-        let conn = self.conn.lock().unwrap_or_else(|e| e.into_inner());
+        let conn = self.core.conn.lock().unwrap_or_else(|e| e.into_inner());
 
         let key_id = match self.get_set_key_id(&conn, key)? {
             Some(id) => id,
@@ -1928,7 +1967,7 @@ impl Db {
 
     /// SMEMBERS key - get all members of set
     pub fn smembers(&self, key: &str) -> Result<Vec<Vec<u8>>> {
-        let conn = self.conn.lock().unwrap_or_else(|e| e.into_inner());
+        let conn = self.core.conn.lock().unwrap_or_else(|e| e.into_inner());
 
         let key_id = match self.get_set_key_id(&conn, key)? {
             Some(id) => id,
@@ -1951,7 +1990,7 @@ impl Db {
 
     /// SISMEMBER key member - check if member exists in set (returns true/false)
     pub fn sismember(&self, key: &str, member: &[u8]) -> Result<bool> {
-        let conn = self.conn.lock().unwrap_or_else(|e| e.into_inner());
+        let conn = self.core.conn.lock().unwrap_or_else(|e| e.into_inner());
 
         let key_id = match self.get_set_key_id(&conn, key)? {
             Some(id) => id,
@@ -1971,7 +2010,7 @@ impl Db {
 
     /// SCARD key - get cardinality (number of members) of set
     pub fn scard(&self, key: &str) -> Result<i64> {
-        let conn = self.conn.lock().unwrap_or_else(|e| e.into_inner());
+        let conn = self.core.conn.lock().unwrap_or_else(|e| e.into_inner());
 
         let key_id = match self.get_set_key_id(&conn, key)? {
             Some(id) => id,
@@ -1989,7 +2028,7 @@ impl Db {
 
     /// SPOP key [count] - remove and return random member(s)
     pub fn spop(&self, key: &str, count: Option<usize>) -> Result<Vec<Vec<u8>>> {
-        let conn = self.conn.lock().unwrap_or_else(|e| e.into_inner());
+        let conn = self.core.conn.lock().unwrap_or_else(|e| e.into_inner());
 
         let key_id = match self.get_set_key_id(&conn, key)? {
             Some(id) => id,
@@ -2042,7 +2081,7 @@ impl Db {
 
     /// SRANDMEMBER key [count] - get random member(s) without removing
     pub fn srandmember(&self, key: &str, count: Option<i64>) -> Result<Vec<Vec<u8>>> {
-        let conn = self.conn.lock().unwrap_or_else(|e| e.into_inner());
+        let conn = self.core.conn.lock().unwrap_or_else(|e| e.into_inner());
 
         let key_id = match self.get_set_key_id(&conn, key)? {
             Some(id) => id,
@@ -2154,7 +2193,7 @@ impl Db {
 
     /// Helper to create a new sorted set key
     fn create_zset_key(&self, conn: &Connection, key: &str) -> Result<i64> {
-        let db = self.current_db();
+        let db = self.selected_db;
         let now = Self::now_ms();
 
         conn.execute(
@@ -2174,7 +2213,7 @@ impl Db {
 
     /// Get or create a sorted set key, returns key_id
     fn get_or_create_zset_key(&self, conn: &Connection, key: &str) -> Result<i64> {
-        let db = self.current_db();
+        let db = self.selected_db;
         let now = Self::now_ms();
 
         let existing: std::result::Result<(i64, i32, Option<i64>), _> = conn.query_row(
@@ -2206,7 +2245,7 @@ impl Db {
 
     /// Get sorted set key_id if it exists and is valid
     fn get_zset_key_id(&self, conn: &Connection, key: &str) -> Result<Option<i64>> {
-        let db = self.current_db();
+        let db = self.selected_db;
         let now = Self::now_ms();
 
         let result: std::result::Result<(i64, i32, Option<i64>), _> = conn.query_row(
@@ -2240,7 +2279,7 @@ impl Db {
             return Ok(0);
         }
 
-        let conn = self.conn.lock().unwrap_or_else(|e| e.into_inner());
+        let conn = self.core.conn.lock().unwrap_or_else(|e| e.into_inner());
         let key_id = self.get_or_create_zset_key(&conn, key)?;
 
         let mut added = 0i64;
@@ -2286,7 +2325,7 @@ impl Db {
             return Ok(0);
         }
 
-        let conn = self.conn.lock().unwrap_or_else(|e| e.into_inner());
+        let conn = self.core.conn.lock().unwrap_or_else(|e| e.into_inner());
 
         let key_id = match self.get_zset_key_id(&conn, key)? {
             Some(id) => id,
@@ -2325,7 +2364,7 @@ impl Db {
 
     /// ZSCORE key member - get score of member
     pub fn zscore(&self, key: &str, member: &[u8]) -> Result<Option<f64>> {
-        let conn = self.conn.lock().unwrap_or_else(|e| e.into_inner());
+        let conn = self.core.conn.lock().unwrap_or_else(|e| e.into_inner());
 
         let key_id = match self.get_zset_key_id(&conn, key)? {
             Some(id) => id,
@@ -2347,7 +2386,7 @@ impl Db {
 
     /// ZRANK key member - get rank (0-based, ascending by score)
     pub fn zrank(&self, key: &str, member: &[u8]) -> Result<Option<i64>> {
-        let conn = self.conn.lock().unwrap_or_else(|e| e.into_inner());
+        let conn = self.core.conn.lock().unwrap_or_else(|e| e.into_inner());
 
         let key_id = match self.get_zset_key_id(&conn, key)? {
             Some(id) => id,
@@ -2379,7 +2418,7 @@ impl Db {
 
     /// ZREVRANK key member - get rank (descending by score)
     pub fn zrevrank(&self, key: &str, member: &[u8]) -> Result<Option<i64>> {
-        let conn = self.conn.lock().unwrap_or_else(|e| e.into_inner());
+        let conn = self.core.conn.lock().unwrap_or_else(|e| e.into_inner());
 
         let key_id = match self.get_zset_key_id(&conn, key)? {
             Some(id) => id,
@@ -2411,7 +2450,7 @@ impl Db {
 
     /// ZCARD key - get cardinality
     pub fn zcard(&self, key: &str) -> Result<i64> {
-        let conn = self.conn.lock().unwrap_or_else(|e| e.into_inner());
+        let conn = self.core.conn.lock().unwrap_or_else(|e| e.into_inner());
 
         let key_id = match self.get_zset_key_id(&conn, key)? {
             Some(id) => id,
@@ -2429,7 +2468,7 @@ impl Db {
 
     /// ZRANGE key start stop [WITHSCORES] - get members by rank range (ascending)
     pub fn zrange(&self, key: &str, start: i64, stop: i64, with_scores: bool) -> Result<Vec<ZMember>> {
-        let conn = self.conn.lock().unwrap_or_else(|e| e.into_inner());
+        let conn = self.core.conn.lock().unwrap_or_else(|e| e.into_inner());
 
         let key_id = match self.get_zset_key_id(&conn, key)? {
             Some(id) => id,
@@ -2495,7 +2534,7 @@ impl Db {
 
     /// ZREVRANGE key start stop [WITHSCORES] - get members by rank range (descending)
     pub fn zrevrange(&self, key: &str, start: i64, stop: i64, with_scores: bool) -> Result<Vec<ZMember>> {
-        let conn = self.conn.lock().unwrap_or_else(|e| e.into_inner());
+        let conn = self.core.conn.lock().unwrap_or_else(|e| e.into_inner());
 
         let key_id = match self.get_zset_key_id(&conn, key)? {
             Some(id) => id,
@@ -2568,7 +2607,7 @@ impl Db {
         offset: Option<i64>,
         count: Option<i64>,
     ) -> Result<Vec<ZMember>> {
-        let conn = self.conn.lock().unwrap_or_else(|e| e.into_inner());
+        let conn = self.core.conn.lock().unwrap_or_else(|e| e.into_inner());
 
         let key_id = match self.get_zset_key_id(&conn, key)? {
             Some(id) => id,
@@ -2600,7 +2639,7 @@ impl Db {
 
     /// ZCOUNT key min max - count members in score range
     pub fn zcount(&self, key: &str, min: f64, max: f64) -> Result<i64> {
-        let conn = self.conn.lock().unwrap_or_else(|e| e.into_inner());
+        let conn = self.core.conn.lock().unwrap_or_else(|e| e.into_inner());
 
         let key_id = match self.get_zset_key_id(&conn, key)? {
             Some(id) => id,
@@ -2618,7 +2657,7 @@ impl Db {
 
     /// ZINCRBY key increment member - increment score of member
     pub fn zincrby(&self, key: &str, increment: f64, member: &[u8]) -> Result<f64> {
-        let conn = self.conn.lock().unwrap_or_else(|e| e.into_inner());
+        let conn = self.core.conn.lock().unwrap_or_else(|e| e.into_inner());
         let key_id = self.get_or_create_zset_key(&conn, key)?;
 
         // Check if member exists
@@ -2659,7 +2698,7 @@ impl Db {
 
     /// ZREMRANGEBYRANK key start stop - remove members by rank range
     pub fn zremrangebyrank(&self, key: &str, start: i64, stop: i64) -> Result<i64> {
-        let conn = self.conn.lock().unwrap_or_else(|e| e.into_inner());
+        let conn = self.core.conn.lock().unwrap_or_else(|e| e.into_inner());
 
         let key_id = match self.get_zset_key_id(&conn, key)? {
             Some(id) => id,
@@ -2736,7 +2775,7 @@ impl Db {
 
     /// ZREMRANGEBYSCORE key min max - remove members by score range
     pub fn zremrangebyscore(&self, key: &str, min: f64, max: f64) -> Result<i64> {
-        let conn = self.conn.lock().unwrap_or_else(|e| e.into_inner());
+        let conn = self.core.conn.lock().unwrap_or_else(|e| e.into_inner());
 
         let key_id = match self.get_zset_key_id(&conn, key)? {
             Some(id) => id,
@@ -2767,6 +2806,33 @@ impl Db {
         }
 
         Ok(removed)
+    }
+
+    // --- Session 10: Server Operations ---
+
+    /// DBSIZE - Return the number of keys in the currently selected database
+    pub fn dbsize(&self) -> Result<i64> {
+        let conn = self.core.conn.lock().unwrap_or_else(|e| e.into_inner());
+        let db = self.selected_db;
+        let now = Self::now_ms();
+
+        let count: i64 = conn.query_row(
+            "SELECT COUNT(*) FROM keys WHERE db = ?1 AND (expire_at IS NULL OR expire_at > ?2)",
+            params![db, now],
+            |row| row.get(0),
+        )?;
+
+        Ok(count)
+    }
+
+    /// FLUSHDB - Delete all keys in the currently selected database
+    pub fn flushdb(&self) -> Result<()> {
+        let conn = self.core.conn.lock().unwrap_or_else(|e| e.into_inner());
+        let db = self.selected_db;
+
+        conn.execute("DELETE FROM keys WHERE db = ?1", params![db])?;
+
+        Ok(())
     }
 }
 
@@ -2879,7 +2945,7 @@ mod tests {
 
     #[test]
     fn test_select_db() {
-        let db = Db::open_memory().unwrap();
+        let mut db = Db::open_memory().unwrap();
 
         db.set("key", b"value", None).unwrap();
 
@@ -3009,7 +3075,7 @@ mod tests {
     #[test]
     fn test_disk_select_db() {
         let path = temp_db_path();
-        let db = Db::open(&path).unwrap();
+        let mut db = Db::open(&path).unwrap();
 
         db.set("key", b"value", None).unwrap();
 
@@ -5197,5 +5263,150 @@ mod tests {
         }
 
         cleanup_db(&path);
+    }
+
+    // --- Session 10: Server Operations tests ---
+
+    #[test]
+    fn test_dbsize_empty() {
+        let db = Db::open_memory().unwrap();
+        assert_eq!(db.dbsize().unwrap(), 0);
+    }
+
+    #[test]
+    fn test_dbsize_with_keys() {
+        let db = Db::open_memory().unwrap();
+        db.set("key1", b"value1", None).unwrap();
+        db.set("key2", b"value2", None).unwrap();
+        db.set("key3", b"value3", None).unwrap();
+        assert_eq!(db.dbsize().unwrap(), 3);
+    }
+
+    #[test]
+    fn test_dbsize_excludes_expired() {
+        let db = Db::open_memory().unwrap();
+        db.set("key1", b"value1", None).unwrap();
+        db.set(
+            "key2",
+            b"value2",
+            Some(std::time::Duration::from_millis(1)),
+        )
+        .unwrap();
+        std::thread::sleep(std::time::Duration::from_millis(10));
+        assert_eq!(db.dbsize().unwrap(), 1);
+    }
+
+    #[test]
+    fn test_dbsize_multiple_types() {
+        let db = Db::open_memory().unwrap();
+        db.set("string", b"value", None).unwrap();
+        db.hset("hash", &[("field", b"value".as_slice())]).unwrap();
+        db.lpush("list", &[b"item".as_slice()]).unwrap();
+        db.sadd("set", &[b"member".as_slice()]).unwrap();
+        db.zadd("zset", &[ZMember::new(1.0, "member")]).unwrap();
+        assert_eq!(db.dbsize().unwrap(), 5);
+    }
+
+    #[test]
+    fn test_flushdb_empty() {
+        let db = Db::open_memory().unwrap();
+        db.flushdb().unwrap();
+        assert_eq!(db.dbsize().unwrap(), 0);
+    }
+
+    #[test]
+    fn test_flushdb_with_keys() {
+        let db = Db::open_memory().unwrap();
+        db.set("key1", b"value1", None).unwrap();
+        db.set("key2", b"value2", None).unwrap();
+        db.hset("hash", &[("field", b"value".as_slice())]).unwrap();
+        assert_eq!(db.dbsize().unwrap(), 3);
+
+        db.flushdb().unwrap();
+        assert_eq!(db.dbsize().unwrap(), 0);
+        assert!(db.get("key1").unwrap().is_none());
+    }
+
+    #[test]
+    fn test_select_valid() {
+        let mut db = Db::open_memory().unwrap();
+        assert_eq!(db.current_db(), 0);
+        db.select(5).unwrap();
+        assert_eq!(db.current_db(), 5);
+        db.select(15).unwrap();
+        assert_eq!(db.current_db(), 15);
+        db.select(0).unwrap();
+        assert_eq!(db.current_db(), 0);
+    }
+
+    #[test]
+    fn test_select_invalid() {
+        let mut db = Db::open_memory().unwrap();
+        assert!(db.select(-1).is_err());
+        assert!(db.select(16).is_err());
+        assert!(db.select(100).is_err());
+    }
+
+    #[test]
+    fn test_select_database_isolation() {
+        let mut db = Db::open_memory().unwrap();
+
+        // Set key in db 0
+        db.set("key", b"value0", None).unwrap();
+        assert_eq!(db.get("key").unwrap(), Some(b"value0".to_vec()));
+
+        // Switch to db 1 - key shouldn't exist
+        db.select(1).unwrap();
+        assert!(db.get("key").unwrap().is_none());
+
+        // Set different value in db 1
+        db.set("key", b"value1", None).unwrap();
+        assert_eq!(db.get("key").unwrap(), Some(b"value1".to_vec()));
+
+        // Switch back to db 0 - original value should still be there
+        db.select(0).unwrap();
+        assert_eq!(db.get("key").unwrap(), Some(b"value0".to_vec()));
+    }
+
+    #[test]
+    fn test_flushdb_only_current_db() {
+        let mut db = Db::open_memory().unwrap();
+
+        // Set key in db 0
+        db.set("key0", b"value0", None).unwrap();
+
+        // Set key in db 1
+        db.select(1).unwrap();
+        db.set("key1", b"value1", None).unwrap();
+
+        // Flush db 1
+        db.flushdb().unwrap();
+        assert_eq!(db.dbsize().unwrap(), 0);
+        assert!(db.get("key1").unwrap().is_none());
+
+        // db 0 should still have its key
+        db.select(0).unwrap();
+        assert_eq!(db.dbsize().unwrap(), 1);
+        assert_eq!(db.get("key0").unwrap(), Some(b"value0".to_vec()));
+    }
+
+    #[test]
+    fn test_dbsize_per_database() {
+        let mut db = Db::open_memory().unwrap();
+
+        // Add keys to db 0
+        db.set("key1", b"value1", None).unwrap();
+        db.set("key2", b"value2", None).unwrap();
+        assert_eq!(db.dbsize().unwrap(), 2);
+
+        // Switch to db 1 and add keys
+        db.select(1).unwrap();
+        assert_eq!(db.dbsize().unwrap(), 0);
+        db.set("key3", b"value3", None).unwrap();
+        assert_eq!(db.dbsize().unwrap(), 1);
+
+        // Verify db 0 still has 2 keys
+        db.select(0).unwrap();
+        assert_eq!(db.dbsize().unwrap(), 2);
     }
 }

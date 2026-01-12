@@ -1,5 +1,4 @@
 use clap::Parser;
-use std::sync::Arc;
 
 mod db;
 mod error;
@@ -29,7 +28,7 @@ async fn main() -> anyhow::Result<()> {
 
     let args = Args::parse();
 
-    let db = Arc::new(Db::open(&args.db)?);
+    let db = Db::open(&args.db)?;
     tracing::info!("Opened database: {}", args.db);
 
     let server = Server::new(db);

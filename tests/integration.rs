@@ -46,6 +46,20 @@ fn redis_cli(port: u16, args: &[&str]) -> String {
     String::from_utf8_lossy(&output.stdout).trim().to_string()
 }
 
+/// Run redis-cli with a specific database selected via -n flag
+fn redis_cli_n(port: u16, db: i32, args: &[&str]) -> String {
+    let output = Command::new("redis-cli")
+        .arg("-p")
+        .arg(port.to_string())
+        .arg("-n")
+        .arg(db.to_string())
+        .args(args)
+        .output()
+        .expect("Failed to run redis-cli");
+
+    String::from_utf8_lossy(&output.stdout).trim().to_string()
+}
+
 #[test]
 fn test_ping() {
     let _server = start_server(16380);
@@ -1175,4 +1189,155 @@ fn test_zset_wrong_type() {
 
     let r3 = redis_cli(16456, &["ZRANGE", "mystring", "0", "-1"]);
     assert!(r3.contains("WRONGTYPE"), "Expected WRONGTYPE, got: {}", r3);
+}
+
+// --- Session 10: Server Operations integration tests ---
+
+#[test]
+fn test_select_db() {
+    let _server = start_server(16457);
+
+    // Set a key in db 0
+    redis_cli(16457, &["SET", "key", "value0"]);
+    assert_eq!(redis_cli(16457, &["GET", "key"]), "value0");
+
+    // SELECT db 1 returns OK
+    let r1 = redis_cli(16457, &["SELECT", "1"]);
+    assert_eq!(r1, "OK", "Expected OK for SELECT, got: {}", r1);
+
+    // Use -n flag to query db 1 - key shouldn't exist
+    let r2 = redis_cli_n(16457, 1, &["GET", "key"]);
+    assert!(r2.is_empty() || r2.contains("nil"), "Expected nil in db 1, got: {}", r2);
+
+    // Set a different value in db 1
+    redis_cli_n(16457, 1, &["SET", "key", "value1"]);
+    assert_eq!(redis_cli_n(16457, 1, &["GET", "key"]), "value1");
+
+    // Verify db 0 still has original value
+    assert_eq!(redis_cli(16457, &["GET", "key"]), "value0");
+}
+
+#[test]
+fn test_select_invalid_db() {
+    let _server = start_server(16458);
+
+    // SELECT with invalid database index
+    let r1 = redis_cli(16458, &["SELECT", "16"]);
+    assert!(r1.contains("ERR") || r1.contains("out of range"), "Expected error, got: {}", r1);
+
+    let r2 = redis_cli(16458, &["SELECT", "-1"]);
+    assert!(r2.contains("ERR") || r2.contains("out of range") || r2.contains("integer"), "Expected error, got: {}", r2);
+
+    let r3 = redis_cli(16458, &["SELECT", "abc"]);
+    assert!(r3.contains("integer") || r3.contains("ERR"), "Expected error, got: {}", r3);
+}
+
+#[test]
+fn test_dbsize_empty() {
+    let _server = start_server(16459);
+
+    let r = redis_cli(16459, &["DBSIZE"]);
+    assert!(check_int(&r, 0), "Expected 0, got: {}", r);
+}
+
+#[test]
+fn test_dbsize_with_keys() {
+    let _server = start_server(16460);
+
+    redis_cli(16460, &["SET", "key1", "value1"]);
+    redis_cli(16460, &["SET", "key2", "value2"]);
+    redis_cli(16460, &["HSET", "hash", "field", "value"]);
+
+    let r = redis_cli(16460, &["DBSIZE"]);
+    assert!(check_int(&r, 3), "Expected 3, got: {}", r);
+}
+
+#[test]
+fn test_flushdb() {
+    let _server = start_server(16461);
+
+    // Add some keys
+    redis_cli(16461, &["SET", "key1", "value1"]);
+    redis_cli(16461, &["SET", "key2", "value2"]);
+    redis_cli(16461, &["HSET", "hash", "field", "value"]);
+
+    let r1 = redis_cli(16461, &["DBSIZE"]);
+    assert!(check_int(&r1, 3), "Expected 3, got: {}", r1);
+
+    // Flush the database
+    let r2 = redis_cli(16461, &["FLUSHDB"]);
+    assert_eq!(r2, "OK", "Expected OK for FLUSHDB, got: {}", r2);
+
+    // Verify empty
+    let r3 = redis_cli(16461, &["DBSIZE"]);
+    assert!(check_int(&r3, 0), "Expected 0 after flush, got: {}", r3);
+
+    // Verify keys are gone
+    let r4 = redis_cli(16461, &["GET", "key1"]);
+    assert!(r4.is_empty() || r4.contains("nil"), "Expected nil, got: {}", r4);
+}
+
+#[test]
+fn test_info_basic() {
+    let _server = start_server(16462);
+
+    let r = redis_cli(16462, &["INFO"]);
+    assert!(r.contains("Server") || r.contains("redis_version"), "Expected INFO output, got: {}", r);
+}
+
+#[test]
+fn test_info_keyspace() {
+    let _server = start_server(16463);
+
+    redis_cli(16463, &["SET", "key1", "value1"]);
+    redis_cli(16463, &["SET", "key2", "value2"]);
+
+    let r = redis_cli(16463, &["INFO", "keyspace"]);
+    assert!(r.contains("Keyspace") || r.contains("db0"), "Expected keyspace info, got: {}", r);
+    assert!(r.contains("keys=2") || r.contains("2"), "Expected keys count, got: {}", r);
+}
+
+#[test]
+fn test_dbsize_per_database() {
+    let _server = start_server(16464);
+
+    // Add keys to db 0
+    redis_cli(16464, &["SET", "key1", "value1"]);
+    redis_cli(16464, &["SET", "key2", "value2"]);
+
+    let r1 = redis_cli(16464, &["DBSIZE"]);
+    assert!(check_int(&r1, 2), "Expected 2 in db 0, got: {}", r1);
+
+    // Add a key to db 1 using -n flag
+    redis_cli_n(16464, 1, &["SET", "key3", "value3"]);
+
+    let r2 = redis_cli_n(16464, 1, &["DBSIZE"]);
+    assert!(check_int(&r2, 1), "Expected 1 in db 1, got: {}", r2);
+
+    // db 0 still has 2 keys
+    let r3 = redis_cli(16464, &["DBSIZE"]);
+    assert!(check_int(&r3, 2), "Expected 2 in db 0, got: {}", r3);
+}
+
+#[test]
+fn test_flushdb_only_current() {
+    let _server = start_server(16465);
+
+    // Add keys to db 0
+    redis_cli(16465, &["SET", "key0", "value0"]);
+
+    // Add keys to db 1 using -n flag
+    redis_cli_n(16465, 1, &["SET", "key1", "value1"]);
+
+    // Flush db 1
+    redis_cli_n(16465, 1, &["FLUSHDB"]);
+
+    let r1 = redis_cli_n(16465, 1, &["DBSIZE"]);
+    assert!(check_int(&r1, 0), "Expected 0 in db 1 after flush, got: {}", r1);
+
+    // db 0 should still have its key
+    let r2 = redis_cli(16465, &["DBSIZE"]);
+    assert!(check_int(&r2, 1), "Expected 1 in db 0, got: {}", r2);
+
+    assert_eq!(redis_cli(16465, &["GET", "key0"]), "value0");
 }

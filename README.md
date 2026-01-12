@@ -53,8 +53,19 @@ db.set_opts("key", b"value", SetOptions::new().xx())?;  // Only if exists
 // Delete
 db.del(&["key1", "key2"])?;
 
-// Multiple databases (like Redis SELECT)
-db.select(1)?;
+// Multiple databases (like Redis SELECT 0-15)
+let mut db = Db::open("mydata.db")?;
+db.select(1)?;  // Switch to database 1
+db.set("key", b"in db 1", None)?;
+
+// Multiple sessions sharing the same backend
+let db1 = Db::open("mydata.db")?;
+let mut db2 = db1.session();  // New session, starts at db 0
+db2.select(1)?;               // Switch db2 to database 1
+
+// db1 and db2 share data but have independent selected database
+db1.set("key", b"db0 value", None)?;  // Goes to db 0
+db2.set("key", b"db1 value", None)?;  // Goes to db 1
 ```
 
 ### Server Mode
@@ -128,6 +139,10 @@ redis-cli -p 6767 GET foo
 
 ### Server
 - `PING`, `ECHO`, `QUIT`, `COMMAND`
+- `SELECT` (databases 0-15, per-connection isolation)
+- `DBSIZE` (key count in current database)
+- `FLUSHDB` (delete all keys in current database)
+- `INFO` (server stats, keyspace)
 
 ### Planned
 - **Custom**: VACUUM, KEYINFO (type, ttl, created_at, updated_at)

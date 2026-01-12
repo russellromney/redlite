@@ -97,15 +97,23 @@ Incremental implementation plan. Each session = one commit = one testable featur
 - [x] Integration tests (13 new tests)
 - [x] **Test:** 155 unit tests + 70 integration tests passing
 
-### Session 10: Server Operations
-- [ ] PING, ECHO
-- [ ] SELECT (multiple databases)
-- [ ] INFO
-- [ ] DBSIZE
-- [ ] FLUSHDB
-- [ ] SCAN (with MATCH, COUNT)
-- [ ] QUIT
-- [ ] **Test:** Full server command suite
+### Session 10: Server Operations ✅
+- [x] PING, ECHO (already implemented)
+- [x] SELECT (multiple databases 0-15)
+- [x] INFO (basic server stats)
+- [x] DBSIZE (key count per database)
+- [x] FLUSHDB (delete all keys in current db)
+- [x] SCAN (already implemented with MATCH, COUNT)
+- [x] QUIT (already implemented)
+- [x] **Architecture:** Per-connection database isolation
+  - Refactored `Db` into `DbCore` (shared backend) + `Db` (per-session wrapper)
+  - `Db::session()` creates new session sharing same SQLite connection
+  - Each session has its own `selected_db` (no more race conditions)
+  - `Db` is now `Clone` (cheap Arc clone)
+  - `select(&mut self)` for explicit mutability
+- [x] Unit tests (11 new tests)
+- [x] Integration tests (9 new tests)
+- [x] **Test:** 166 unit tests + 79 integration tests passing
 
 ### Session 11: Custom Commands
 - [ ] VACUUM (delete expired + SQLite VACUUM)

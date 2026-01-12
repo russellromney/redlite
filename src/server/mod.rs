@@ -1,4 +1,3 @@
-use std::sync::Arc;
 use tokio::io::AsyncWriteExt;
 use tokio::net::{TcpListener, TcpStream};
 
@@ -8,11 +7,11 @@ use crate::resp::{RespReader, RespValue};
 use crate::types::ZMember;
 
 pub struct Server {
-    db: Arc<Db>,
+    db: Db,
 }
 
 impl Server {
-    pub fn new(db: Arc<Db>) -> Self {
+    pub fn new(db: Db) -> Self {
         Self { db }
     }
 
@@ -24,10 +23,11 @@ impl Server {
             let (socket, peer_addr) = listener.accept().await?;
             tracing::debug!("Connection from {}", peer_addr);
 
-            let db = Arc::clone(&self.db);
+            // Create a new session for this connection
+            let session = self.db.session();
 
             tokio::spawn(async move {
-                if let Err(e) = handle_connection(socket, db).await {
+                if let Err(e) = handle_connection(socket, session).await {
                     tracing::error!("Connection error: {}", e);
                 }
             });
@@ -35,14 +35,14 @@ impl Server {
     }
 }
 
-async fn handle_connection(socket: TcpStream, db: Arc<Db>) -> std::io::Result<()> {
+async fn handle_connection(socket: TcpStream, mut db: Db) -> std::io::Result<()> {
     let (reader, mut writer) = socket.into_split();
     let mut reader = RespReader::new(reader);
 
     loop {
         match reader.read_command().await? {
             Some(args) => {
-                let response = execute_command(&db, &args);
+                let response = execute_command(&mut db, &args);
                 writer.write_all(&response.encode()).await?;
                 writer.flush().await?;
 
@@ -61,7 +61,7 @@ async fn handle_connection(socket: TcpStream, db: Arc<Db>) -> std::io::Result<()
     Ok(())
 }
 
-fn execute_command(db: &Db, args: &[Vec<u8>]) -> RespValue {
+fn execute_command(db: &mut Db, args: &[Vec<u8>]) -> RespValue {
     if args.is_empty() {
         return RespValue::error("empty command");
     }
@@ -70,10 +70,16 @@ fn execute_command(db: &Db, args: &[Vec<u8>]) -> RespValue {
     let cmd_args = &args[1..];
 
     match cmd.as_str() {
+        // Server commands
         "PING" => cmd_ping(cmd_args),
         "ECHO" => cmd_echo(cmd_args),
         "COMMAND" => cmd_command(),
         "QUIT" => RespValue::ok(),
+        "SELECT" => cmd_select(db, cmd_args),
+        "DBSIZE" => cmd_dbsize(db),
+        "FLUSHDB" => cmd_flushdb(db),
+        "INFO" => cmd_info(db, cmd_args),
+        // String commands
         "GET" => cmd_get(db, cmd_args),
         "SET" => cmd_set(db, cmd_args),
         "DEL" => cmd_del(db, cmd_args),
@@ -168,6 +174,71 @@ fn cmd_echo(args: &[Vec<u8>]) -> RespValue {
 fn cmd_command() -> RespValue {
     // Minimal implementation for client compatibility
     RespValue::Array(Some(vec![]))
+}
+
+fn cmd_select(db: &mut Db, args: &[Vec<u8>]) -> RespValue {
+    if args.len() != 1 {
+        return RespValue::error("wrong number of arguments for 'select' command");
+    }
+
+    let db_index: i32 = match std::str::from_utf8(&args[0])
+        .ok()
+        .and_then(|s| s.parse().ok())
+    {
+        Some(i) => i,
+        None => return RespValue::error("value is not an integer or out of range"),
+    };
+
+    match db.select(db_index) {
+        Ok(()) => RespValue::ok(),
+        Err(_) => RespValue::error("ERR DB index is out of range"),
+    }
+}
+
+fn cmd_dbsize(db: &Db) -> RespValue {
+    match db.dbsize() {
+        Ok(count) => RespValue::Integer(count),
+        Err(e) => RespValue::error(e.to_string()),
+    }
+}
+
+fn cmd_flushdb(db: &Db) -> RespValue {
+    match db.flushdb() {
+        Ok(()) => RespValue::ok(),
+        Err(e) => RespValue::error(e.to_string()),
+    }
+}
+
+fn cmd_info(db: &Db, args: &[Vec<u8>]) -> RespValue {
+    // Parse optional section argument
+    let section = if args.is_empty() {
+        None
+    } else {
+        std::str::from_utf8(&args[0]).ok()
+    };
+
+    let mut info = String::new();
+
+    // Server section
+    if section.is_none() || section == Some("server") {
+        info.push_str("# Server\r\n");
+        info.push_str("redis_version:7.0.0-redlite\r\n");
+        info.push_str("redis_mode:standalone\r\n");
+        info.push_str("\r\n");
+    }
+
+    // Keyspace section
+    if section.is_none() || section == Some("keyspace") {
+        info.push_str("# Keyspace\r\n");
+        // Show keys count for current database
+        if let Ok(count) = db.dbsize() {
+            let db_num = db.current_db();
+            info.push_str(&format!("db{}:keys={},expires=0\r\n", db_num, count));
+        }
+        info.push_str("\r\n");
+    }
+
+    RespValue::BulkString(Some(info.into_bytes()))
 }
 
 // --- String commands ---
