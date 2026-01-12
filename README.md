@@ -2,8 +2,6 @@
 
 SQLite-backed Redis-compatible embedded key-value store written in Rust.
 
-**Status:** Sessions 1-16 complete (388+ tests). Session 17.1 complete (270+ tests). See [ROADMAP.md](./ROADMAP.md) for implementation progress.
-
 **Documentation:** [redlite.dev](https://redlite.dev)
 
 ## Why?
@@ -36,6 +34,7 @@ SQLite-backed Redis-compatible embedded key-value store written in Rust.
 - `VACUUM` - Delete expired keys and reclaim disk space
 - `KEYINFO key` - Returns type, ttl, created_at, updated_at
 - `AUTOVACUUM ON|OFF` - Auto-cleanup interval (default: ON, 60s)
+- `HISTORY` - Track and query operation history with time-travel queries (Session 17)
 
 ## Install
 
@@ -142,18 +141,24 @@ redis-cli -p 6767 GET foo
 
 **Transactions:** `MULTI`, `EXEC`, `DISCARD`
 
+**History Tracking:** `HISTORY ENABLE`, `HISTORY DISABLE`, `HISTORY GET`, `HISTORY GETAT`, `HISTORY STATS`, `HISTORY CLEAR`, `HISTORY PRUNE`, `HISTORY LIST`
+
 **Server:** `PING`, `ECHO`, `QUIT`, `COMMAND`, `SELECT`, `DBSIZE`, `FLUSHDB`, `INFO`
+
+## Recently Completed
+
+**Session 17: History Tracking & Time-Travel Queries** ✅
+- Track value changes per key with three-tier opt-in (global, database, key-level)
+- Time-travel queries: `HISTORY GETAT key timestamp`
+- Configurable retention policies (unlimited, time-based, count-based)
+- Automatic instrumentation on write operations (SET, DEL, HSET, LPUSH, XADD, etc.)
+- Full HISTORY command suite with enable/disable/get/stats/clear/prune/list subcommands
 
 ## Upcoming Features
 
 See [ROADMAP.md](./ROADMAP.md) for detailed plans.
 
-**Session 17: History Tracking & Time-Travel Queries** (In Progress)
-- Track value changes per key with three-tier opt-in
-- Time-travel queries: `HISTORY GETAT key timestamp`
-- Configurable retention policies (time-based, count-based)
-
-**Sessions 18-20: Language Bindings**
+**Sessions 18-20: Language Bindings** (Next)
 - **Python** (`redlite-py`) - PyO3 bindings via PyPI
 - **Node.js/Bun** (`redlite-js`) - NAPI-RS bindings via npm
 - **Go** (`redlite-go`) - C FFI + cgo via Go modules

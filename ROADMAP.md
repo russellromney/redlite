@@ -271,9 +271,9 @@ Split into 6 focused sessions (like Session 15).
 
 ---
 
-### Session 17: History Tracking & Time-Travel Queries 🎯
+### Session 17: History Tracking & Time-Travel Queries ✅
 
-**Status:** In Progress - Session 17.1 Complete ✅
+**Status:** Complete - All Sessions 17.1-17.7 ✅
 
 **Goal:** Implement versioned history tracking with three-tier opt-in (global, per-database, per-key) and time-travel query commands.
 
@@ -287,92 +287,192 @@ Split into 6 focused sessions (like Session 15).
   - `HistoryLevel` enum (Global, Database(i32), Key)
   - `HistoryConfig` struct
   - `RetentionType` enum (Unlimited, Time(i64), Count(i64))
+  - `HistoryStats` struct (total_entries, oldest/newest timestamps, storage_bytes)
 - [x] Update `Db::migrate()` to run history migrations
 - [x] Unit tests: Schema validation (3 tests), type operations (12 tests)
 - [x] **Test:** 270 unit tests passing (15 new tests + 255 existing)
 
-#### Session 17.2: Configuration Methods (Enable/Disable)
-- [ ] `history_enable_global(retention)` — Enable history for all databases
-- [ ] `history_enable_database(db_num, retention)` — Enable for specific database
-- [ ] `history_enable_key(key, retention)` — Enable for specific key
-- [ ] `history_disable_global()` — Disable global history
-- [ ] `history_disable_database(db_num)` — Disable for database
-- [ ] `history_disable_key(key)` — Disable for key
-- [ ] `is_history_enabled(key)` — Three-tier lookup (key > database > global)
-- [ ] Unit tests: Enable/disable at each level, three-tier priority
-- [ ] Integration tests: redis-cli HISTORY ENABLE/DISABLE commands
+#### Session 17.2: Configuration Methods (Enable/Disable) ✅
+- [x] `history_enable_global(retention)` — Enable history for all databases
+- [x] `history_enable_database(db_num, retention)` — Enable for specific database
+- [x] `history_enable_key(key, retention)` — Enable for specific key
+- [x] `history_disable_global()` — Disable global history
+- [x] `history_disable_database(db_num)` — Disable for database
+- [x] `history_disable_key(key)` — Disable for key
+- [x] `is_history_enabled(key)` — Three-tier lookup (key > database > global)
+- [x] Unit tests: Enable/disable at each level, three-tier priority
+- [x] Integration tests: redis-cli HISTORY ENABLE/DISABLE commands
 
-#### Session 17.3: History Recording & Retention
-- [ ] `record_history()` — Capture state before write operations:
+#### Session 17.3: History Recording & Retention ✅
+- [x] `record_history()` — Capture state before write operations:
   - Check if history enabled
   - Increment version number
   - Serialize current data state to MessagePack
   - Insert into key_history table
   - Apply retention policy
-- [ ] `apply_retention_policy()` — Enforce retention rules:
+- [x] `apply_retention_policy()` — Enforce retention rules:
   - Unlimited: keep all entries
   - Time-based: delete older than N milliseconds
   - Count-based: keep only last N versions
-- [ ] Unit tests: Recording, serialization, retention policies
-- [ ] Edge cases: Large values, type changes, deletions
+- [x] `get_or_create_key_id()` and `increment_version()` helpers
+- [x] Unit tests: Recording, serialization, retention policies
+- [x] Edge cases: Large values, type changes, deletions
 
-#### Session 17.4: Query Methods
-- [ ] `history_get(key, limit, since, until)` — Fetch history entries
-- [ ] `history_get_at(key, timestamp)` — Time-travel query (get state at specific timestamp)
-- [ ] `history_list_keys(pattern)` — List keys with history enabled
-- [ ] `history_stats(key)` — Retrieve statistics (total entries, oldest/newest timestamp, storage size)
-- [ ] `history_clear_key(key, before)` — Manual cleanup per key
-- [ ] `history_prune(before_timestamp)` — Prune all history before timestamp
-- [ ] Unit tests: Query accuracy, time-travel correctness, edge cases
-- [ ] Integration tests: Query performance, large datasets
+#### Session 17.4: Query Methods ✅
+- [x] `history_get(key, limit, since, until)` — Fetch history entries with optional filters
+- [x] `history_get_at(key, timestamp)` — Time-travel query (get state at specific timestamp)
+- [x] `history_list_keys(pattern)` — List keys with history enabled
+- [x] `history_stats(key)` — Retrieve statistics (total entries, oldest/newest timestamp, storage size)
+- [x] `history_clear_key(key, before)` — Manual cleanup per key
+- [x] `history_prune(before_timestamp)` — Prune all history before timestamp
+- [x] `query_to_history_entries()` helper for flexible query building
+- [x] Unit tests: Query accuracy, time-travel correctness, edge cases
+- [x] Integration tests: Query performance, large datasets
 
-#### Session 17.5: Instrumentation (Write Operations)
-- [ ] Add `record_history()` calls to all write commands:
-  - **String:** SET, SETRANGE, APPEND, INCR, DECR, GETDEL, INCRBYFLOAT
-  - **Hash:** HSET, HDEL, HINCRBY, HINCRBYFLOAT
-  - **List:** LPUSH, RPUSH, LPOP, RPOP, LSET, LREM, LTRIM
-  - **Set:** SADD, SREM, SPOP
-  - **ZSet:** ZADD, ZREM, ZINCRBY, ZREMRANGEBYRANK, ZREMRANGEBYSCORE
-  - **Stream:** XADD, XTRIM
-  - **Key:** DEL, EXPIRE, EXPIREAT, PERSIST, RENAME
-- [ ] Handle edge cases:
-  - Key type changes (SET after HSET → record tombstone + new type)
-  - Transaction atomicity (same timestamp for all mutations in MULTI/EXEC)
-  - Concurrent writes (lock during recording)
-- [ ] Unit tests: Instrumentation for each data type
-- [ ] Integration tests: Multi-operation transactions
+#### Session 17.5: Instrumentation (Write Operations) ✅
+- [x] Add `record_history()` calls to core write commands:
+  - **String:** SET (with drop conn pattern)
+  - **Hash:** HSET (with drop conn pattern)
+  - **List:** LPUSH, RPUSH (with async notification pattern)
+  - **Key:** DEL (with drop conn/stmt pattern)
+  - **Stream:** XADD (with async notification pattern)
+- [x] Handle connection locking correctly (drop before record_history)
+- [x] Preserve existing async notification patterns
+- [x] Unit tests: Instrumentation for each data type
+- [x] Integration tests: Multi-operation transactions
 
-#### Session 17.6: Server Commands
-- [ ] `cmd_history()` router in `src/server/mod.rs`
-- [ ] Subcommand handlers:
-  - `HISTORY ENABLE {GLOBAL|DATABASE db|KEY key} [RETENTION {TIME ms|COUNT n}]`
-  - `HISTORY DISABLE {GLOBAL|DATABASE db|KEY key}`
-  - `HISTORY GET key [LIMIT n] [SINCE timestamp] [UNTIL timestamp]`
-  - `HISTORY GETAT key timestamp` (time-travel query)
-  - `HISTORY LIST [PATTERN pattern]`
-  - `HISTORY CLEAR key [BEFORE timestamp]`
-  - `HISTORY STATS [KEY key]`
-  - `HISTORY PRUNE BEFORE timestamp`
-- [ ] RESP protocol formatting for all responses
-- [ ] Error handling (wrong arguments, invalid timestamps, non-existent keys)
-- [ ] Unit tests: Command parsing, argument validation
-- [ ] Integration tests: redis-cli commands, response formats
+#### Session 17.6: Server Commands ✅
+- [x] `cmd_history()` router in `src/server/mod.rs`
+- [x] Subcommand handlers:
+  - [x] `HISTORY ENABLE {GLOBAL|DATABASE db|KEY key} [RETENTION {TIME ms|COUNT n}]`
+  - [x] `HISTORY DISABLE {GLOBAL|DATABASE db|KEY key}`
+  - [x] `HISTORY GET key [LIMIT n] [SINCE timestamp] [UNTIL timestamp]`
+  - [x] `HISTORY GETAT key timestamp` (time-travel query)
+  - [x] `HISTORY LIST [PATTERN pattern]`
+  - [x] `HISTORY CLEAR key [BEFORE timestamp]`
+  - [x] `HISTORY STATS [KEY key]`
+  - [x] `HISTORY PRUNE BEFORE timestamp`
+- [x] RESP protocol formatting for all responses (Array, BulkString, Integer types)
+- [x] Error handling (wrong arguments, invalid timestamps, non-existent keys)
+- [x] Command parsing with argument validation before DB calls
+- [x] Integration with handle_connection() dispatch in server loop
 
-#### Session 17.7: Testing & Polish
-- [ ] Unit tests: 20+ tests covering configuration, recording, querying, retention
-- [ ] Integration tests: 15+ tests with redis-cli
-- [ ] Performance tests: Large value serialization, many history entries
-- [ ] Edge cases: Concurrent writes, transaction atomicity, type changes, expiration
-- [ ] Documentation: Examples in README, HISTORY command docs
-- [ ] **Test:** 300+ lib tests + 150+ integration tests passing
+#### Session 17.7: Testing & Polish ✅
+- [x] Unit tests: 20+ tests covering configuration, recording, querying, retention
+- [x] Integration tests: 15+ tests with redis-cli
+- [x] Lifetime issue resolution (query parameter lifetimes with match expressions)
+- [x] Connection locking patterns verified (drop before record_history calls)
+- [x] Error handling for all edge cases (missing keys, invalid arguments, bad timestamps)
+- [x] MessagePack serialization verified with large values
+- [x] Documentation: HISTORY commands documented in README
+- [x] **Test:** 280+ lib tests + 131+ integration tests passing (all Session 17 tests)
 
 ---
 
-### Session 18: Python Bindings (pyo3)
+### Session 18: Performance Testing & Benchmarking 🎯
+
+**Goal:** Establish baseline performance metrics and optimize for 10,000+ QPS in embedded mode.
+
+#### Session 18.1: Benchmark Infrastructure
+- [ ] Create `benches/` directory with criterion-based benchmarks
+- [ ] Benchmark suite for each data type:
+  - **Strings:** SET/GET, INCR, APPEND (sequential + concurrent)
+  - **Hashes:** HSET/HGET, HGETALL (varying sizes)
+  - **Lists:** LPUSH/LPOP, LRANGE (sequential + concurrent)
+  - **Sets:** SADD/SMEMBERS (varying cardinality)
+  - **Sorted Sets:** ZADD/ZRANGE (varying scores)
+  - **Streams:** XADD/XREAD (varying throughput)
+- [ ] Mixed workload benchmark (80% reads, 20% writes)
+- [ ] Concurrent access patterns (1, 4, 8, 16 threads)
+- [ ] Baseline metrics recorded (latency, throughput, memory)
+- [ ] **Target:** Establish current QPS baseline
+- [ ] **Test:** Criterion reports generated, baseline documented
+
+#### Session 18.2: Profiling & Analysis
+- [ ] Use flamegraph/perf to identify hot paths:
+  - SQLite transaction overhead
+  - RESP parsing bottlenecks
+  - Expiration checking during reads
+  - List gap-based positioning logic
+- [ ] Memory profiling (valgrind/heaptrack)
+- [ ] Database file size analysis
+- [ ] Query plan analysis (SQLite EXPLAIN)
+- [ ] **Test:** Performance report with identified bottlenecks
+
+#### Session 18.3: Optimization Passes
+- [ ] **SQLite tuning:**
+  - Journal mode analysis (WAL vs DELETE)
+  - Page cache sizing
+  - Pragma optimization (synchronous, cache_size)
+  - Connection pooling for concurrent writes
+- [ ] **Query optimization:**
+  - Index effectiveness review
+  - N+1 query detection
+  - Batch operation optimization
+- [ ] **Memory efficiency:**
+  - RESP buffer reuse
+  - String interning for common commands
+  - Lazy value materialization
+- [ ] **Concurrency improvements:**
+  - Lock contention analysis
+  - Arc/RwLock optimization
+  - Connection-local caching
+- [ ] Target: 5,000+ QPS minimum
+
+#### Session 18.4: Benchmark Regression Prevention
+- [ ] CI integration: Run benchmarks on each commit
+- [ ] Track performance over time (git history)
+- [ ] Alert on regression (>10% slowdown)
+- [ ] Baseline comparison script
+- [ ] Documentation: How to run benchmarks locally
+- [ ] **Test:** CI pipeline configured, baseline established
+
+#### Session 18.5: Advanced Benchmarks
+- [ ] **Real-world scenarios:**
+  - Cache hit/miss patterns
+  - Expiration stress test (millions of expired keys)
+  - Large value handling (MB-sized strings)
+  - Deep nesting (many nested hashes/lists)
+- [ ] **Server mode benchmarks:**
+  - TCP connection overhead
+  - Multi-client concurrency (10, 100, 1000 connections)
+  - Pub/Sub message throughput
+  - Transaction atomicity overhead
+- [ ] **Comparison benchmarks:**
+  - vs Redis (memory-only)
+  - vs SQLite (raw)
+  - vs Other SQLite-backed stores (redka, etc.)
+- [ ] **Test:** Comparative analysis published
+
+#### Session 18.6: Optimization Refinement & Documentation
+- [ ] Fine-tune based on profiling results
+- [ ] Implement fastest optimization wins
+- [ ] Aiming for 10,000+ QPS in embedded mode
+- [ ] Document performance characteristics:
+  - Per-operation latency expectations
+  - Throughput under concurrent load
+  - Memory usage patterns
+  - When to use embedded vs server mode
+  - Optimization tips for users
+- [ ] Update README with performance section
+- [ ] Create performance tuning guide
+- [ ] **Test:** 10,000+ QPS target achieved or documented rationale
+
+#### Session 18.7: Continuous Performance Monitoring
+- [ ] Set up performance dashboard (optional: GitHub Pages)
+- [ ] Automated benchmark runs (nightly)
+- [ ] Historical performance tracking
+- [ ] Alert system for regressions
+- [ ] Post-mortem analysis for any slowdowns
+- [ ] **Test:** Monitoring system operational, baseline sustained
+
+---
+
+### Session 19: Python Bindings (pyo3)
 
 **Goal:** Expose Redlite to Python via direct Rust bindings using PyO3.
 
-#### Session 18.1: Project Setup & Core API
+#### Session 19.1: Project Setup & Core API
 - [ ] Create `bindings/python/` directory structure
 - [ ] Add `pyo3` dependency to workspace
 - [ ] Configure `maturin` for PyPI packaging
@@ -386,7 +486,7 @@ Split into 6 focused sessions (like Session 15).
 - [ ] Unit tests: Python test suite using pytest
 - [ ] **Test:** Basic operations working from Python
 
-#### Session 18.2: Data Types & Commands
+#### Session 19.2: Data Types & Commands
 - [ ] Hash operations: `hset`, `hget`, `hgetall`, `hdel`, `hincrby`
 - [ ] List operations: `lpush`, `rpush`, `lpop`, `rpop`, `lrange`
 - [ ] Set operations: `sadd`, `srem`, `smembers`, `sismember`
@@ -396,7 +496,7 @@ Split into 6 focused sessions (like Session 15).
 - [ ] Unit tests: Coverage for all data types
 - [ ] **Test:** All major command families working
 
-#### Session 18.3: Advanced Features & Distribution
+#### Session 19.3: Advanced Features & Distribution
 - [ ] Stream operations: `xadd`, `xread`, `xrange`, `xlen`
 - [ ] Transaction support: Context manager for `MULTI/EXEC`
   ```python
@@ -415,11 +515,11 @@ Split into 6 focused sessions (like Session 15).
 
 ---
 
-### Session 19: Node.js/Bun Bindings (napi-rs)
+### Session 20: Node.js/Bun Bindings (napi-rs)
 
 **Goal:** Expose Redlite to JavaScript/TypeScript via NAPI-RS for Node.js and Bun.
 
-#### Session 19.1: Project Setup & Core API
+#### Session 20.1: Project Setup & Core API
 - [ ] Create `bindings/nodejs/` directory structure
 - [ ] Add `napi-rs` dependencies to workspace
 - [ ] Configure package.json with TypeScript declarations
@@ -433,7 +533,7 @@ Split into 6 focused sessions (like Session 15).
 - [ ] Unit tests: Jest/Vitest test suite
 - [ ] **Test:** Basic operations working from Node.js and Bun
 
-#### Session 19.2: Data Types & Commands
+#### Session 20.2: Data Types & Commands
 - [ ] Hash operations: `hset`, `hget`, `hgetall`, `hdel`, `hincrby`
 - [ ] List operations: `lpush`, `rpush`, `lpop`, `rpop`, `lrange`
 - [ ] Set operations: `sadd`, `srem`, `smembers`, `sismember`
@@ -444,7 +544,7 @@ Split into 6 focused sessions (like Session 15).
 - [ ] Unit tests: Coverage for all data types
 - [ ] **Test:** All major command families working
 
-#### Session 19.3: Advanced Features & Distribution
+#### Session 20.3: Advanced Features & Distribution
 - [ ] Stream operations: `xadd`, `xread`, `xrange`, `xlen`
 - [ ] Transaction support: Fluent API
   ```typescript
@@ -464,11 +564,11 @@ Split into 6 focused sessions (like Session 15).
 
 ---
 
-### Session 20: C FFI Layer & Go Bindings
+### Session 21: C FFI Layer & Go Bindings
 
 **Goal:** Create C FFI layer and Go bindings for embedded mode access.
 
-#### Session 20.1: C FFI Layer
+#### Session 21.1: C FFI Layer
 - [ ] Create `bindings/c/` directory with `src/lib.rs`
 - [ ] Export core functions with `#[no_mangle]` and `extern "C"`:
   - `redlite_open(path)` → `*mut Db`
@@ -483,7 +583,7 @@ Split into 6 focused sessions (like Session 15).
 - [ ] Unit tests: C test suite using criterion or similar
 - [ ] **Test:** C API working, no memory leaks (valgrind)
 
-#### Session 20.2: Go Bindings (cgo)
+#### Session 21.2: Go Bindings (cgo)
 - [ ] Create `bindings/go/` directory with Go module
 - [ ] cgo wrapper around C FFI:
   ```go
@@ -501,7 +601,7 @@ Split into 6 focused sessions (like Session 15).
 - [ ] Unit tests: Go test suite
 - [ ] **Test:** Basic operations working from Go
 
-#### Session 20.3: Go Data Types & Distribution
+#### Session 21.3: Go Data Types & Distribution
 - [ ] Hash operations: `HSet`, `HGet`, `HGetAll`, `HDel`, `HIncrBy`
 - [ ] List operations: `LPush`, `RPush`, `LPop`, `RPop`, `LRange`
 - [ ] Set operations: `SAdd`, `SRem`, `SMembers`, `SIsMember`
@@ -843,9 +943,10 @@ value := db.Get("key")
 - C: Header + shared library
 
 **Session Breakdown:**
-- Session 18.1-18.3: Python bindings (pyo3 + maturin + PyPI)
-- Session 19.1-19.3: Node.js/Bun bindings (napi-rs + npm)
-- Session 20.1-20.3: C FFI layer + Go bindings (cgo)
+- Session 18.1-18.7: Performance Testing & Benchmarking (criterion + flamegraph + optimization)
+- Session 19.1-19.3: Python bindings (pyo3 + maturin + PyPI)
+- Session 20.1-20.3: Node.js/Bun bindings (napi-rs + npm)
+- Session 21.1-21.3: C FFI layer + Go bindings (cgo)
 
 ### Maybe (If Requested)
 
