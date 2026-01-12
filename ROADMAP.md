@@ -115,10 +115,19 @@ Incremental implementation plan. Each session = one commit = one testable featur
 - [x] Integration tests (9 new tests)
 - [x] **Test:** 166 unit tests + 79 integration tests passing
 
-### Session 11: Custom Commands
-- [ ] VACUUM (delete expired + SQLite VACUUM)
-- [ ] KEYINFO (type, ttl, created_at, updated_at)
-- [ ] **Test:** Custom commands work
+### Session 11: Custom Commands ✅
+- [x] VACUUM (delete expired keys across all dbs + SQLite VACUUM)
+- [x] KEYINFO key (returns type, ttl, created_at, updated_at as hash-like array)
+- [x] AUTOVACUUM ON/OFF/INTERVAL (automatic expiration cleanup, default ON @ 60s)
+  - `AUTOVACUUM` - show status (enabled + interval_ms)
+  - `AUTOVACUUM ON/OFF` - enable/disable
+  - `AUTOVACUUM INTERVAL <ms>` - set interval (min 1000ms)
+  - Shared AtomicI64 timestamp across sessions
+  - Triggered on read operations (GET, HGET, SMEMBERS, ZRANGE, LRANGE, EXISTS)
+  - Compare-exchange ensures only one connection does cleanup per interval
+- [x] Unit tests (11 new tests)
+- [x] Integration tests (9 new tests)
+- [x] **Test:** 177 unit tests + 88 integration tests passing
 
 ### Session 12: Polish & Release
 - [ ] Error messages match Redis
@@ -279,12 +288,16 @@ CREATE TABLE key_history (
 
 ### Active Expiration
 
-Opt-in background daemon:
+**AUTOVACUUM** - ✅ Implemented in V1 (Session 11)
 
+Future enhancement: **Background daemon**
 ```rust
 let db = Db::open("data.db")?;
 db.start_expiration_daemon();  // Spawns background thread
 ```
+- Periodically scans and deletes expired keys
+- Optionally runs SQLite VACUUM
+- Useful for long-running servers with idle periods
 
 ---
 

@@ -150,6 +150,10 @@ fn execute_command(db: &mut Db, args: &[Vec<u8>]) -> RespValue {
         "ZINCRBY" => cmd_zincrby(db, cmd_args),
         "ZREMRANGEBYRANK" => cmd_zremrangebyrank(db, cmd_args),
         "ZREMRANGEBYSCORE" => cmd_zremrangebyscore(db, cmd_args),
+        // Custom commands
+        "VACUUM" => cmd_vacuum(db),
+        "KEYINFO" => cmd_keyinfo(db, cmd_args),
+        "AUTOVACUUM" => cmd_autovacuum(db, cmd_args),
         _ => RespValue::error(format!("unknown command '{}'", cmd)),
     }
 }
@@ -2053,5 +2057,91 @@ fn cmd_zremrangebyscore(db: &Db, args: &[Vec<u8>]) -> RespValue {
         Ok(count) => RespValue::Integer(count),
         Err(KvError::WrongType) => RespValue::wrong_type(),
         Err(e) => RespValue::error(e.to_string()),
+    }
+}
+
+// --- Session 11: Custom command handlers ---
+
+fn cmd_vacuum(db: &Db) -> RespValue {
+    match db.vacuum() {
+        Ok(deleted) => RespValue::Integer(deleted),
+        Err(e) => RespValue::error(e.to_string()),
+    }
+}
+
+fn cmd_keyinfo(db: &Db, args: &[Vec<u8>]) -> RespValue {
+    if args.len() != 1 {
+        return RespValue::error("wrong number of arguments for 'keyinfo' command");
+    }
+
+    let key = match std::str::from_utf8(&args[0]) {
+        Ok(k) => k,
+        Err(_) => return RespValue::error("invalid key"),
+    };
+
+    match db.keyinfo(key) {
+        Ok(Some(info)) => {
+            // Return as array of field-value pairs (like HGETALL)
+            RespValue::Array(Some(vec![
+                RespValue::BulkString(Some(b"type".to_vec())),
+                RespValue::BulkString(Some(info.key_type.as_str().as_bytes().to_vec())),
+                RespValue::BulkString(Some(b"ttl".to_vec())),
+                RespValue::Integer(info.ttl),
+                RespValue::BulkString(Some(b"created_at".to_vec())),
+                RespValue::Integer(info.created_at),
+                RespValue::BulkString(Some(b"updated_at".to_vec())),
+                RespValue::Integer(info.updated_at),
+            ]))
+        }
+        Ok(None) => RespValue::null(),
+        Err(e) => RespValue::error(e.to_string()),
+    }
+}
+
+fn cmd_autovacuum(db: &Db, args: &[Vec<u8>]) -> RespValue {
+    if args.is_empty() {
+        // Return current state: enabled and interval
+        let enabled = if db.autovacuum_enabled() { "ON" } else { "OFF" };
+        let interval = db.autovacuum_interval();
+        return RespValue::Array(Some(vec![
+            RespValue::BulkString(Some(b"enabled".to_vec())),
+            RespValue::BulkString(Some(enabled.as_bytes().to_vec())),
+            RespValue::BulkString(Some(b"interval_ms".to_vec())),
+            RespValue::Integer(interval),
+        ]));
+    }
+
+    let arg = match std::str::from_utf8(&args[0]) {
+        Ok(s) => s.to_uppercase(),
+        Err(_) => return RespValue::error("invalid argument"),
+    };
+
+    match arg.as_str() {
+        "ON" | "1" | "TRUE" => {
+            db.set_autovacuum(true);
+            RespValue::ok()
+        }
+        "OFF" | "0" | "FALSE" => {
+            db.set_autovacuum(false);
+            RespValue::ok()
+        }
+        "INTERVAL" => {
+            // AUTOVACUUM INTERVAL <ms>
+            if args.len() != 2 {
+                return RespValue::error("AUTOVACUUM INTERVAL requires a value in milliseconds");
+            }
+            let interval_str = match std::str::from_utf8(&args[1]) {
+                Ok(s) => s,
+                Err(_) => return RespValue::error("invalid interval value"),
+            };
+            match interval_str.parse::<i64>() {
+                Ok(ms) => {
+                    db.set_autovacuum_interval(ms);
+                    RespValue::ok()
+                }
+                Err(_) => RespValue::error("interval must be an integer (milliseconds)"),
+            }
+        }
+        _ => RespValue::error("argument must be ON, OFF, or INTERVAL <ms>"),
     }
 }

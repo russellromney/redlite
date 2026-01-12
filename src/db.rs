@@ -1,13 +1,23 @@
 use rusqlite::{params, Connection};
+use std::sync::atomic::{AtomicBool, AtomicI64, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use crate::error::{KvError, Result};
-use crate::types::{KeyType, SetOptions, ZMember};
+use crate::types::{KeyInfo, KeyType, SetOptions, ZMember};
+
+/// Default autovacuum interval in milliseconds (60 seconds)
+const DEFAULT_AUTOVACUUM_INTERVAL_MS: i64 = 60_000;
 
 /// Shared database backend (SQLite connection)
 struct DbCore {
     conn: Mutex<Connection>,
+    /// Whether autovacuum is enabled (default: true)
+    autovacuum_enabled: AtomicBool,
+    /// Last cleanup timestamp in milliseconds (shared across all sessions)
+    last_cleanup: AtomicI64,
+    /// Autovacuum interval in milliseconds (configurable, default: 60s)
+    autovacuum_interval_ms: AtomicI64,
 }
 
 /// Database session with per-instance selected database.
@@ -51,6 +61,9 @@ impl Db {
 
         let core = Arc::new(DbCore {
             conn: Mutex::new(conn),
+            autovacuum_enabled: AtomicBool::new(true),
+            last_cleanup: AtomicI64::new(0),
+            autovacuum_interval_ms: AtomicI64::new(DEFAULT_AUTOVACUUM_INTERVAL_MS),
         });
 
         let db = Self {
@@ -97,6 +110,60 @@ impl Db {
         self.selected_db
     }
 
+    /// Enable or disable autovacuum (automatic cleanup of expired keys)
+    pub fn set_autovacuum(&self, enabled: bool) {
+        self.core.autovacuum_enabled.store(enabled, Ordering::Relaxed);
+    }
+
+    /// Check if autovacuum is enabled
+    pub fn autovacuum_enabled(&self) -> bool {
+        self.core.autovacuum_enabled.load(Ordering::Relaxed)
+    }
+
+    /// Set autovacuum interval in milliseconds (default: 60000 = 60s)
+    pub fn set_autovacuum_interval(&self, interval_ms: i64) {
+        self.core
+            .autovacuum_interval_ms
+            .store(interval_ms.max(1000), Ordering::Relaxed); // Min 1 second
+    }
+
+    /// Get current autovacuum interval in milliseconds
+    pub fn autovacuum_interval(&self) -> i64 {
+        self.core.autovacuum_interval_ms.load(Ordering::Relaxed)
+    }
+
+    /// Maybe run autovacuum if enabled and interval has passed.
+    /// Called on read operations. Uses atomic compare-exchange to ensure
+    /// only one connection does cleanup per interval.
+    fn maybe_autovacuum(&self) {
+        if !self.core.autovacuum_enabled.load(Ordering::Relaxed) {
+            return;
+        }
+
+        let now = Self::now_ms();
+        let last = self.core.last_cleanup.load(Ordering::Relaxed);
+        let interval = self.core.autovacuum_interval_ms.load(Ordering::Relaxed);
+
+        if now - last < interval {
+            return;
+        }
+
+        // Try to claim cleanup duty (only one connection wins)
+        if self
+            .core
+            .last_cleanup
+            .compare_exchange(last, now, Ordering::Relaxed, Ordering::Relaxed)
+            .is_ok()
+        {
+            // We won - delete all expired keys (across all dbs, no SQLite VACUUM)
+            let conn = self.core.conn.lock().unwrap_or_else(|e| e.into_inner());
+            let _ = conn.execute(
+                "DELETE FROM keys WHERE expire_at IS NOT NULL AND expire_at <= ?1",
+                params![now],
+            );
+        }
+    }
+
     /// Current time in milliseconds since epoch
     pub fn now_ms() -> i64 {
         SystemTime::now()
@@ -107,6 +174,7 @@ impl Db {
 
     /// GET key
     pub fn get(&self, key: &str) -> Result<Option<Vec<u8>>> {
+        self.maybe_autovacuum();
         let conn = self.core.conn.lock().unwrap_or_else(|e| e.into_inner());
         let db = self.selected_db;
         let now = Self::now_ms();
@@ -301,6 +369,7 @@ impl Db {
 
     /// EXISTS key [key ...] - count how many keys exist
     pub fn exists(&self, keys: &[&str]) -> Result<i64> {
+        self.maybe_autovacuum();
         if keys.is_empty() {
             return Ok(0);
         }
@@ -898,6 +967,7 @@ impl Db {
 
     /// HGET key field - get hash field value
     pub fn hget(&self, key: &str, field: &str) -> Result<Option<Vec<u8>>> {
+        self.maybe_autovacuum();
         let conn = self.core.conn.lock().unwrap_or_else(|e| e.into_inner());
 
         let key_id = match self.get_hash_key_id(&conn, key)? {
@@ -1582,6 +1652,7 @@ impl Db {
 
     /// LRANGE key start stop - get range of elements
     pub fn lrange(&self, key: &str, start: i64, stop: i64) -> Result<Vec<Vec<u8>>> {
+        self.maybe_autovacuum();
         let conn = self.core.conn.lock().unwrap_or_else(|e| e.into_inner());
 
         let key_id = match self.get_list_key_id(&conn, key)? {
@@ -1967,6 +2038,7 @@ impl Db {
 
     /// SMEMBERS key - get all members of set
     pub fn smembers(&self, key: &str) -> Result<Vec<Vec<u8>>> {
+        self.maybe_autovacuum();
         let conn = self.core.conn.lock().unwrap_or_else(|e| e.into_inner());
 
         let key_id = match self.get_set_key_id(&conn, key)? {
@@ -2468,6 +2540,7 @@ impl Db {
 
     /// ZRANGE key start stop [WITHSCORES] - get members by rank range (ascending)
     pub fn zrange(&self, key: &str, start: i64, stop: i64, with_scores: bool) -> Result<Vec<ZMember>> {
+        self.maybe_autovacuum();
         let conn = self.core.conn.lock().unwrap_or_else(|e| e.into_inner());
 
         let key_id = match self.get_zset_key_id(&conn, key)? {
@@ -2833,6 +2906,73 @@ impl Db {
         conn.execute("DELETE FROM keys WHERE db = ?1", params![db])?;
 
         Ok(())
+    }
+
+    // --- Session 11: Custom Commands ---
+
+    /// VACUUM - Delete all expired keys across all databases and reclaim disk space.
+    /// Returns the number of expired keys that were deleted.
+    pub fn vacuum(&self) -> Result<i64> {
+        let conn = self.core.conn.lock().unwrap_or_else(|e| e.into_inner());
+        let now = Self::now_ms();
+
+        // Delete all expired keys (across all databases)
+        let deleted = conn.execute(
+            "DELETE FROM keys WHERE expire_at IS NOT NULL AND expire_at <= ?1",
+            params![now],
+        )? as i64;
+
+        // Run SQLite VACUUM to reclaim disk space
+        conn.execute_batch("VACUUM")?;
+
+        Ok(deleted)
+    }
+
+    /// KEYINFO key - Get metadata about a key.
+    /// Returns None if the key doesn't exist.
+    pub fn keyinfo(&self, key: &str) -> Result<Option<KeyInfo>> {
+        let conn = self.core.conn.lock().unwrap_or_else(|e| e.into_inner());
+        let db = self.selected_db;
+        let now = Self::now_ms();
+
+        let result: std::result::Result<(i32, Option<i64>, i64, i64), _> = conn.query_row(
+            "SELECT type, expire_at, created_at, updated_at
+             FROM keys
+             WHERE db = ?1 AND key = ?2",
+            params![db, key],
+            |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?)),
+        );
+
+        match result {
+            Ok((type_int, expire_at, created_at, updated_at)) => {
+                // Check if key is expired
+                if let Some(exp) = expire_at {
+                    if exp <= now {
+                        // Key is expired - delete it and return None
+                        drop(conn);
+                        let _ = self.del(&[key]);
+                        return Ok(None);
+                    }
+                }
+
+                let key_type = KeyType::from_i32(type_int).ok_or(KvError::InvalidData)?;
+
+                // Calculate TTL in seconds (-1 if no expiry)
+                let ttl = match expire_at {
+                    Some(exp) => ((exp - now) / 1000).max(0),
+                    None => -1,
+                };
+
+                Ok(Some(KeyInfo {
+                    key_type,
+                    ttl,
+                    created_at,
+                    updated_at,
+                }))
+            }
+            Err(rusqlite::Error::QueryReturnedNoRows) => Ok(None),
+            Err(e) => Err(e.into()),
+        }
     }
 }
 
@@ -5408,5 +5548,150 @@ mod tests {
         // Verify db 0 still has 2 keys
         db.select(0).unwrap();
         assert_eq!(db.dbsize().unwrap(), 2);
+    }
+
+    // --- Session 11: Custom Commands Tests ---
+
+    #[test]
+    fn test_vacuum_no_expired_keys() {
+        let db = Db::open_memory().unwrap();
+        db.set("key1", b"value1", None).unwrap();
+        db.set("key2", b"value2", None).unwrap();
+
+        let deleted = db.vacuum().unwrap();
+        assert_eq!(deleted, 0);
+
+        // Keys should still exist
+        assert_eq!(db.get("key1").unwrap(), Some(b"value1".to_vec()));
+        assert_eq!(db.get("key2").unwrap(), Some(b"value2".to_vec()));
+    }
+
+    #[test]
+    fn test_vacuum_with_expired_keys() {
+        let db = Db::open_memory().unwrap();
+
+        // Set keys with TTL (will expire immediately with 1ms)
+        db.set("expired1", b"v1", Some(Duration::from_millis(1)))
+            .unwrap();
+        db.set("expired2", b"v2", Some(Duration::from_millis(1)))
+            .unwrap();
+        db.set("permanent", b"v3", None).unwrap();
+
+        // Wait for expiration
+        std::thread::sleep(Duration::from_millis(10));
+
+        let deleted = db.vacuum().unwrap();
+        assert_eq!(deleted, 2);
+
+        // Permanent key should still exist
+        assert_eq!(db.get("permanent").unwrap(), Some(b"v3".to_vec()));
+    }
+
+    #[test]
+    fn test_vacuum_across_databases() {
+        let mut db = Db::open_memory().unwrap();
+
+        // Set expired key in db 0
+        db.set("expired0", b"v0", Some(Duration::from_millis(1)))
+            .unwrap();
+
+        // Set expired key in db 1
+        db.select(1).unwrap();
+        db.set("expired1", b"v1", Some(Duration::from_millis(1)))
+            .unwrap();
+
+        // Wait for expiration
+        std::thread::sleep(Duration::from_millis(10));
+
+        // VACUUM should delete keys from ALL databases
+        let deleted = db.vacuum().unwrap();
+        assert_eq!(deleted, 2);
+    }
+
+    #[test]
+    fn test_keyinfo_nonexistent() {
+        let db = Db::open_memory().unwrap();
+        let info = db.keyinfo("nonexistent").unwrap();
+        assert!(info.is_none());
+    }
+
+    #[test]
+    fn test_keyinfo_string() {
+        let db = Db::open_memory().unwrap();
+        db.set("mykey", b"myvalue", None).unwrap();
+
+        let info = db.keyinfo("mykey").unwrap().unwrap();
+        assert_eq!(info.key_type, KeyType::String);
+        assert_eq!(info.ttl, -1); // No expiry
+        assert!(info.created_at > 0);
+        assert!(info.updated_at > 0);
+    }
+
+    #[test]
+    fn test_keyinfo_with_ttl() {
+        let db = Db::open_memory().unwrap();
+        db.set("mykey", b"myvalue", Some(Duration::from_secs(100)))
+            .unwrap();
+
+        let info = db.keyinfo("mykey").unwrap().unwrap();
+        assert_eq!(info.key_type, KeyType::String);
+        // TTL should be approximately 100 seconds (allow some tolerance)
+        assert!(info.ttl >= 99 && info.ttl <= 100);
+    }
+
+    #[test]
+    fn test_keyinfo_hash() {
+        let db = Db::open_memory().unwrap();
+        db.hset("myhash", &[("field1", b"value1".as_slice())])
+            .unwrap();
+
+        let info = db.keyinfo("myhash").unwrap().unwrap();
+        assert_eq!(info.key_type, KeyType::Hash);
+        assert_eq!(info.ttl, -1);
+    }
+
+    #[test]
+    fn test_keyinfo_list() {
+        let db = Db::open_memory().unwrap();
+        db.rpush("mylist", &[b"a", b"b", b"c"]).unwrap();
+
+        let info = db.keyinfo("mylist").unwrap().unwrap();
+        assert_eq!(info.key_type, KeyType::List);
+        assert_eq!(info.ttl, -1);
+    }
+
+    #[test]
+    fn test_keyinfo_set() {
+        let db = Db::open_memory().unwrap();
+        db.sadd("myset", &[b"member1", b"member2"]).unwrap();
+
+        let info = db.keyinfo("myset").unwrap().unwrap();
+        assert_eq!(info.key_type, KeyType::Set);
+        assert_eq!(info.ttl, -1);
+    }
+
+    #[test]
+    fn test_keyinfo_zset() {
+        let db = Db::open_memory().unwrap();
+        db.zadd("myzset", &[ZMember::new(1.0, b"member1".to_vec())])
+            .unwrap();
+
+        let info = db.keyinfo("myzset").unwrap().unwrap();
+        assert_eq!(info.key_type, KeyType::ZSet);
+        assert_eq!(info.ttl, -1);
+    }
+
+    #[test]
+    fn test_keyinfo_expired_key() {
+        let db = Db::open_memory().unwrap();
+        db.set("expired", b"value", Some(Duration::from_millis(1)))
+            .unwrap();
+
+        // Wait for expiration
+        std::thread::sleep(Duration::from_millis(10));
+
+        // KEYINFO should return None for expired keys (and delete them)
+        let info = db.keyinfo("expired").unwrap();
+        assert!(info.is_none());
     }
 }

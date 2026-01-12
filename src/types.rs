@@ -70,3 +70,12 @@ impl SetOptions {
         self
     }
 }
+
+/// Metadata about a key (returned by KEYINFO)
+#[derive(Debug, Clone)]
+pub struct KeyInfo {
+    pub key_type: KeyType,
+    pub ttl: i64,        // TTL in seconds (-1 if no expiry)
+    pub created_at: i64, // Timestamp in milliseconds
+    pub updated_at: i64, // Timestamp in milliseconds
+}

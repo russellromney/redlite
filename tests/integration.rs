@@ -1341,3 +1341,114 @@ fn test_flushdb_only_current() {
 
     assert_eq!(redis_cli(16465, &["GET", "key0"]), "value0");
 }
+
+// --- Session 11: Custom Commands Integration Tests ---
+
+#[test]
+fn test_vacuum_no_expired() {
+    let _server = start_server(16466);
+
+    // Add some permanent keys
+    redis_cli(16466, &["SET", "key1", "value1"]);
+    redis_cli(16466, &["SET", "key2", "value2"]);
+
+    // VACUUM should return 0 (no expired keys)
+    let r = redis_cli(16466, &["VACUUM"]);
+    assert!(check_int(&r, 0), "Expected 0 deleted, got: {}", r);
+
+    // Keys should still exist
+    assert_eq!(redis_cli(16466, &["GET", "key1"]), "value1");
+    assert_eq!(redis_cli(16466, &["GET", "key2"]), "value2");
+}
+
+#[test]
+fn test_vacuum_with_expired() {
+    let _server = start_server(16467);
+
+    // Add a key with 1 second TTL
+    redis_cli(16467, &["SET", "expired", "value", "PX", "50"]);
+    redis_cli(16467, &["SET", "permanent", "value2"]);
+
+    // Wait for expiration
+    thread::sleep(Duration::from_millis(100));
+
+    // VACUUM should delete the expired key
+    let r = redis_cli(16467, &["VACUUM"]);
+    assert!(check_int(&r, 1), "Expected 1 deleted, got: {}", r);
+
+    // Permanent key should still exist
+    assert_eq!(redis_cli(16467, &["GET", "permanent"]), "value2");
+}
+
+#[test]
+fn test_keyinfo_nonexistent() {
+    let _server = start_server(16468);
+
+    let r = redis_cli(16468, &["KEYINFO", "nonexistent"]);
+    assert!(r.is_empty() || r.contains("nil"), "Expected nil for nonexistent key, got: {}", r);
+}
+
+#[test]
+fn test_keyinfo_string() {
+    let _server = start_server(16469);
+
+    redis_cli(16469, &["SET", "mykey", "myvalue"]);
+
+    let r = redis_cli(16469, &["KEYINFO", "mykey"]);
+    assert!(r.contains("type") && r.contains("string"), "Expected type=string, got: {}", r);
+    assert!(r.contains("ttl"), "Expected ttl field, got: {}", r);
+    assert!(r.contains("created_at"), "Expected created_at field, got: {}", r);
+    assert!(r.contains("updated_at"), "Expected updated_at field, got: {}", r);
+}
+
+#[test]
+fn test_keyinfo_with_ttl() {
+    let _server = start_server(16470);
+
+    redis_cli(16470, &["SET", "mykey", "myvalue", "EX", "100"]);
+
+    let r = redis_cli(16470, &["KEYINFO", "mykey"]);
+    assert!(r.contains("type") && r.contains("string"), "Expected type=string, got: {}", r);
+    // TTL should be present and approximately 100 or less
+    assert!(r.contains("ttl"), "Expected ttl field, got: {}", r);
+}
+
+#[test]
+fn test_keyinfo_hash() {
+    let _server = start_server(16471);
+
+    redis_cli(16471, &["HSET", "myhash", "field1", "value1"]);
+
+    let r = redis_cli(16471, &["KEYINFO", "myhash"]);
+    assert!(r.contains("type") && r.contains("hash"), "Expected type=hash, got: {}", r);
+}
+
+#[test]
+fn test_keyinfo_list() {
+    let _server = start_server(16472);
+
+    redis_cli(16472, &["RPUSH", "mylist", "a", "b", "c"]);
+
+    let r = redis_cli(16472, &["KEYINFO", "mylist"]);
+    assert!(r.contains("type") && r.contains("list"), "Expected type=list, got: {}", r);
+}
+
+#[test]
+fn test_keyinfo_set() {
+    let _server = start_server(16473);
+
+    redis_cli(16473, &["SADD", "myset", "member1", "member2"]);
+
+    let r = redis_cli(16473, &["KEYINFO", "myset"]);
+    assert!(r.contains("type") && r.contains("set"), "Expected type=set, got: {}", r);
+}
+
+#[test]
+fn test_keyinfo_zset() {
+    let _server = start_server(16474);
+
+    redis_cli(16474, &["ZADD", "myzset", "1", "member1"]);
+
+    let r = redis_cli(16474, &["KEYINFO", "myzset"]);
+    assert!(r.contains("type") && r.contains("zset"), "Expected type=zset, got: {}", r);
+}

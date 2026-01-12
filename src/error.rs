@@ -26,6 +26,9 @@ pub enum KvError {
     #[error("invalid cursor")]
     InvalidCursor,
 
+    #[error("invalid data")]
+    InvalidData,
+
     #[error("database error: {0}")]
     Database(#[from] rusqlite::Error),
 
