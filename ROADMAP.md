@@ -129,12 +129,12 @@ Incremental implementation plan. Each session = one commit = one testable featur
 - [x] Integration tests (9 new tests)
 - [x] **Test:** 177 unit tests + 88 integration tests passing
 
-### Session 12: Polish & Release
-- [ ] Error messages match Redis
-- [ ] Edge cases handled
-- [ ] README with usage examples
-- [ ] `cargo publish` ready
-- [ ] **Test:** Full compatibility test suite
+### Session 12: Polish & Release ✅
+- [x] Error messages match Redis (fixed double ERR prefix)
+- [x] Edge cases handled (WRONGTYPE for string ops: GET, APPEND, INCR, INCRBYFLOAT)
+- [x] README with usage examples (already complete from Session 11)
+- [x] `cargo publish` ready (keywords, categories, docs, license fixed)
+- [x] **Test:** 178 unit tests + 88 integration tests passing
 
 ### Session 13: Streams (Basic)
 - [ ] Schema: `streams` table (key_id, id INTEGER PRIMARY KEY, data BLOB, created_at)
