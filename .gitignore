@@ -1,0 +1,94 @@
+# Build
+/target/
+**/*.rs.bk
+
+# Database files
+*.db
+*.db-wal
+*.db-shm
+*.sqlite
+*.sqlite3
+
+# Secrets and credentials
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+*.crt
+*.p12
+*.pfx
+secrets/
+credentials/
+*.secret
+*_secret*
+*_credentials*
+*.credentials
+service-account*.json
+gcp-*.json
+aws-*.json
+
+# API keys and tokens
+*.token
+*_token*
+*_api_key*
+api_keys/
+
+# SSH
+id_rsa
+id_dsa
+id_ecdsa
+id_ed25519
+*.pub
+.ssh/
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+.project
+.classpath
+.settings/
+*.sublime-*
+
+# OS
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+Thumbs.db
+ehthumbs.db
+Desktop.ini
+
+# Logs
+*.log
+logs/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# Test artifacts
+coverage/
+*.profraw
+*.profdata
+/tmp/
+
+# Backup files
+*.bak
+*.backup
+*.old
+*.orig
+
+# Archives (might contain sensitive data)
+*.zip
+*.tar
+*.tar.gz
+*.tgz
+*.rar
+*.7z
+
+# Cargo lock (keep for binaries, optional for libraries)
+# Cargo.lock
