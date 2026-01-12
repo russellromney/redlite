@@ -1,7 +1,9 @@
 use rusqlite::{params, Connection};
+use std::collections::HashMap;
 use std::sync::atomic::{AtomicBool, AtomicI64, Ordering};
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Mutex, RwLock};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
+use tokio::sync::broadcast;
 
 use crate::error::{KvError, Result};
 use crate::types::{ConsumerGroupInfo, ConsumerInfo, KeyInfo, KeyType, PendingEntry, PendingSummary, SetOptions, StreamEntry, StreamId, StreamInfo, ZMember};
@@ -18,6 +20,10 @@ struct DbCore {
     last_cleanup: AtomicI64,
     /// Autovacuum interval in milliseconds (configurable, default: 60s)
     autovacuum_interval_ms: AtomicI64,
+    /// Optional notifier for server mode (None for embedded mode)
+    /// Maps key name to broadcast sender for notifications
+    /// Uses RwLock to allow updating after creation (for server mode attachment)
+    notifier: RwLock<Option<Arc<RwLock<HashMap<String, broadcast::Sender<()>>>>>>,
 }
 
 /// Database session with per-instance selected database.
@@ -64,6 +70,7 @@ impl Db {
             autovacuum_enabled: AtomicBool::new(true),
             last_cleanup: AtomicI64::new(0),
             autovacuum_interval_ms: AtomicI64::new(DEFAULT_AUTOVACUUM_INTERVAL_MS),
+            notifier: RwLock::new(None),
         });
 
         let db = Self {
@@ -4372,6 +4379,51 @@ impl Db {
 
         Ok(result)
     }
+
+    /// Check if database is in server mode (has notifier attached)
+    pub fn is_server_mode(&self) -> bool {
+        self.core.notifier.read().unwrap().is_some()
+    }
+
+    /// Send notification to all subscribers of a key
+    pub async fn notify_key(&self, key: &str) -> Result<()> {
+        if let Some(notifier) = self.core.notifier.read().unwrap().as_ref() {
+            let map = notifier.read().unwrap();
+            if let Some(sender) = map.get(key) {
+                let _ = sender.send(());
+            }
+        }
+        Ok(())
+    }
+
+    /// Subscribe to notifications for a key
+    pub async fn subscribe_key(&self, key: &str) -> broadcast::Receiver<()> {
+        if let Some(notifier) = self.core.notifier.read().unwrap().as_ref() {
+            let notifier = Arc::clone(notifier);
+            let mut map = notifier.write().unwrap();
+            let sender = map
+                .entry(key.to_string())
+                .or_insert_with(|| {
+                    let (tx, _) = broadcast::channel(128);
+                    tx
+                })
+                .clone();
+            sender.subscribe()
+        } else {
+            // For embedded mode - return a never-firing receiver
+            let (tx, rx) = broadcast::channel(1);
+            drop(tx); // Sender dropped, receiver will never fire
+            rx
+        }
+    }
+
+    /// Attach notifier to database for server mode
+    pub fn with_notifier(
+        &self,
+        notifier: Arc<RwLock<HashMap<String, broadcast::Sender<()>>>>,
+    ) {
+        *self.core.notifier.write().unwrap() = Some(notifier);
+    }
 }
 
 #[cfg(test)]
@@ -7740,5 +7792,151 @@ mod tests {
 
         let consumers = db.xinfo_consumers("mystream", "mygroup").unwrap();
         assert_eq!(consumers.len(), 2);
+    }
+
+    #[test]
+    fn test_is_server_mode_embedded() {
+        // Embedded mode: no notifier attached
+        let db = Db::open_memory().unwrap();
+        assert!(!db.is_server_mode());
+    }
+
+    #[test]
+    fn test_is_server_mode_server() {
+        // Server mode: notifier attached
+        let db = Db::open_memory().unwrap();
+        let notifier = Arc::new(RwLock::new(HashMap::new()));
+        db.with_notifier(notifier);
+        assert!(db.is_server_mode());
+    }
+
+    #[tokio::test]
+    async fn test_subscribe_key_embedded_mode() {
+        // Embedded mode subscribe should return a receiver that's immediately closed
+        // (because the sender is dropped after creating the channel)
+        let db = Db::open_memory().unwrap();
+        let mut rx = db.subscribe_key("mykey").await;
+
+        // In embedded mode, recv() will return Err(Closed) immediately
+        // because we don't hold any senders
+        let result = rx.recv().await;
+        assert!(matches!(result, Err(tokio::sync::broadcast::error::RecvError::Closed)));
+    }
+
+    #[tokio::test]
+    async fn test_subscribe_key_server_mode() {
+        // Server mode subscribe should create channel
+        let db = Db::open_memory().unwrap();
+        let notifier = Arc::new(RwLock::new(HashMap::new()));
+        db.with_notifier(notifier.clone());
+
+        let mut rx = db.subscribe_key("mykey").await;
+
+        // Verify channel was created in notifier map
+        {
+            let map = notifier.read().unwrap();
+            assert!(map.contains_key("mykey"));
+        }
+
+        // Notify and verify receiver fires
+        db.notify_key("mykey").await.unwrap();
+        tokio::select! {
+            result = rx.recv() => {
+                assert!(result.is_ok());
+            }
+            _ = tokio::time::sleep(std::time::Duration::from_millis(100)) => {
+                panic!("Receiver should have fired after notification");
+            }
+        }
+    }
+
+    #[tokio::test]
+    async fn test_notify_key_creates_channel() {
+        // Notifying a key that doesn't have a channel yet
+        let db = Db::open_memory().unwrap();
+        let notifier = Arc::new(RwLock::new(HashMap::new()));
+        db.with_notifier(notifier.clone());
+
+        // Subscribe to create channel
+        let mut rx = db.subscribe_key("key1").await;
+
+        // Notify should send to the channel
+        db.notify_key("key1").await.unwrap();
+
+        tokio::select! {
+            result = rx.recv() => {
+                assert!(result.is_ok());
+            }
+            _ = tokio::time::sleep(std::time::Duration::from_millis(100)) => {
+                panic!("Receiver should have fired");
+            }
+        }
+    }
+
+    #[tokio::test]
+    async fn test_multiple_subscribers_same_key() {
+        // Multiple subscribers should all receive notifications
+        let db = Db::open_memory().unwrap();
+        let notifier = Arc::new(RwLock::new(HashMap::new()));
+        db.with_notifier(notifier);
+
+        let mut rx1 = db.subscribe_key("shared").await;
+        let mut rx2 = db.subscribe_key("shared").await;
+
+        // Send notification
+        db.notify_key("shared").await.unwrap();
+
+        // Both should receive
+        tokio::select! {
+            r1 = rx1.recv() => {
+                assert!(r1.is_ok());
+            }
+            _ = tokio::time::sleep(std::time::Duration::from_millis(100)) => {
+                panic!("rx1 should have fired");
+            }
+        }
+
+        tokio::select! {
+            r2 = rx2.recv() => {
+                assert!(r2.is_ok());
+            }
+            _ = tokio::time::sleep(std::time::Duration::from_millis(100)) => {
+                panic!("rx2 should have fired");
+            }
+        }
+    }
+
+    #[tokio::test]
+    async fn test_different_keys_isolated() {
+        // Notifying one key shouldn't affect others
+        let db = Db::open_memory().unwrap();
+        let notifier = Arc::new(RwLock::new(HashMap::new()));
+        db.with_notifier(notifier);
+
+        let mut rx_key1 = db.subscribe_key("key1").await;
+        let mut rx_key2 = db.subscribe_key("key2").await;
+
+        // Notify only key1
+        db.notify_key("key1").await.unwrap();
+
+        // key1 should fire
+        tokio::select! {
+            result = rx_key1.recv() => {
+                assert!(result.is_ok());
+            }
+            _ = tokio::time::sleep(std::time::Duration::from_millis(50)) => {
+                panic!("key1 should have fired");
+            }
+        }
+
+        // key2 should NOT fire
+        tokio::select! {
+            _result = rx_key2.recv() => {
+                panic!("key2 should not have fired");
+            }
+            _ = tokio::time::sleep(std::time::Duration::from_millis(50)) => {
+                // Expected - key2 doesn't fire
+            }
+        }
     }
 }

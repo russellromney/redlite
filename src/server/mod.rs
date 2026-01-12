@@ -1,5 +1,8 @@
+use std::collections::HashMap;
+use std::sync::{Arc, RwLock};
 use tokio::io::AsyncWriteExt;
 use tokio::net::{TcpListener, TcpStream};
+use tokio::sync::broadcast;
 
 use crate::db::Db;
 use crate::error::KvError;
@@ -8,11 +11,15 @@ use crate::types::{StreamId, ZMember};
 
 pub struct Server {
     db: Db,
+    notifier: Arc<RwLock<HashMap<String, broadcast::Sender<()>>>>,
 }
 
 impl Server {
     pub fn new(db: Db) -> Self {
-        Self { db }
+        Self {
+            db,
+            notifier: Arc::new(RwLock::new(HashMap::new())),
+        }
     }
 
     pub async fn run(&self, addr: &str) -> std::io::Result<()> {
@@ -26,8 +33,11 @@ impl Server {
             // Create a new session for this connection
             let session = self.db.session();
 
+            // Clone notifier for this connection
+            let notifier = Arc::clone(&self.notifier);
+
             tokio::spawn(async move {
-                if let Err(e) = handle_connection(socket, session).await {
+                if let Err(e) = handle_connection(socket, session, notifier).await {
                     tracing::error!("Connection error: {}", e);
                 }
             });
@@ -35,7 +45,14 @@ impl Server {
     }
 }
 
-async fn handle_connection(socket: TcpStream, mut db: Db) -> std::io::Result<()> {
+async fn handle_connection(
+    socket: TcpStream,
+    mut db: Db,
+    notifier: Arc<RwLock<HashMap<String, broadcast::Sender<()>>>>,
+) -> std::io::Result<()> {
+    // Attach notifier to database for server mode
+    db.with_notifier(notifier);
+
     let (reader, mut writer) = socket.into_split();
     let mut reader = RespReader::new(reader);
 
