@@ -168,16 +168,31 @@ Incremental implementation plan. Each session = one commit = one testable featur
 - [x] Unit tests (15 new tests) + integration tests (20 new tests)
 - [x] **Test:** 210 unit tests + 121 integration tests passing
 
-### Session 15: Blocking Reads (Server Mode Only)
+### Session 15.1: Blocking Reads — Notification Infrastructure
 - [ ] Server: Add `notify: Arc<RwLock<HashMap<String, broadcast::Sender<()>>>>` for key notifications
-- [ ] XADD/LPUSH/RPUSH broadcast to channel after insert
-- [ ] XREAD BLOCK milliseconds STREAMS key [key ...] id [id ...]
-- [ ] XREADGROUP ... BLOCK milliseconds ...
-- [ ] BLPOP key [key ...] timeout
-- [ ] BRPOP key [key ...] timeout
-- [ ] `tokio::select!` for multi-key blocking
+- [ ] Db/DbCore: Add optional notifier field for server mode detection
+- [ ] Add helper methods: `is_server_mode()`, `notify_key()`, `subscribe_key()`
+- [ ] Update `Server::new()` to initialize and pass notifier
+- [ ] Update `handle_connection()` to have notifier context
+- [ ] Embedded mode returns error for blocking operations
+- [ ] **Test:** Notification system works, embedded mode rejects blocking
+
+### Session 15.2: Blocking Reads — Broadcasting on Writes
+- [ ] Make LPUSH broadcast to channel after insert
+- [ ] Make RPUSH broadcast to channel after insert
+- [ ] Make XADD broadcast to channel after insert
+- [ ] Update XADD for stream consumer groups
+- [ ] Implement channel cleanup (remove unused channels)
+- [ ] **Test:** Writes notify waiting readers
+
+### Session 15.3: Blocking Reads — Blocking Commands
+- [ ] Make execute_command async
+- [ ] Implement BLPOP key [key ...] timeout
+- [ ] Implement BRPOP key [key ...] timeout
+- [ ] Add XREAD BLOCK milliseconds STREAMS key [key ...] id [id ...]
+- [ ] Add XREADGROUP BLOCK milliseconds ... GROUP group consumer STREAMS key [key ...]
 - [ ] Timeout handling (return nil on timeout)
-- [ ] Embedded mode: BLOCK/BLPOP/BRPOP returns error ("blocking not supported in embedded mode")
+- [ ] `tokio::select!` for multi-key blocking
 - [ ] Unit tests + integration tests
 - [ ] **Test:** Concurrent producers/consumers (server mode)
 

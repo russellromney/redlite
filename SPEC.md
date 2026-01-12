@@ -136,11 +136,11 @@ KEYINFO mykey
 
 | Feature | Reason |
 |---------|--------|
+| BLPOP/BRPOP/XREAD BLOCK | Server mode only (Session 15+). Embedded mode not supported. |
 | WATCH | Use SQLite transactions in library mode. See ROADMAP for V2+. |
-| BLPOP/BRPOP | Blocking requires different architecture |
 | Lua scripting | Out of scope |
 | Clustering | Not the use case |
-| Streams | Different data model, may add in V3 |
+| Pub/Sub | Server mode only, planned for Session 16. |
 
 ## Non-Goals
 

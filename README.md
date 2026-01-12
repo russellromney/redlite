@@ -160,6 +160,12 @@ redis-cli -p 6767 GET foo
 - `XPENDING` (summary and range forms, with IDLE filter)
 - `XCLAIM` (with IDLE, TIME, RETRYCOUNT, FORCE, JUSTID)
 
+### Blocking Reads (Server Mode Only, Session 15+)
+- `BLPOP key [key ...] timeout` (blocking list pop)
+- `BRPOP key [key ...] timeout` (blocking list pop from right)
+- `XREAD BLOCK milliseconds ...` (blocking stream read)
+- `XREADGROUP BLOCK milliseconds ...` (blocking stream read with consumer groups)
+
 ### Server
 - `PING`, `ECHO`, `QUIT`, `COMMAND`
 - `SELECT` (databases 0-15, per-connection isolation)
