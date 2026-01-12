@@ -196,11 +196,30 @@ Incremental implementation plan. Each session = one commit = one testable featur
 - [x] Unit tests + integration tests (all 352 existing tests pass)
 - [x] **Test:** 224 lib + 126 integration + 2 doc tests passing
 
+### Session 15.4: Pub/Sub Messaging ✅
+- [x] Architecture: `pubsub_channels: Arc<RwLock<HashMap<String, broadcast::Sender<PubSubMessage>>>>`
+- [x] `ConnectionState` enum: Normal vs Subscribed (with channels, patterns, receivers)
+- [x] New module: `src/server/pubsub.rs` (450+ lines, 8 unit tests)
+- [x] Command PUBLISH channel message — fire-and-forget, returns subscriber count
+- [x] Command SUBSCRIBE channel [channel ...] — enter subscription mode
+- [x] Command UNSUBSCRIBE [channel ...] — exit subscription mode or unsubscribe from channels
+- [x] Command PSUBSCRIBE pattern [pattern ...] — glob pattern subscriptions
+- [x] Command PUNSUBSCRIBE [pattern ...] — unsubscribe from patterns
+- [x] Glob pattern matching — supports `*` (any sequence), `?` (single char), `[abc]` (char set)
+- [x] Subscription mode restrictions: only SUBSCRIBE/UNSUBSCRIBE/PSUBSCRIBE/PUNSUBSCRIBE/PING/QUIT
+- [x] Modified `handle_connection()` with `tokio::select!` for subscription mode
+- [x] RESP2 message format: `["message", "channel", "payload"]`, `["pmessage", "pattern", "channel", "payload"]`
+- [x] Confirmation messages: `["subscribe", "channel", count]`, `["psubscribe", "pattern", count]`
+- [x] Connection state machine: Normal → Subscribed → Normal
+- [x] Unit tests: 8 glob matching + state tracking tests
+- [x] Integration tests: 5 pub/sub tests (PUBLISH with/without subscribers)
+- [x] **Test:** 232 lib + 131 integration + 2 doc tests passing (365 total)
+
 ---
 
-## V1 — Core Redis Compatibility
+## MVP — Core Redis Compatibility
 
-**Goal:** Drop-in Redis replacement for 90% of use cases.
+**Goal:** Drop-in Redis replacement for almost all use cases.
 
 ### Commands
 

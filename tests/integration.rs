@@ -2155,3 +2155,62 @@ async fn test_integration_concurrent_writes_same_key() {
     task2.await.unwrap();
     task3.await.unwrap();
 }
+
+
+// --- Pub/Sub Tests (Session 15.4) ---
+
+#[test]
+fn test_pubsub_publish_no_subscribers() {
+    let _server = start_server(17000);
+
+    // Publish to a channel with no subscribers
+    let result = redis_cli(17000, &["PUBLISH", "events", "hello"]);
+    assert_eq!(result, "0");
+}
+
+#[test]
+fn test_pubsub_publish_to_multiple_channels() {
+    let _server = start_server(17001);
+
+    // Publish to different channels
+    let result1 = redis_cli(17001, &["PUBLISH", "ch1", "msg1"]);
+    let result2 = redis_cli(17001, &["PUBLISH", "ch2", "msg2"]);
+    let result3 = redis_cli(17001, &["PUBLISH", "ch3", "msg3"]);
+
+    // All should return 0 (no subscribers)
+    assert_eq!(result1, "0");
+    assert_eq!(result2, "0");
+    assert_eq!(result3, "0");
+}
+
+#[test]
+fn test_pubsub_many_channels() {
+    let _server = start_server(17006);
+
+    // Test publishing to many different channels
+    for i in 0..10 {
+        let ch = format!("channel_{}", i);
+        let result = redis_cli(17006, &["PUBLISH", &ch, "msg"]);
+        assert_eq!(result, "0");
+    }
+}
+
+#[test]
+fn test_pubsub_empty_message() {
+    let _server = start_server(17007);
+
+    // Test publishing empty message
+    let result = redis_cli(17007, &["PUBLISH", "ch", ""]);
+    assert_eq!(result, "0");
+}
+
+#[test]
+fn test_pubsub_large_message() {
+    let _server = start_server(17008);
+
+    // Test publishing large message
+    let large_msg = "x".repeat(10000);
+    let result = redis_cli(17008, &["PUBLISH", "ch", &large_msg]);
+    assert_eq!(result, "0");
+}
+

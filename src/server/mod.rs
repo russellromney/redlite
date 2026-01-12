@@ -9,9 +9,16 @@ use crate::error::KvError;
 use crate::resp::{RespReader, RespValue};
 use crate::types::{StreamId, ZMember};
 
+mod pubsub;
+use pubsub::{
+    cmd_publish, cmd_subscribe, cmd_unsubscribe, cmd_psubscribe, cmd_punsubscribe,
+    receive_pubsub_message, ConnectionState, PubSubMessage,
+};
+
 pub struct Server {
     db: Db,
     notifier: Arc<RwLock<HashMap<String, broadcast::Sender<()>>>>,
+    pubsub_channels: Arc<RwLock<HashMap<String, broadcast::Sender<PubSubMessage>>>>,
 }
 
 impl Server {
@@ -19,6 +26,7 @@ impl Server {
         Self {
             db,
             notifier: Arc::new(RwLock::new(HashMap::new())),
+            pubsub_channels: Arc::new(RwLock::new(HashMap::new())),
         }
     }
 
@@ -33,11 +41,12 @@ impl Server {
             // Create a new session for this connection
             let session = self.db.session();
 
-            // Clone notifier for this connection
+            // Clone notifier and pubsub channels for this connection
             let notifier = Arc::clone(&self.notifier);
+            let pubsub_channels = Arc::clone(&self.pubsub_channels);
 
             tokio::spawn(async move {
-                if let Err(e) = handle_connection(socket, session, notifier).await {
+                if let Err(e) = handle_connection(socket, session, notifier, pubsub_channels).await {
                     tracing::error!("Connection error: {}", e);
                 }
             });
@@ -49,33 +58,137 @@ async fn handle_connection(
     socket: TcpStream,
     mut db: Db,
     notifier: Arc<RwLock<HashMap<String, broadcast::Sender<()>>>>,
+    pubsub_channels: Arc<RwLock<HashMap<String, broadcast::Sender<PubSubMessage>>>>,
 ) -> std::io::Result<()> {
     // Attach notifier to database for server mode
     db.with_notifier(notifier);
 
     let (reader, mut writer) = socket.into_split();
     let mut reader = RespReader::new(reader);
+    let mut state = ConnectionState::Normal;
 
     loop {
-        match reader.read_command().await? {
-            Some(args) => {
-                let response = execute_command(&mut db, &args).await;
-                writer.write_all(&response.encode()).await?;
-                writer.flush().await?;
+        if state.is_subscribed() {
+            // Subscription mode: handle commands and messages with tokio::select!
+            tokio::select! {
+                cmd_result = reader.read_command() => {
+                    match cmd_result? {
+                        Some(args) => {
+                            let response = execute_subscription_command(
+                                &mut state,
+                                &args,
+                                &pubsub_channels,
+                            ).await;
+                            writer.write_all(&response.encode()).await?;
+                            writer.flush().await?;
 
-                // Check for QUIT
-                if !args.is_empty() {
-                    let cmd = String::from_utf8_lossy(&args[0]).to_uppercase();
-                    if cmd == "QUIT" {
-                        break;
+                            // Check for QUIT
+                            if !args.is_empty() {
+                                let cmd = String::from_utf8_lossy(&args[0]).to_uppercase();
+                                if cmd == "QUIT" {
+                                    break;
+                                }
+                            }
+                        }
+                        None => break,
+                    }
+                }
+                msg = receive_pubsub_message(&mut state) => {
+                    if let Some(resp) = msg {
+                        writer.write_all(&resp.encode()).await?;
+                        writer.flush().await?;
                     }
                 }
             }
-            None => break, // EOF
+        } else {
+            // Normal mode: standard command processing
+            match reader.read_command().await? {
+                Some(args) => {
+                    let response = execute_normal_command(
+                        &mut state,
+                        &mut db,
+                        &args,
+                        &pubsub_channels,
+                    ).await;
+                    writer.write_all(&response.encode()).await?;
+                    writer.flush().await?;
+
+                    // Check for QUIT
+                    if !args.is_empty() {
+                        let cmd = String::from_utf8_lossy(&args[0]).to_uppercase();
+                        if cmd == "QUIT" {
+                            break;
+                        }
+                    }
+                }
+                None => break, // EOF
+            }
         }
     }
 
     Ok(())
+}
+
+/// Execute a command in normal mode (non-subscription)
+async fn execute_normal_command(
+    state: &mut ConnectionState,
+    db: &mut Db,
+    args: &[Vec<u8>],
+    pubsub_channels: &Arc<RwLock<HashMap<String, broadcast::Sender<PubSubMessage>>>>,
+) -> RespValue {
+    if args.is_empty() {
+        return RespValue::error("empty command");
+    }
+
+    let cmd = String::from_utf8_lossy(&args[0]).to_uppercase();
+    let cmd_args = &args[1..];
+
+    // Handle pub/sub commands
+    match cmd.as_str() {
+        "SUBSCRIBE" => cmd_subscribe(state, cmd_args, pubsub_channels),
+        "PSUBSCRIBE" => cmd_psubscribe(state, cmd_args, pubsub_channels),
+        "PUBLISH" => cmd_publish(cmd_args, pubsub_channels),
+        _ => execute_command(db, args).await,
+    }
+}
+
+/// Execute a command in subscription mode (restricted command set)
+async fn execute_subscription_command(
+    state: &mut ConnectionState,
+    args: &[Vec<u8>],
+    pubsub_channels: &Arc<RwLock<HashMap<String, broadcast::Sender<PubSubMessage>>>>,
+) -> RespValue {
+    if args.is_empty() {
+        return RespValue::error("empty command");
+    }
+
+    let cmd = String::from_utf8_lossy(&args[0]).to_uppercase();
+    let cmd_args = &args[1..];
+
+    match cmd.as_str() {
+        "SUBSCRIBE" => cmd_subscribe(state, cmd_args, pubsub_channels),
+        "UNSUBSCRIBE" => cmd_unsubscribe(state, cmd_args),
+        "PSUBSCRIBE" => cmd_psubscribe(state, cmd_args, pubsub_channels),
+        "PUNSUBSCRIBE" => cmd_punsubscribe(state, cmd_args),
+        "PING" => {
+            // PING in subscription mode returns array format
+            if cmd_args.is_empty() {
+                RespValue::Array(Some(vec![
+                    RespValue::from_string("pong".to_string()),
+                    RespValue::null(),
+                ]))
+            } else {
+                RespValue::Array(Some(vec![
+                    RespValue::from_string("pong".to_string()),
+                    RespValue::from_bytes(cmd_args[0].clone()),
+                ]))
+            }
+        }
+        "QUIT" => RespValue::ok(),
+        _ => RespValue::error(format!(
+            "only (P)SUBSCRIBE / (P)UNSUBSCRIBE / PING / QUIT are allowed in this context"
+        )),
+    }
 }
 
 async fn execute_command(db: &mut Db, args: &[Vec<u8>]) -> RespValue {

@@ -167,6 +167,38 @@ redis-cli -p 6767 GET foo
 - `XREAD BLOCK milliseconds ...` (blocking stream read) ✅
 - `XREADGROUP BLOCK milliseconds ...` (blocking stream read with consumer groups) ✅
 
+### Pub/Sub (Server Mode Only, Session 15.4) ✅
+**Status**: Complete (Session 15.4 ✅) — Fire-and-forget messaging with at-most-once semantics
+
+Fire-and-forget messaging via channels (server mode required). Excellent for notifications and event streaming.
+
+```bash
+# Terminal 1: Subscribe to channels
+redis-cli -p 6767 SUBSCRIBE events notifications
+
+# Terminal 2: Subscribe to patterns
+redis-cli -p 6767 PSUBSCRIBE "events.*" "alerts.*"
+
+# Terminal 3: Publish messages
+redis-cli -p 6767 PUBLISH events "hello"       # → Delivers to "events" subscribers
+redis-cli -p 6767 PUBLISH events.login "user"  # → Delivers to pattern subscribers
+redis-cli -p 6767 PUBLISH other "data"         # → No subscribers, returns 0
+```
+
+**Commands:**
+- `SUBSCRIBE channel [channel ...]` — Subscribe to one or more channels
+- `UNSUBSCRIBE [channel ...]` — Unsubscribe from channels (all if none specified)
+- `PUBLISH channel message` — Publish message, returns count of subscribers that received it
+- `PSUBSCRIBE pattern [pattern ...]` — Subscribe to channel patterns (glob syntax: `*`, `?`, `[abc]`)
+- `PUNSUBSCRIBE [pattern ...]` — Unsubscribe from patterns
+
+**Characteristics:**
+- Subscription mode: Connection restricted to pub/sub commands + PING/QUIT
+- At-most-once semantics: Messages lost if no subscribers (no persistence)
+- Broadcast delivery: Multiple subscribers receive same message
+- Lazy channel creation: Channels created on first subscriber
+- Auto-cleanup: Channels removed when all subscribers disconnect
+
 ### Server
 - `PING`, `ECHO`, `QUIT`, `COMMAND`
 - `SELECT` (databases 0-15, per-connection isolation)
