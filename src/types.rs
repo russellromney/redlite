@@ -317,6 +317,26 @@ impl HistoryEntry {
     }
 }
 
+/// Statistics about history tracking for a key or globally
+#[derive(Debug, Clone)]
+pub struct HistoryStats {
+    pub total_entries: i64,
+    pub oldest_timestamp: Option<i64>,
+    pub newest_timestamp: Option<i64>,
+    pub storage_bytes: i64,
+}
+
+impl HistoryStats {
+    pub fn new(total: i64, oldest: Option<i64>, newest: Option<i64>, storage: i64) -> Self {
+        Self {
+            total_entries: total,
+            oldest_timestamp: oldest,
+            newest_timestamp: newest,
+            storage_bytes: storage,
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

@@ -1,4 +1,4 @@
-use rusqlite::{params, Connection};
+use rusqlite::{params, Connection, OptionalExtension};
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicBool, AtomicI64, Ordering};
 use std::sync::{Arc, Mutex, RwLock};
@@ -6,7 +6,7 @@ use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use tokio::sync::broadcast;
 
 use crate::error::{KvError, Result};
-use crate::types::{ConsumerGroupInfo, ConsumerInfo, KeyInfo, KeyType, PendingEntry, PendingSummary, SetOptions, StreamEntry, StreamId, StreamInfo, ZMember};
+use crate::types::{ConsumerGroupInfo, ConsumerInfo, KeyInfo, KeyType, PendingEntry, PendingSummary, SetOptions, StreamEntry, StreamId, StreamInfo, ZMember, HistoryEntry, HistoryStats, RetentionType};
 
 /// Default autovacuum interval in milliseconds (60 seconds)
 const DEFAULT_AUTOVACUUM_INTERVAL_MS: i64 = 60_000;
@@ -292,6 +292,12 @@ impl Db {
             params![key_id, value],
         )?;
 
+        // Release connection before recording history
+        drop(conn);
+
+        // Record history for SET operation
+        let _ = self.record_history(db, key, "SET", None);
+
         Ok(true)
     }
 
@@ -322,6 +328,16 @@ impl Db {
         }
 
         let count = stmt.execute(params_vec.as_slice())?;
+
+        // Release statement and connection before recording history
+        drop(stmt);
+        drop(conn);
+
+        // Record history for each deleted key
+        for key in keys {
+            let _ = self.record_history(db, key, "DEL", None);
+        }
+
         Ok(count as i64)
     }
 
@@ -1038,7 +1054,15 @@ impl Db {
             params![now, key_id],
         )?;
 
-        Ok(new_fields)
+        let result = new_fields;
+
+        // Release connection before recording history
+        drop(conn);
+
+        // Record history for HSET operation
+        let _ = self.record_history(self.selected_db, key, "HSET", None);
+
+        Ok(result)
     }
 
     /// HGET key field - get hash field value
@@ -1536,6 +1560,9 @@ impl Db {
         // Release lock before async notification
         drop(conn);
 
+        // Record history for LPUSH operation
+        let _ = self.record_history(self.selected_db, key, "LPUSH", None);
+
         // Notify waiting readers in server mode
         if self.is_server_mode() {
             let key = key.to_string();
@@ -1607,6 +1634,9 @@ impl Db {
 
         // Release lock before async notification
         drop(conn);
+
+        // Record history for RPUSH operation
+        let _ = self.record_history(self.selected_db, key, "RPUSH", None);
 
         // Notify waiting readers in server mode
         if self.is_server_mode() {
@@ -3264,6 +3294,9 @@ impl Db {
         // Release lock before async notification
         drop(conn);
 
+        // Record history for XADD operation
+        let _ = self.record_history(self.selected_db, key, "XADD", None);
+
         // Notify waiting readers in server mode
         if self.is_server_mode() {
             let key = key.to_string();
@@ -4879,6 +4912,545 @@ impl Db {
 
             // Loop continues and retries
         }
+    }
+
+    // ===== Session 17.2: Configuration Methods =====
+
+    /// Enable history tracking globally for all databases
+    pub fn history_enable_global(&self, retention: RetentionType) -> Result<()> {
+        let conn = self.core.conn.lock().unwrap_or_else(|e| e.into_inner());
+        let retention_type = retention.as_str();
+        let retention_value = match retention {
+            RetentionType::Unlimited => None,
+            RetentionType::Time(ms) => Some(ms),
+            RetentionType::Count(n) => Some(n),
+        };
+
+        conn.execute(
+            "INSERT OR REPLACE INTO history_config (level, target, enabled, retention_type, retention_value)
+             VALUES ('global', '*', 1, ?, ?)",
+            params![retention_type, retention_value],
+        )?;
+        Ok(())
+    }
+
+    /// Enable history tracking for a specific database
+    pub fn history_enable_database(&self, db_num: i32, retention: RetentionType) -> Result<()> {
+        if !(0..=15).contains(&db_num) {
+            return Err(KvError::SyntaxError);
+        }
+        let conn = self.core.conn.lock().unwrap_or_else(|e| e.into_inner());
+        let target = db_num.to_string();
+        let retention_type = retention.as_str();
+        let retention_value = match retention {
+            RetentionType::Unlimited => None,
+            RetentionType::Time(ms) => Some(ms),
+            RetentionType::Count(n) => Some(n),
+        };
+
+        conn.execute(
+            "INSERT OR REPLACE INTO history_config (level, target, enabled, retention_type, retention_value)
+             VALUES ('database', ?, 1, ?, ?)",
+            params![target, retention_type, retention_value],
+        )?;
+        Ok(())
+    }
+
+    /// Enable history tracking for a specific key
+    pub fn history_enable_key(&self, key: &str, retention: RetentionType) -> Result<()> {
+        let conn = self.core.conn.lock().unwrap_or_else(|e| e.into_inner());
+        let target = format!("{}:{}", self.selected_db, key);
+        let retention_type = retention.as_str();
+        let retention_value = match retention {
+            RetentionType::Unlimited => None,
+            RetentionType::Time(ms) => Some(ms),
+            RetentionType::Count(n) => Some(n),
+        };
+
+        conn.execute(
+            "INSERT OR REPLACE INTO history_config (level, target, enabled, retention_type, retention_value)
+             VALUES ('key', ?, 1, ?, ?)",
+            params![target, retention_type, retention_value],
+        )?;
+        Ok(())
+    }
+
+    /// Disable history tracking globally
+    pub fn history_disable_global(&self) -> Result<()> {
+        let conn = self.core.conn.lock().unwrap_or_else(|e| e.into_inner());
+        conn.execute(
+            "UPDATE history_config SET enabled = 0 WHERE level = 'global' AND target = '*'",
+            [],
+        )?;
+        Ok(())
+    }
+
+    /// Disable history tracking for a specific database
+    pub fn history_disable_database(&self, db_num: i32) -> Result<()> {
+        if !(0..=15).contains(&db_num) {
+            return Err(KvError::SyntaxError);
+        }
+        let conn = self.core.conn.lock().unwrap_or_else(|e| e.into_inner());
+        let target = db_num.to_string();
+        conn.execute(
+            "UPDATE history_config SET enabled = 0 WHERE level = 'database' AND target = ?",
+            params![target],
+        )?;
+        Ok(())
+    }
+
+    /// Disable history tracking for a specific key
+    pub fn history_disable_key(&self, key: &str) -> Result<()> {
+        let conn = self.core.conn.lock().unwrap_or_else(|e| e.into_inner());
+        let target = format!("{}:{}", self.selected_db, key);
+        conn.execute(
+            "UPDATE history_config SET enabled = 0 WHERE level = 'key' AND target = ?",
+            params![target],
+        )?;
+        Ok(())
+    }
+
+    /// Check if history is enabled for a key (three-tier lookup: key > db > global)
+    pub fn is_history_enabled(&self, key: &str) -> Result<bool> {
+        let conn = self.core.conn.lock().unwrap_or_else(|e| e.into_inner());
+
+        // First check key-level config
+        let key_target = format!("{}:{}", self.selected_db, key);
+        let key_enabled: Option<bool> = conn
+            .query_row(
+                "SELECT enabled FROM history_config WHERE level = 'key' AND target = ? LIMIT 1",
+                params![key_target],
+                |row| row.get(0),
+            )
+            .optional()?;
+
+        if let Some(enabled) = key_enabled {
+            return Ok(enabled);
+        }
+
+        // Fall back to database-level config
+        let db_enabled: Option<bool> = conn
+            .query_row(
+                "SELECT enabled FROM history_config WHERE level = 'database' AND target = ? LIMIT 1",
+                params![self.selected_db.to_string()],
+                |row| row.get(0),
+            )
+            .optional()?;
+
+        if let Some(enabled) = db_enabled {
+            return Ok(enabled);
+        }
+
+        // Fall back to global config
+        let global_enabled: Option<bool> = conn
+            .query_row(
+                "SELECT enabled FROM history_config WHERE level = 'global' AND target = '*' LIMIT 1",
+                params![],
+                |row| row.get(0),
+            )
+            .optional()?;
+
+        Ok(global_enabled.unwrap_or(false))
+    }
+
+    // ===== Session 17.3: Recording & Retention =====
+
+    /// Get the current version number for a key (create if doesn't exist)
+    fn get_or_create_key_id(&self, db: i32, key: &str) -> Result<i64> {
+        let conn = self.core.conn.lock().unwrap_or_else(|e| e.into_inner());
+
+        // Try to get existing key
+        if let Ok(key_id) = conn.query_row(
+            "SELECT id FROM keys WHERE db = ? AND key = ? LIMIT 1",
+            params![db, key],
+            |row| row.get(0),
+        ) {
+            return Ok(key_id);
+        }
+
+        // Create new key entry if it doesn't exist
+        conn.execute(
+            "INSERT INTO keys (db, key, type, created_at) VALUES (?, ?, ?, ?)",
+            params![db, key, 0, Self::now_ms()],
+        )?;
+
+        let key_id = conn.last_insert_rowid();
+        Ok(key_id)
+    }
+
+    /// Get the next version number for a key
+    fn increment_version(&self, key_id: i64) -> Result<i64> {
+        let conn = self.core.conn.lock().unwrap_or_else(|e| e.into_inner());
+        let version: Option<i64> = conn
+            .query_row(
+                "SELECT MAX(version_num) FROM key_history WHERE key_id = ?",
+                params![key_id],
+                |row| row.get(0),
+            )
+            .optional()?;
+
+        Ok(version.unwrap_or(0) + 1)
+    }
+
+    /// Record a history entry for an operation
+    fn record_history(
+        &self,
+        db: i32,
+        key: &str,
+        operation: &str,
+        data_snapshot: Option<Vec<u8>>,
+    ) -> Result<()> {
+        // Check if history is enabled
+        if !self.is_history_enabled(key)? {
+            return Ok(());
+        }
+
+        let conn = self.core.conn.lock().unwrap_or_else(|e| e.into_inner());
+        let key_id = self.get_or_create_key_id(db, key)?;
+        let version = self.increment_version(key_id)?;
+        let timestamp_ms = Self::now_ms();
+
+        // Get current key type from the keys table
+        let key_type: i32 = conn
+            .query_row(
+                "SELECT type FROM keys WHERE id = ?",
+                params![key_id],
+                |row| row.get(0),
+            )
+            .unwrap_or(0);
+
+        conn.execute(
+            "INSERT INTO key_history (key_id, db, key, key_type, version_num, operation, timestamp_ms, data_snapshot)
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+            params![key_id, db, key, key_type, version, operation, timestamp_ms, data_snapshot],
+        )?;
+
+        // Apply retention policy
+        self.apply_retention_policy(db, key)?;
+
+        Ok(())
+    }
+
+    /// Apply retention policy to a key's history
+    fn apply_retention_policy(&self, db: i32, key: &str) -> Result<()> {
+        let conn = self.core.conn.lock().unwrap_or_else(|e| e.into_inner());
+
+        // Get the key's ID
+        let key_id: Option<i64> = conn
+            .query_row(
+                "SELECT id FROM keys WHERE db = ? AND key = ? LIMIT 1",
+                params![db, key],
+                |row| row.get(0),
+            )
+            .optional()?;
+
+        let key_id = match key_id {
+            Some(id) => id,
+            None => return Ok(()),
+        };
+
+        // Check key-level retention first
+        let key_target = format!("{}:{}", db, key);
+        let key_retention: Option<(String, Option<i64>)> = conn
+            .query_row(
+                "SELECT retention_type, retention_value FROM history_config WHERE level = 'key' AND target = ?",
+                params![key_target],
+                |row| Ok((row.get(0)?, row.get(1)?)),
+            )
+            .optional()?;
+
+        if let Some((retention_type, retention_value)) = key_retention {
+            match retention_type.as_str() {
+                "time" => {
+                    let cutoff = Self::now_ms() - retention_value.unwrap_or(0);
+                    conn.execute(
+                        "DELETE FROM key_history WHERE key_id = ? AND timestamp_ms < ?",
+                        params![key_id, cutoff],
+                    )?;
+                }
+                "count" => {
+                    let count = retention_value.unwrap_or(100);
+                    conn.execute(
+                        "DELETE FROM key_history WHERE key_id = ? AND version_num <= (
+                            SELECT COALESCE(MAX(version_num) - ?, 0) FROM key_history WHERE key_id = ?
+                        )",
+                        params![key_id, count - 1, key_id],
+                    )?;
+                }
+                _ => {} // unlimited
+            }
+            return Ok(());
+        }
+
+        // Fall back to database-level retention
+        let db_retention: Option<(String, Option<i64>)> = conn
+            .query_row(
+                "SELECT retention_type, retention_value FROM history_config WHERE level = 'database' AND target = ?",
+                params![db.to_string()],
+                |row| Ok((row.get(0)?, row.get(1)?)),
+            )
+            .optional()?;
+
+        if let Some((retention_type, retention_value)) = db_retention {
+            match retention_type.as_str() {
+                "time" => {
+                    let cutoff = Self::now_ms() - retention_value.unwrap_or(0);
+                    conn.execute(
+                        "DELETE FROM key_history WHERE key_id = ? AND timestamp_ms < ?",
+                        params![key_id, cutoff],
+                    )?;
+                }
+                "count" => {
+                    let count = retention_value.unwrap_or(100);
+                    conn.execute(
+                        "DELETE FROM key_history WHERE key_id = ? AND version_num <= (
+                            SELECT COALESCE(MAX(version_num) - ?, 0) FROM key_history WHERE key_id = ?
+                        )",
+                        params![key_id, count - 1, key_id],
+                    )?;
+                }
+                _ => {} // unlimited
+            }
+            return Ok(());
+        }
+
+        // Fall back to global retention
+        let global_retention: Option<(String, Option<i64>)> = conn
+            .query_row(
+                "SELECT retention_type, retention_value FROM history_config WHERE level = 'global' AND target = '*'",
+                params![],
+                |row| Ok((row.get(0)?, row.get(1)?)),
+            )
+            .optional()?;
+
+        if let Some((retention_type, retention_value)) = global_retention {
+            match retention_type.as_str() {
+                "time" => {
+                    let cutoff = Self::now_ms() - retention_value.unwrap_or(0);
+                    conn.execute(
+                        "DELETE FROM key_history WHERE key_id = ? AND timestamp_ms < ?",
+                        params![key_id, cutoff],
+                    )?;
+                }
+                "count" => {
+                    let count = retention_value.unwrap_or(100);
+                    conn.execute(
+                        "DELETE FROM key_history WHERE key_id = ? AND version_num <= (
+                            SELECT COALESCE(MAX(version_num) - ?, 0) FROM key_history WHERE key_id = ?
+                        )",
+                        params![key_id, count - 1, key_id],
+                    )?;
+                }
+                _ => {} // unlimited
+            }
+        }
+
+        Ok(())
+    }
+
+    // ===== Session 17.4: Query Methods =====
+
+    /// Get history entries for a key with optional filters
+    pub fn history_get(
+        &self,
+        key: &str,
+        limit: Option<i64>,
+        since: Option<i64>,
+        until: Option<i64>,
+    ) -> Result<Vec<HistoryEntry>> {
+        let conn = self.core.conn.lock().unwrap_or_else(|e| e.into_inner());
+
+        match (since, until, limit) {
+            (Some(s), Some(u), Some(l)) => {
+                let mut stmt = conn.prepare(
+                    "SELECT id, key_id, db, key, key_type, version_num, operation, timestamp_ms, data_snapshot, expire_at
+                     FROM key_history WHERE db = ? AND key = ? AND timestamp_ms >= ? AND timestamp_ms <= ?
+                     ORDER BY timestamp_ms DESC LIMIT ?")?;
+                Self::query_to_history_entries(&mut stmt, params![self.selected_db, key, s, u, l])
+            }
+            (Some(s), Some(u), None) => {
+                let mut stmt = conn.prepare(
+                    "SELECT id, key_id, db, key, key_type, version_num, operation, timestamp_ms, data_snapshot, expire_at
+                     FROM key_history WHERE db = ? AND key = ? AND timestamp_ms >= ? AND timestamp_ms <= ?
+                     ORDER BY timestamp_ms DESC")?;
+                Self::query_to_history_entries(&mut stmt, params![self.selected_db, key, s, u])
+            }
+            (Some(s), None, Some(l)) => {
+                let mut stmt = conn.prepare(
+                    "SELECT id, key_id, db, key, key_type, version_num, operation, timestamp_ms, data_snapshot, expire_at
+                     FROM key_history WHERE db = ? AND key = ? AND timestamp_ms >= ?
+                     ORDER BY timestamp_ms DESC LIMIT ?")?;
+                Self::query_to_history_entries(&mut stmt, params![self.selected_db, key, s, l])
+            }
+            (Some(s), None, None) => {
+                let mut stmt = conn.prepare(
+                    "SELECT id, key_id, db, key, key_type, version_num, operation, timestamp_ms, data_snapshot, expire_at
+                     FROM key_history WHERE db = ? AND key = ? AND timestamp_ms >= ?
+                     ORDER BY timestamp_ms DESC")?;
+                Self::query_to_history_entries(&mut stmt, params![self.selected_db, key, s])
+            }
+            (None, Some(u), Some(l)) => {
+                let mut stmt = conn.prepare(
+                    "SELECT id, key_id, db, key, key_type, version_num, operation, timestamp_ms, data_snapshot, expire_at
+                     FROM key_history WHERE db = ? AND key = ? AND timestamp_ms <= ?
+                     ORDER BY timestamp_ms DESC LIMIT ?")?;
+                Self::query_to_history_entries(&mut stmt, params![self.selected_db, key, u, l])
+            }
+            (None, Some(u), None) => {
+                let mut stmt = conn.prepare(
+                    "SELECT id, key_id, db, key, key_type, version_num, operation, timestamp_ms, data_snapshot, expire_at
+                     FROM key_history WHERE db = ? AND key = ? AND timestamp_ms <= ?
+                     ORDER BY timestamp_ms DESC")?;
+                Self::query_to_history_entries(&mut stmt, params![self.selected_db, key, u])
+            }
+            (None, None, Some(l)) => {
+                let mut stmt = conn.prepare(
+                    "SELECT id, key_id, db, key, key_type, version_num, operation, timestamp_ms, data_snapshot, expire_at
+                     FROM key_history WHERE db = ? AND key = ?
+                     ORDER BY timestamp_ms DESC LIMIT ?")?;
+                Self::query_to_history_entries(&mut stmt, params![self.selected_db, key, l])
+            }
+            (None, None, None) => {
+                let mut stmt = conn.prepare(
+                    "SELECT id, key_id, db, key, key_type, version_num, operation, timestamp_ms, data_snapshot, expire_at
+                     FROM key_history WHERE db = ? AND key = ?
+                     ORDER BY timestamp_ms DESC")?;
+                Self::query_to_history_entries(&mut stmt, params![self.selected_db, key])
+            }
+        }
+    }
+
+    /// Helper to convert query results to HistoryEntry vec
+    fn query_to_history_entries(
+        stmt: &mut rusqlite::Statement,
+        params: impl rusqlite::Params,
+    ) -> Result<Vec<HistoryEntry>> {
+        let entries = stmt.query_map(params, |row| {
+            Ok(HistoryEntry {
+                id: row.get(0)?,
+                key_id: row.get(1)?,
+                db: row.get(2)?,
+                key: row.get(3)?,
+                key_type: KeyType::from_i32(row.get(4)?).unwrap_or(KeyType::String),
+                version_num: row.get(5)?,
+                operation: row.get(6)?,
+                timestamp_ms: row.get(7)?,
+                data_snapshot: row.get(8)?,
+                expire_at: row.get(9)?,
+            })
+        })?;
+
+        let mut results = Vec::new();
+        for entry in entries {
+            results.push(entry?);
+        }
+        Ok(results)
+    }
+
+    /// Get the value of a key at a specific point in time (time-travel query)
+    pub fn history_get_at(&self, key: &str, timestamp: i64) -> Result<Option<Vec<u8>>> {
+        let conn = self.core.conn.lock().unwrap_or_else(|e| e.into_inner());
+
+        let snapshot: Option<Vec<u8>> = conn
+            .query_row(
+                "SELECT data_snapshot FROM key_history
+                 WHERE db = ? AND key = ? AND timestamp_ms <= ?
+                 ORDER BY timestamp_ms DESC LIMIT 1",
+                params![self.selected_db, key, timestamp],
+                |row| row.get(0),
+            )
+            .optional()?;
+
+        Ok(snapshot)
+    }
+
+    /// List keys that have history tracking enabled
+    pub fn history_list_keys(&self, pattern: Option<&str>) -> Result<Vec<String>> {
+        let conn = self.core.conn.lock().unwrap_or_else(|e| e.into_inner());
+
+        let mut query = "SELECT DISTINCT key FROM key_history WHERE db = ?".to_string();
+
+        if let Some(pat) = pattern {
+            query.push_str(" AND key GLOB ?");
+            let mut stmt = conn.prepare(&query)?;
+            let keys = stmt.query_map(params![self.selected_db, pat], |row| {
+                row.get(0)
+            })?;
+
+            let mut results = Vec::new();
+            for key in keys {
+                results.push(key?);
+            }
+            Ok(results)
+        } else {
+            let mut stmt = conn.prepare(&query)?;
+            let keys = stmt.query_map(params![self.selected_db], |row| {
+                row.get(0)
+            })?;
+
+            let mut results = Vec::new();
+            for key in keys {
+                results.push(key?);
+            }
+            Ok(results)
+        }
+    }
+
+    /// Get statistics about history for a key or globally
+    pub fn history_stats(&self, key: Option<&str>) -> Result<HistoryStats> {
+        let conn = self.core.conn.lock().unwrap_or_else(|e| e.into_inner());
+
+        let (total, oldest, newest, storage) = if let Some(k) = key {
+            let row = conn.query_row(
+                "SELECT COUNT(*), MIN(timestamp_ms), MAX(timestamp_ms), COALESCE(SUM(LENGTH(data_snapshot)), 0)
+                 FROM key_history WHERE db = ? AND key = ?",
+                params![self.selected_db, k],
+                |row| Ok((row.get::<_, i64>(0)?, row.get::<_, Option<i64>>(1)?, row.get::<_, Option<i64>>(2)?, row.get::<_, i64>(3)?)),
+            )?;
+            (row.0, row.1, row.2, row.3)
+        } else {
+            let row = conn.query_row(
+                "SELECT COUNT(*), MIN(timestamp_ms), MAX(timestamp_ms), COALESCE(SUM(LENGTH(data_snapshot)), 0)
+                 FROM key_history WHERE db = ?",
+                params![self.selected_db],
+                |row| Ok((row.get::<_, i64>(0)?, row.get::<_, Option<i64>>(1)?, row.get::<_, Option<i64>>(2)?, row.get::<_, i64>(3)?)),
+            )?;
+            (row.0, row.1, row.2, row.3)
+        };
+
+        use crate::types::HistoryStats;
+        Ok(HistoryStats::new(total, oldest, newest, storage))
+    }
+
+    /// Clear history entries for a key before an optional timestamp
+    pub fn history_clear_key(&self, key: &str, before: Option<i64>) -> Result<i64> {
+        let conn = self.core.conn.lock().unwrap_or_else(|e| e.into_inner());
+
+        if let Some(timestamp) = before {
+            conn.execute(
+                "DELETE FROM key_history WHERE db = ? AND key = ? AND timestamp_ms < ?",
+                params![self.selected_db, key, timestamp],
+            )?;
+        } else {
+            conn.execute(
+                "DELETE FROM key_history WHERE db = ? AND key = ?",
+                params![self.selected_db, key],
+            )?;
+        }
+
+        Ok(conn.changes() as i64)
+    }
+
+    /// Prune all history entries before a given timestamp
+    pub fn history_prune(&self, before_timestamp: i64) -> Result<i64> {
+        let conn = self.core.conn.lock().unwrap_or_else(|e| e.into_inner());
+
+        conn.execute(
+            "DELETE FROM key_history WHERE timestamp_ms < ?",
+            params![before_timestamp],
+        )?;
+
+        Ok(conn.changes() as i64)
     }
 }
 

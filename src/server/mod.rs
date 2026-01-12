@@ -305,6 +305,7 @@ async fn execute_command(db: &mut Db, args: &[Vec<u8>]) -> RespValue {
         "VACUUM" => cmd_vacuum(db),
         "KEYINFO" => cmd_keyinfo(db, cmd_args),
         "AUTOVACUUM" => cmd_autovacuum(db, cmd_args),
+        "HISTORY" => cmd_history(db, cmd_args),
         // Stream commands
         "XADD" => cmd_xadd(db, cmd_args),
         "XLEN" => cmd_xlen(db, cmd_args),
@@ -2387,6 +2388,237 @@ fn cmd_autovacuum(db: &Db, args: &[Vec<u8>]) -> RespValue {
             }
         }
         _ => RespValue::error("argument must be ON, OFF, or INTERVAL <ms>"),
+    }
+}
+
+fn cmd_history(db: &Db, args: &[Vec<u8>]) -> RespValue {
+    if args.is_empty() {
+        return RespValue::error("HISTORY subcommand required");
+    }
+
+    let subcommand = match std::str::from_utf8(&args[0]) {
+        Ok(s) => s.to_uppercase(),
+        Err(_) => return RespValue::error("invalid subcommand"),
+    };
+
+    match subcommand.as_str() {
+        "ENABLE" => {
+            if args.len() < 2 {
+                return RespValue::error("HISTORY ENABLE requires level (GLOBAL|DATABASE|KEY)");
+            }
+
+            let level = match std::str::from_utf8(&args[1]) {
+                Ok(s) => s.to_uppercase(),
+                Err(_) => return RespValue::error("invalid level"),
+            };
+
+            let retention = if args.len() >= 4 {
+                let ret_type = match std::str::from_utf8(&args[2]) {
+                    Ok(s) => s.to_uppercase(),
+                    Err(_) => return RespValue::error("invalid retention type"),
+                };
+
+                let ret_value: i64 = match std::str::from_utf8(&args[3])
+                    .ok()
+                    .and_then(|s| s.parse().ok())
+                {
+                    Some(v) => v,
+                    None => return RespValue::error("retention value must be an integer"),
+                };
+
+                match ret_type.as_str() {
+                    "TIME" => crate::types::RetentionType::Time(ret_value),
+                    "COUNT" => crate::types::RetentionType::Count(ret_value),
+                    _ => return RespValue::error("retention type must be TIME or COUNT"),
+                }
+            } else {
+                crate::types::RetentionType::Unlimited
+            };
+
+            match level.as_str() {
+                "GLOBAL" => {
+                    if let Err(e) = db.history_enable_global(retention) {
+                        return RespValue::error(format!("history enable failed: {}", e));
+                    }
+                    RespValue::ok()
+                }
+                "DATABASE" => {
+                    if args.len() < 3 {
+                        return RespValue::error("HISTORY ENABLE DATABASE requires database number");
+                    }
+                    let db_num: i32 = match std::str::from_utf8(&args[2])
+                        .ok()
+                        .and_then(|s| s.parse().ok())
+                    {
+                        Some(n) => n,
+                        None => return RespValue::error("database number must be an integer"),
+                    };
+                    if let Err(e) = db.history_enable_database(db_num, retention) {
+                        return RespValue::error(format!("history enable failed: {}", e));
+                    }
+                    RespValue::ok()
+                }
+                "KEY" => {
+                    if args.len() < 3 {
+                        return RespValue::error("HISTORY ENABLE KEY requires key name");
+                    }
+                    let key = match std::str::from_utf8(&args[2]) {
+                        Ok(k) => k,
+                        Err(_) => return RespValue::error("invalid key"),
+                    };
+                    if let Err(e) = db.history_enable_key(key, retention) {
+                        return RespValue::error(format!("history enable failed: {}", e));
+                    }
+                    RespValue::ok()
+                }
+                _ => RespValue::error("level must be GLOBAL, DATABASE, or KEY"),
+            }
+        }
+        "DISABLE" => {
+            if args.len() < 2 {
+                return RespValue::error("HISTORY DISABLE requires level (GLOBAL|DATABASE|KEY)");
+            }
+
+            let level = match std::str::from_utf8(&args[1]) {
+                Ok(s) => s.to_uppercase(),
+                Err(_) => return RespValue::error("invalid level"),
+            };
+
+            match level.as_str() {
+                "GLOBAL" => {
+                    if let Err(e) = db.history_disable_global() {
+                        return RespValue::error(format!("history disable failed: {}", e));
+                    }
+                    RespValue::ok()
+                }
+                "DATABASE" => {
+                    if args.len() < 3 {
+                        return RespValue::error("HISTORY DISABLE DATABASE requires database number");
+                    }
+                    let db_num: i32 = match std::str::from_utf8(&args[2])
+                        .ok()
+                        .and_then(|s| s.parse().ok())
+                    {
+                        Some(n) => n,
+                        None => return RespValue::error("database number must be an integer"),
+                    };
+                    if let Err(e) = db.history_disable_database(db_num) {
+                        return RespValue::error(format!("history disable failed: {}", e));
+                    }
+                    RespValue::ok()
+                }
+                "KEY" => {
+                    if args.len() < 3 {
+                        return RespValue::error("HISTORY DISABLE KEY requires key name");
+                    }
+                    let key = match std::str::from_utf8(&args[2]) {
+                        Ok(k) => k,
+                        Err(_) => return RespValue::error("invalid key"),
+                    };
+                    if let Err(e) = db.history_disable_key(key) {
+                        return RespValue::error(format!("history disable failed: {}", e));
+                    }
+                    RespValue::ok()
+                }
+                _ => RespValue::error("level must be GLOBAL, DATABASE, or KEY"),
+            }
+        }
+        "GET" => {
+            if args.len() < 2 {
+                return RespValue::error("HISTORY GET requires key");
+            }
+            let key = match std::str::from_utf8(&args[1]) {
+                Ok(k) => k,
+                Err(_) => return RespValue::error("invalid key"),
+            };
+
+            let limit = if let Some(idx) = args.iter().position(|a| {
+                std::str::from_utf8(a).map(|s| s.to_uppercase() == "LIMIT").unwrap_or(false)
+            }) {
+                if idx + 1 < args.len() {
+                    std::str::from_utf8(&args[idx + 1])
+                        .ok()
+                        .and_then(|s| s.parse().ok())
+                } else {
+                    None
+                }
+            } else {
+                None
+            };
+
+            match db.history_get(key, limit, None, None) {
+                Ok(entries) => {
+                    let resp_entries: Vec<RespValue> = entries
+                        .into_iter()
+                        .map(|e| {
+                            RespValue::Array(Some(vec![
+                                RespValue::BulkString(Some(e.key.as_bytes().to_vec())),
+                                RespValue::Integer(e.version_num),
+                                RespValue::Integer(e.timestamp_ms),
+                                RespValue::BulkString(Some(e.operation.as_bytes().to_vec())),
+                            ]))
+                        })
+                        .collect();
+                    RespValue::Array(Some(resp_entries))
+                }
+                Err(e) => RespValue::error(format!("history get failed: {}", e)),
+            }
+        }
+        "STATS" => {
+            let key = args.get(1).and_then(|k| std::str::from_utf8(k).ok());
+            match db.history_stats(key) {
+                Ok(stats) => RespValue::Array(Some(vec![
+                    RespValue::BulkString(Some(b"total_entries".to_vec())),
+                    RespValue::Integer(stats.total_entries),
+                    RespValue::BulkString(Some(b"oldest_timestamp".to_vec())),
+                    stats
+                        .oldest_timestamp
+                        .map(RespValue::Integer)
+                        .unwrap_or_else(RespValue::null),
+                    RespValue::BulkString(Some(b"newest_timestamp".to_vec())),
+                    stats
+                        .newest_timestamp
+                        .map(RespValue::Integer)
+                        .unwrap_or_else(RespValue::null),
+                    RespValue::BulkString(Some(b"storage_bytes".to_vec())),
+                    RespValue::Integer(stats.storage_bytes),
+                ])),
+                Err(e) => RespValue::error(format!("history stats failed: {}", e)),
+            }
+        }
+        "CLEAR" => {
+            if args.len() < 2 {
+                return RespValue::error("HISTORY CLEAR requires key");
+            }
+            let key = match std::str::from_utf8(&args[1]) {
+                Ok(k) => k,
+                Err(_) => return RespValue::error("invalid key"),
+            };
+
+            match db.history_clear_key(key, None) {
+                Ok(count) => RespValue::Integer(count),
+                Err(e) => RespValue::error(format!("history clear failed: {}", e)),
+            }
+        }
+        "PRUNE" => {
+            if args.len() < 3 {
+                return RespValue::error("HISTORY PRUNE requires BEFORE <timestamp>");
+            }
+            let before_str = match std::str::from_utf8(&args[2]) {
+                Ok(s) => s,
+                Err(_) => return RespValue::error("invalid timestamp"),
+            };
+            let before: i64 = match before_str.parse() {
+                Ok(t) => t,
+                Err(_) => return RespValue::error("timestamp must be an integer"),
+            };
+
+            match db.history_prune(before) {
+                Ok(count) => RespValue::Integer(count),
+                Err(e) => RespValue::error(format!("history prune failed: {}", e)),
+            }
+        }
+        _ => RespValue::error(format!("unknown history subcommand '{}'", subcommand)),
     }
 }
 
