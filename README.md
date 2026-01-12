@@ -82,15 +82,30 @@ redis-cli -p 6767 GET foo
 
 ## Supported Commands
 
-### Session 1 (Current)
-- `PING`, `ECHO`
+### Strings
 - `GET`, `SET` (with EX, PX, NX, XX options)
-- `COMMAND`
+- `INCR`, `DECR`, `INCRBY`, `DECRBY`, `INCRBYFLOAT`
+- `MGET`, `MSET`
+- `APPEND`, `STRLEN`
+- `GETRANGE`, `SETRANGE`
+
+### Keys
+- `DEL`, `EXISTS`, `TYPE`
+- `EXPIRE`, `TTL`, `PTTL`
+- `KEYS` (with glob patterns)
+- `SCAN` (with MATCH, COUNT)
+
+### Hashes
+- `HSET`, `HGET`, `HSETNX`
+- `HMGET`, `HGETALL`
+- `HDEL`, `HEXISTS`
+- `HKEYS`, `HVALS`, `HLEN`
+- `HINCRBY`, `HINCRBYFLOAT`
+
+### Server
+- `PING`, `ECHO`, `QUIT`, `COMMAND`
 
 ### Planned
-- **Keys**: DEL, EXISTS, EXPIRE, TTL, KEYS, SCAN, TYPE
-- **Strings**: MGET, MSET, INCR, APPEND, STRLEN
-- **Hashes**: HGET, HSET, HGETALL, HDEL
 - **Lists**: LPUSH, RPUSH, LPOP, RPOP, LRANGE
 - **Sets**: SADD, SREM, SMEMBERS, SINTER, SUNION
 - **Sorted Sets**: ZADD, ZRANGE, ZSCORE, ZRANK

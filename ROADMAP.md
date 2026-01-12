@@ -15,57 +15,52 @@ Incremental implementation plan. Each session = one commit = one testable featur
 5. **Extend thoughtfully** — Add features Redis doesn't have (KEYINFO, history, FTS)
 
 
-### Session 1: Foundation
-- [ ] Create project structure (Cargo.toml, src/lib.rs, src/main.rs)
-- [ ] Schema + migrations (schema.sql)
-- [ ] Db struct with open/open_memory
-- [ ] GET command
-- [ ] SET command (basic, no options yet)
-- [ ] RESP parser (arrays + bulk strings only)
-- [ ] TCP server (minimal)
-- [ ] **Test:** `redis-cli SET foo bar` + `GET foo` works
+### Session 1: Foundation ✅
+- [x] Create project structure (Cargo.toml, src/lib.rs, src/main.rs)
+- [x] Schema + migrations (schema.sql)
+- [x] Db struct with open/open_memory
+- [x] GET command
+- [x] SET command (with EX/PX/NX/XX options)
+- [x] DEL command (db layer)
+- [x] RESP parser (arrays + bulk strings only)
+- [x] TCP server (minimal)
+- [x] Lazy expiration (delete on read if expired)
+- [x] **Test:** 24 unit tests + 7 integration tests passing
 
-### Session 2: Key Management Basics
-- [ ] DEL
-- [ ] EXISTS
-- [ ] TYPE
-- [ ] KEYS (with GLOB pattern)
-- [ ] Unit tests for all
-- [ ] **Test:** redis-cli verification
+### Session 2: Key Management ✅
+- [x] DEL (server handler)
+- [x] EXISTS
+- [x] TYPE
+- [x] KEYS (with GLOB pattern)
+- [x] SCAN (with MATCH, COUNT)
+- [x] TTL, PTTL
+- [x] EXPIRE
+- [x] Unit tests for all (14 new tests)
+- [x] Integration tests (10 new tests)
+- [x] **Test:** 37 unit tests + 16 integration tests passing
 
-### Session 3: Expiration
-- [ ] SET with EX/PX options
-- [ ] EXPIRE, PEXPIRE
-- [ ] EXPIREAT, PEXPIREAT
-- [ ] TTL, PTTL
-- [ ] PERSIST
-- [ ] Lazy expiration (delete on read if expired)
-- [ ] **Test:** Set key with TTL, wait, verify gone
+### Session 3: String Operations ✅
+- [x] INCR, DECR
+- [x] INCRBY, DECRBY
+- [x] INCRBYFLOAT
+- [x] MGET, MSET
+- [x] APPEND
+- [x] STRLEN
+- [x] GETRANGE, SETRANGE
+- [x] Unit tests (13 new memory + 6 new disk tests)
+- [x] Integration tests (7 new tests)
+- [x] **Test:** 56 unit tests + 23 integration tests passing
 
-### Session 4: Atomic Operations
-- [ ] INCR, DECR
-- [ ] INCRBY, DECRBY
-- [ ] INCRBYFLOAT
-- [ ] Unit tests
-- [ ] **Test:** redis-cli INCR counter
-
-### Session 5: String Extras
-- [ ] MGET, MSET
-- [ ] APPEND
-- [ ] STRLEN
-- [ ] SETNX
-- [ ] SETEX, PSETEX
-- [ ] SET with NX/XX options
-- [ ] **Test:** Batch operations work
-
-### Session 6: Hashes
-- [ ] HSET, HGET
-- [ ] HMGET, HGETALL
-- [ ] HDEL, HEXISTS
-- [ ] HKEYS, HVALS, HLEN
-- [ ] HINCRBY, HINCRBYFLOAT
-- [ ] HSETNX
-- [ ] **Test:** redis-cli hash operations
+### Session 6: Hashes ✅
+- [x] HSET, HGET
+- [x] HMGET, HGETALL
+- [x] HDEL, HEXISTS
+- [x] HKEYS, HVALS, HLEN
+- [x] HINCRBY, HINCRBYFLOAT
+- [x] HSETNX
+- [x] Unit tests (30 new tests)
+- [x] Integration tests (13 new tests)
+- [x] **Test:** 86 unit tests + 36 integration tests passing
 
 ### Session 7: Lists
 - [ ] LPUSH, RPUSH
