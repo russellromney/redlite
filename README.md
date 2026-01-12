@@ -2,19 +2,40 @@
 
 SQLite-backed Redis-compatible embedded key-value store written in Rust.
 
+**Status:** Sessions 1-16 complete (388+ tests passing). See [ROADMAP.md](./ROADMAP.md) for implementation progress.
+
+**Documentation:** [redlite.dev](https://redlite.dev)
+
 ## Why?
 
 - **Embedded-first** - Use as a library, no separate server needed
 - **Disk is cheap** - Persistent storage without Redis's memory constraints
 - **SQLite foundation** - ACID transactions, durability, zero config
 - **Redis compatible** - Existing clients just work (for most operations)
-- **Easy backup** - just use using SQLite WAL-tailing tools like  [litestream](url) or [walsync](url)
-- **Extra features**
-  - Key metadata: `KEYINFO mykey` (type, ttl, created_at, updated_at)
-  - Manual cleanup: `VACUUM` (delete expired + reclaim disk)
-  - Auto cleanup: `AUTOVACUUM ON` (default, cleans every 60s)
-  - Transactions: `MULTI`/`EXEC`/`DISCARD` (atomic multi-command execution)
-  - **Planned**: Version history, time-travel queries, full-text search
+- **Easy backup** - SQLite WAL files work with [litestream](https://litestream.io) or similar tools
+
+## Differences from Redis
+
+**Embedded mode** is fully Redis-compatible for strings, hashes, lists, sets, sorted sets, and streams.
+
+**Server mode only** features (not available in embedded mode):
+- **Pub/Sub** - At-most-once, fire-and-forget (messages not persisted if no subscribers)
+- **Transactions** - MULTI/EXEC/DISCARD (WATCH/UNWATCH not supported; blocking commands not allowed)
+- **Blocking reads** - BLPOP, BRPOP, XREAD BLOCK, XREADGROUP BLOCK
+
+**Architectural differences:**
+- **Persistence** - Data always disk-backed; no Redis SAVE/BGSAVE (use SQLite WAL tools)
+- **Memory** - Uses SQLite storage, not RAM-optimized for speed
+- **Replication** - No built-in replication; use SQLite backup mechanisms
+
+**Not implemented:**
+- Cluster mode, Sentinel, Lua scripting, Modules, ACL, Stream XAUTOCLAIM
+
+## Extensions
+
+- `VACUUM` - Delete expired keys and reclaim disk space
+- `KEYINFO key` - Returns type, ttl, created_at, updated_at
+- `AUTOVACUUM ON|OFF` - Auto-cleanup interval (default: ON, 60s)
 
 ## Install
 
@@ -99,146 +120,49 @@ redis-cli -p 6767 SET foo bar
 redis-cli -p 6767 GET foo
 ```
 
-## Supported Commands
+## Commands
 
-### Strings
-- `GET`, `SET` (with EX, PX, NX, XX options)
-- `INCR`, `DECR`, `INCRBY`, `DECRBY`, `INCRBYFLOAT`
-- `MGET`, `MSET`
-- `APPEND`, `STRLEN`
-- `GETRANGE`, `SETRANGE`
+**Strings:** `GET`, `SET` (EX, PX, NX, XX), `INCR`, `DECR`, `INCRBY`, `DECRBY`, `INCRBYFLOAT`, `MGET`, `MSET`, `APPEND`, `STRLEN`, `GETRANGE`, `SETRANGE`
 
-### Keys
-- `DEL`, `EXISTS`, `TYPE`
-- `EXPIRE`, `TTL`, `PTTL`
-- `KEYS` (with glob patterns)
-- `SCAN` (with MATCH, COUNT)
+**Keys:** `DEL`, `EXISTS`, `TYPE`, `EXPIRE`, `TTL`, `PTTL`, `KEYS`, `SCAN`
 
-### Hashes
-- `HSET`, `HGET`, `HSETNX`
-- `HMGET`, `HGETALL`
-- `HDEL`, `HEXISTS`
-- `HKEYS`, `HVALS`, `HLEN`
-- `HINCRBY`, `HINCRBYFLOAT`
+**Hashes:** `HSET`, `HGET`, `HSETNX`, `HMGET`, `HGETALL`, `HDEL`, `HEXISTS`, `HKEYS`, `HVALS`, `HLEN`, `HINCRBY`, `HINCRBYFLOAT`
 
-### Lists
-- `LPUSH`, `RPUSH`
-- `LPOP`, `RPOP` (with optional count)
-- `LLEN`, `LRANGE`
-- `LINDEX`, `LSET`
-- `LTRIM`
+**Lists:** `LPUSH`, `RPUSH`, `LPOP`, `RPOP`, `LLEN`, `LRANGE`, `LINDEX`, `LSET`, `LTRIM`
 
-### Sets
-- `SADD`, `SREM`
-- `SMEMBERS`, `SISMEMBER`
-- `SCARD`
-- `SPOP`, `SRANDMEMBER` (with optional count)
-- `SDIFF`, `SINTER`, `SUNION`
+**Sets:** `SADD`, `SREM`, `SMEMBERS`, `SISMEMBER`, `SCARD`, `SPOP`, `SRANDMEMBER`, `SDIFF`, `SINTER`, `SUNION`
 
-### Sorted Sets
-- `ZADD`, `ZREM`
-- `ZSCORE`, `ZRANK`, `ZREVRANK`
-- `ZCARD`
-- `ZRANGE`, `ZREVRANGE` (with WITHSCORES)
-- `ZRANGEBYSCORE` (with LIMIT)
-- `ZCOUNT`
-- `ZINCRBY`
-- `ZREMRANGEBYRANK`, `ZREMRANGEBYSCORE`
+**Sorted Sets:** `ZADD`, `ZREM`, `ZSCORE`, `ZRANK`, `ZREVRANK`, `ZCARD`, `ZRANGE`, `ZREVRANGE` (WITHSCORES), `ZRANGEBYSCORE`, `ZCOUNT`, `ZINCRBY`, `ZREMRANGEBYRANK`, `ZREMRANGEBYSCORE`
 
-### Streams
-- `XADD` (with NOMKSTREAM, MAXLEN, MINID options)
-- `XLEN`, `XRANGE`, `XREVRANGE`
-- `XREAD` (with COUNT)
-- `XTRIM` (MAXLEN, MINID)
-- `XDEL`
-- `XINFO STREAM`, `XINFO GROUPS`, `XINFO CONSUMERS`
+**Streams:** `XADD`, `XLEN`, `XRANGE`, `XREVRANGE`, `XREAD`, `XTRIM`, `XDEL`, `XINFO STREAM`, `XGROUP CREATE`, `XGROUP DESTROY`, `XGROUP SETID`, `XREADGROUP`, `XACK`, `XPENDING`, `XCLAIM`
 
-### Stream Consumer Groups
-- `XGROUP CREATE`, `XGROUP DESTROY`, `XGROUP SETID`
-- `XGROUP CREATECONSUMER`, `XGROUP DELCONSUMER`
-- `XREADGROUP` (with COUNT, NOACK)
-- `XACK`
-- `XPENDING` (summary and range forms, with IDLE filter)
-- `XCLAIM` (with IDLE, TIME, RETRYCOUNT, FORCE, JUSTID)
+**Blocking Reads (server mode):** `BLPOP`, `BRPOP`, `XREAD BLOCK`, `XREADGROUP BLOCK`
 
-### Blocking Reads (Server Mode Only, Session 15+) ✅
-**Status**: Complete (Session 15.1-15.3 ✅)
-- `BLPOP key [key ...] timeout` (blocking list pop) ✅
-- `BRPOP key [key ...] timeout` (blocking list pop from right) ✅
-- `XREAD BLOCK milliseconds ...` (blocking stream read) ✅
-- `XREADGROUP BLOCK milliseconds ...` (blocking stream read with consumer groups) ✅
+**Pub/Sub (server mode):** `SUBSCRIBE`, `UNSUBSCRIBE`, `PUBLISH`, `PSUBSCRIBE`, `PUNSUBSCRIBE`
 
-### Pub/Sub (Server Mode Only, Session 15.4) ✅
-**Status**: Complete (Session 15.4 ✅) — Fire-and-forget messaging with at-most-once semantics
+**Transactions:** `MULTI`, `EXEC`, `DISCARD`
 
-Fire-and-forget messaging via channels (server mode required). Excellent for notifications and event streaming.
+**Server:** `PING`, `ECHO`, `QUIT`, `COMMAND`, `SELECT`, `DBSIZE`, `FLUSHDB`, `INFO`
 
-```bash
-# Terminal 1: Subscribe to channels
-redis-cli -p 6767 SUBSCRIBE events notifications
+## Upcoming Features
 
-# Terminal 2: Subscribe to patterns
-redis-cli -p 6767 PSUBSCRIBE "events.*" "alerts.*"
+See [ROADMAP.md](./ROADMAP.md) for detailed plans.
 
-# Terminal 3: Publish messages
-redis-cli -p 6767 PUBLISH events "hello"       # → Delivers to "events" subscribers
-redis-cli -p 6767 PUBLISH events.login "user"  # → Delivers to pattern subscribers
-redis-cli -p 6767 PUBLISH other "data"         # → No subscribers, returns 0
-```
+**Session 17: History Tracking & Time-Travel Queries** (In Progress)
+- Track value changes per key with three-tier opt-in
+- Time-travel queries: `HISTORY GETAT key timestamp`
+- Configurable retention policies (time-based, count-based)
 
-**Commands:**
-- `SUBSCRIBE channel [channel ...]` — Subscribe to one or more channels
-- `UNSUBSCRIBE [channel ...]` — Unsubscribe from channels (all if none specified)
-- `PUBLISH channel message` — Publish message, returns count of subscribers that received it
-- `PSUBSCRIBE pattern [pattern ...]` — Subscribe to channel patterns (glob syntax: `*`, `?`, `[abc]`)
-- `PUNSUBSCRIBE [pattern ...]` — Unsubscribe from patterns
+**Sessions 18-20: Language Bindings**
+- **Python** (`redlite-py`) - PyO3 bindings via PyPI
+- **Node.js/Bun** (`redlite-js`) - NAPI-RS bindings via npm
+- **Go** (`redlite-go`) - C FFI + cgo via Go modules
 
-**Characteristics:**
-- Subscription mode: Connection restricted to pub/sub commands + PING/QUIT
-- At-most-once semantics: Messages lost if no subscribers (no persistence)
-- Broadcast delivery: Multiple subscribers receive same message
-- Lazy channel creation: Channels created on first subscriber
-- Auto-cleanup: Channels removed when all subscribers disconnect
-
-### Transactions (Server Mode Only, Session 16) ✅
-**Status**: Complete (Sessions 16.1-16.4 ✅) — Atomic multi-command execution with ACID guarantees
-
-Execute multiple commands atomically using SQLite transactions.
-
-```bash
-# Terminal: Execute multiple commands atomically
-redis-cli -p 6767 MULTI
-redis-cli -p 6767 SET counter 0
-redis-cli -p 6767 INCR counter
-redis-cli -p 6767 INCR counter
-redis-cli -p 6767 GET counter
-redis-cli -p 6767 EXEC  # Returns: [OK, (integer) 1, (integer) 2, "0"]
-```
-
-**Commands:**
-- `MULTI` — Enter transaction mode, queue subsequent commands
-- `EXEC` — Execute all queued commands atomically in a single SQLite transaction
-- `DISCARD` — Cancel transaction and clear the command queue
-
-**Characteristics:**
-- Atomic execution: All commands succeed or all rollback (no partial writes)
-- SQLite-backed: True ACID transactions with durability
-- Per-connection: Each connection has independent transaction state
-- Queueing: Commands return "QUEUED" immediately in transaction mode
-- Error handling: Transaction aborted if any command fails, all changes rolled back
-- Restrictions: WATCH/UNWATCH, blocking commands, and pub/sub commands not allowed in transactions
-
-### Server
-- `PING`, `ECHO`, `QUIT`, `COMMAND`
-- `SELECT` (databases 0-15, per-connection isolation)
-- `DBSIZE` (key count in current database)
-- `FLUSHDB` (delete all keys in current database)
-- `INFO` (server stats, keyspace)
-
-### Custom Commands (redlite extensions)
-- `VACUUM` - Delete all expired keys + SQLite VACUUM to reclaim disk space
-- `KEYINFO key` - Returns type, ttl, created_at, updated_at
-- `AUTOVACUUM [ON|OFF|INTERVAL <ms>]` - Automatic expiration cleanup (default: ON @ 60s)
+**V3+ Features:**
+- Full-text search (SQLite FTS5)
+- Replication (walsync-based)
+- Active expiration daemon
+- History replay & reconstruction
 
 ## Testing
 
@@ -252,20 +176,6 @@ cargo build && cargo test --test integration -- --test-threads=1
 # All tests
 cargo test -- --test-threads=1
 ```
-
-## Schema
-
-Data stored in SQLite with these tables:
-- `keys` - Metadata (type, expiration, timestamps)
-- `strings` - String values
-- `hashes` - Hash field-value pairs
-- `lists` - List elements (gap-based positioning)
-- `sets` - Set members
-- `zsets` - Sorted set members with scores
-- `streams` - Stream entries (timestamp-sequence IDs, MessagePack fields)
-- `stream_groups` - Consumer groups (name, last delivered ID)
-- `stream_consumers` - Consumers in groups (name, last seen time)
-- `stream_pending` - Pending entries (entry, consumer, delivery count)
 
 ## License
 

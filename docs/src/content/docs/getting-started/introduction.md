@@ -28,19 +28,26 @@ Redlite is a great choice when you need:
 Redlite may not be the best choice for:
 
 - **High-throughput, low-latency workloads** where Redis's in-memory model excels
-- **Distributed systems** requiring replication (though this is planned for the future)
-- **Pub/Sub heavy workloads** (not yet implemented)
+- **Distributed systems** requiring built-in replication (though this is planned via walsync)
+- **Heavy Lua scripting workloads** (Lua scripting not supported)
 
 ## Feature Status
 
+**Current Status:** Sessions 1-16 complete (388+ tests passing)
+
 | Feature | Status |
 |---------|--------|
-| GET/SET | ✅ Done |
-| DEL, EXISTS, KEYS | 🔜 Planned |
-| Expiration (TTL) | ✅ Done |
-| Hashes | 🔜 Planned |
-| Lists | 🔜 Planned |
-| Sets | 🔜 Planned |
-| Sorted Sets | 🔜 Planned |
-| Server Mode | ✅ Done |
-| Embedded Mode | ✅ Done |
+| Strings (GET, SET, INCR, etc.) | ✅ Complete |
+| Key Management (DEL, EXISTS, KEYS, SCAN, TTL) | ✅ Complete |
+| Hashes (HSET, HGET, etc.) | ✅ Complete |
+| Lists (LPUSH, RPOP, etc.) | ✅ Complete |
+| Sets (SADD, SMEMBERS, etc.) | ✅ Complete |
+| Sorted Sets (ZADD, ZRANGE, etc.) | ✅ Complete |
+| Streams (XADD, XREAD, Consumer Groups) | ✅ Complete |
+| Transactions (MULTI/EXEC/DISCARD) | ✅ Complete |
+| Pub/Sub (Server Mode Only) | ✅ Complete |
+| Blocking Reads (Server Mode Only) | ✅ Complete |
+| History Tracking & Time-Travel | 🔜 Session 17 |
+| Python/Node.js/Go Bindings | 🔜 Sessions 18-20 |
+| Full-Text Search | 🔜 V3+ |
+| Replication (walsync) | 🔜 V3+ |

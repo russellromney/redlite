@@ -136,17 +136,30 @@ KEYINFO mykey
 
 | Feature | Reason |
 |---------|--------|
-| BLPOP/BRPOP/XREAD BLOCK | Server mode only (Session 15+). Embedded mode not supported. |
 | WATCH | Use SQLite transactions in library mode. See ROADMAP for V2+. |
 | Lua scripting | Out of scope |
 | Clustering | Not the use case |
-| Pub/Sub | Server mode only, planned for Session 16. |
+
+### Server-Only Features (Session 15+)
+
+These features work in server mode via RESP protocol but are not available in library mode:
+
+| Feature | Status |
+|---------|--------|
+| BLPOP/BRPOP/XREAD BLOCK | ✅ Implemented (Session 15) - Blocking list/stream reads with timeout |
+| Pub/Sub (SUBSCRIBE/PUBLISH) | ✅ Implemented (Session 15) - Push notifications to subscribers |
 
 ## Non-Goals
 
 - Matching Redis performance (good enough for 90% of use cases)
 - Clustering/sharding
 - Memory-first storage (we're disk-first)
+
+## Upcoming Features
+
+See [ROADMAP.md](./ROADMAP.md) for detailed roadmap including:
+- **Session 17**: History tracking & time-travel queries (three-tier opt-in, configurable retention)
+- **V3+**: Active expiration, full-text search, replication, history replay
 
 ## License
 

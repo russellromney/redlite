@@ -12,6 +12,9 @@ export default defineConfig({
 			social: [
 				{ icon: 'github', label: 'GitHub', href: 'https://github.com/russellromney/redlite' },
 			],
+			editLink: {
+				baseUrl: 'https://github.com/russellromney/redlite/edit/main/docs/',
+			},
 			head: [
 				{
 					tag: 'meta',
@@ -37,7 +40,9 @@ export default defineConfig({
 				},
 				{
 					label: 'Commands',
-					autogenerate: { directory: 'commands' },
+					items: [
+						{ label: 'Overview', slug: 'commands/overview' },
+					],
 				},
 				{
 					label: 'Reference',

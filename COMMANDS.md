@@ -1,6 +1,8 @@
 # Supported Commands
 
-## V1 Commands
+Quick reference for all implemented Redis commands. For detailed progress, see [ROADMAP.md](./ROADMAP.md).
+
+## Implemented Commands (Sessions 1-17)
 
 ### Strings (Core KV) ✅
 
@@ -114,22 +116,68 @@
 | SELECT | Select database (0-15) |
 | QUIT | Close connection |
 
+### Streams (Session 13) ✅
+
+| Command | Description |
+|---------|-------------|
+| XADD | Add entry to stream |
+| XREAD | Read from stream(s) |
+| XRANGE | Get entries by ID range |
+| XREVRANGE | Get entries in reverse |
+| XLEN | Stream length |
+| XTRIM | Trim stream by max length |
+| XDEL | Delete entry |
+
+### Consumer Groups (Session 14) ✅
+
+| Command | Description |
+|---------|-------------|
+| XGROUP CREATE | Create consumer group |
+| XGROUP DESTROY | Delete consumer group |
+| XREADGROUP | Read from group (with consumer tracking) |
+| XACK | Acknowledge message |
+| XPENDING | Get pending messages |
+
+### Transactions (Session 16) ✅
+
+| Command | Description |
+|---------|-------------|
+| MULTI | Start transaction (batch commands) |
+| EXEC | Execute transaction |
+| DISCARD | Abort transaction |
+
+### Pub/Sub (Session 15) ✅ - Server Mode Only
+
+| Command | Description |
+|---------|-------------|
+| SUBSCRIBE | Subscribe to channel(s) |
+| UNSUBSCRIBE | Unsubscribe from channel(s) |
+| PUBLISH | Publish message to channel |
+| PSUBSCRIBE | Subscribe to pattern |
+| PUNSUBSCRIBE | Unsubscribe from pattern |
+
+### Blocking Operations (Session 15) ✅ - Server Mode Only
+
+| Command | Description |
+|---------|-------------|
+| BLPOP | Blocking pop from front |
+| BRPOP | Blocking pop from back |
+| BRPOPLPUSH | Blocking pop/push between lists |
+| XREAD BLOCK | Blocking stream read |
+| BLMOVE | Blocking list move |
+
 ### Redlite Custom Commands
 
 | Command | Description |
 |---------|-------------|
 | VACUUM | Delete expired keys, run SQLite VACUUM |
 | KEYINFO | Get key metadata (type, ttl, created_at, updated_at) |
+| HISTORY | Track and query historical data (Session 17) |
 
----
-
-## V2 Commands (Roadmap)
+### List & Key Operations (V2+) ✅
 
 | Command | Description |
 |---------|-------------|
-| MULTI | Start transaction |
-| EXEC | Execute transaction |
-| DISCARD | Abort transaction |
 | RENAME | Rename key |
 | RENAMENX | Rename if target doesn't exist |
 | LINSERT | Insert before/after pivot |
@@ -144,9 +192,6 @@
 | HSCAN | Iterate hash fields |
 | SSCAN | Iterate set members |
 | ZSCAN | Iterate sorted set members |
-| SUBSCRIBE | Subscribe to channel (embedded pub/sub) |
-| PUBLISH | Publish to channel |
-| UNSUBSCRIBE | Unsubscribe from channel |
 
 ---
 
@@ -156,50 +201,58 @@ These Redis features are intentionally omitted:
 
 | Feature | Reason |
 |---------|--------|
-| WATCH/UNWATCH | Use SQLite transactions in library mode. Optimistic locking adds complexity for minimal benefit in an embedded store. May reconsider for V3 if requested. |
-| BLPOP/BRPOP/BLMOVE | Blocking operations require different architecture |
+| WATCH/UNWATCH | Use SQLite transactions in library mode. Optimistic locking adds complexity for minimal benefit. May reconsider for V3. |
 | EVAL/EVALSHA | Lua scripting is out of scope |
 | CLUSTER * | Not the use case — Redlite is for embedded/single-node |
-| STREAMS | Different data model, may consider for V3 |
 | GEO* | Use PostGIS or specialized geo library |
 | BITFIELD/BITOP | Niche operations |
 | GETSET | Deprecated in Redis, use `SET key value GET` |
-| RPOPLPUSH | Deprecated in Redis, use LMOVE (V2) |
+| RPOPLPUSH | Deprecated in Redis, use LMOVE |
+
+**Note:** Blocking operations (BLPOP, BRPOP, XREAD BLOCK) and Pub/Sub are implemented in server mode (Session 15+) but unavailable in library mode.
 
 ---
 
 ## Notes
 
-### On WATCH
-
-Redis WATCH enables optimistic locking:
-```
-WATCH mykey
-val = GET mykey
-MULTI
-SET mykey (val + 1)
-EXEC  -- fails if mykey changed since WATCH
-```
-
-In Redlite, you don't need WATCH because:
-
-1. **Library mode:** Use SQLite transactions directly
-   ```rust
-   db.with_transaction(|tx| {
-       let val = tx.get("counter")?;
-       tx.set("counter", val + 1)?;
-       Ok(())
-   })?;
-   ```
-
-2. **Server mode:** SQLite serializes writes (single writer), so contention is lower than Redis
-
-3. **Simple cases:** Use INCR/INCRBY for atomic counter operations
-
-If there's significant demand, WATCH may be added in V3.
-
 ### On Transactions (MULTI/EXEC)
 
-V1 has per-command atomicity. Each command is atomic.
+Implemented in Session 16. Commands queued with MULTI are executed atomically in EXEC.
 
-V2 will add MULTI/EXEC for command batching (reduces round-trips). Note: this is command queuing, not true ACID transactions across commands. For true transactions, use library mode with SQLite transactions.
+```
+MULTI
+SET key1 value1
+SET key2 value2
+EXEC  -- Both executed together
+```
+
+For even stronger guarantees, library mode offers SQLite transactions:
+```rust
+db.with_transaction(|tx| {
+    tx.set("key1", b"value1")?;
+    tx.set("key2", b"value2")?;
+    Ok(())
+})?;
+```
+
+### On Blocking Operations (BLPOP/BRPOP/XREAD BLOCK)
+
+Implemented in Session 15 for server mode only. Blocking reads wait for data with configurable timeout:
+
+```
+BLPOP mylist 5  -- Wait 5 seconds for data
+XREAD BLOCK 1000 STREAMS mystream 0  -- Wait 1s for stream entries
+```
+
+Not available in embedded library mode due to async I/O requirements.
+
+### On Pub/Sub
+
+Implemented in Session 15 for server mode only. At-most-once publish-subscribe semantics:
+
+```
+SUBSCRIBE channel1
+PUBLISH channel1 "message"
+```
+
+Each subscriber receives published messages via RESP3 push notifications. Messages are lost if no active subscribers.
