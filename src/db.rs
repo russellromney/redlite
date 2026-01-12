@@ -4,7 +4,7 @@ use std::sync::{Arc, Mutex};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use crate::error::{KvError, Result};
-use crate::types::{KeyInfo, KeyType, SetOptions, StreamEntry, StreamId, StreamInfo, ZMember};
+use crate::types::{ConsumerGroupInfo, ConsumerInfo, KeyInfo, KeyType, PendingEntry, PendingSummary, SetOptions, StreamEntry, StreamId, StreamInfo, ZMember};
 
 /// Default autovacuum interval in milliseconds (60 seconds)
 const DEFAULT_AUTOVACUUM_INTERVAL_MS: i64 = 60_000;
@@ -3528,6 +3528,850 @@ impl Db {
             last_entry,
         }))
     }
+
+    // ==================== Consumer Group Operations ====================
+
+    /// XGROUP CREATE key groupname id|$ [MKSTREAM]
+    /// Creates a consumer group for a stream
+    pub fn xgroup_create(
+        &self,
+        key: &str,
+        group: &str,
+        id: StreamId,
+        mkstream: bool,
+    ) -> Result<bool> {
+        let conn = self.core.conn.lock().unwrap_or_else(|e| e.into_inner());
+
+        // Check if stream exists
+        let key_id = match self.get_stream_key_id(&conn, key)? {
+            Some(id) => id,
+            None => {
+                if mkstream {
+                    // Create empty stream
+                    self.create_stream_key(&conn, key)?
+                } else {
+                    return Err(KvError::NoSuchKey);
+                }
+            }
+        };
+
+        // Check if group already exists
+        let exists: bool = conn.query_row(
+            "SELECT 1 FROM stream_groups WHERE key_id = ?1 AND name = ?2",
+            params![key_id, group],
+            |_| Ok(true),
+        ).unwrap_or(false);
+
+        if exists {
+            return Err(KvError::BusyGroup);
+        }
+
+        // Create the group
+        conn.execute(
+            "INSERT INTO stream_groups (key_id, name, last_ms, last_seq) VALUES (?1, ?2, ?3, ?4)",
+            params![key_id, group, id.ms, id.seq],
+        )?;
+
+        Ok(true)
+    }
+
+    /// XGROUP DESTROY key groupname
+    /// Destroys a consumer group
+    pub fn xgroup_destroy(&self, key: &str, group: &str) -> Result<bool> {
+        let conn = self.core.conn.lock().unwrap_or_else(|e| e.into_inner());
+
+        let key_id = match self.get_stream_key_id(&conn, key)? {
+            Some(id) => id,
+            None => return Ok(false),
+        };
+
+        let deleted = conn.execute(
+            "DELETE FROM stream_groups WHERE key_id = ?1 AND name = ?2",
+            params![key_id, group],
+        )?;
+
+        Ok(deleted > 0)
+    }
+
+    /// XGROUP SETID key groupname id|$
+    /// Sets the last delivered ID for a consumer group
+    pub fn xgroup_setid(&self, key: &str, group: &str, id: StreamId) -> Result<bool> {
+        let conn = self.core.conn.lock().unwrap_or_else(|e| e.into_inner());
+
+        let key_id = match self.get_stream_key_id(&conn, key)? {
+            Some(id) => id,
+            None => return Err(KvError::NoSuchKey),
+        };
+
+        let updated = conn.execute(
+            "UPDATE stream_groups SET last_ms = ?1, last_seq = ?2 WHERE key_id = ?3 AND name = ?4",
+            params![id.ms, id.seq, key_id, group],
+        )?;
+
+        if updated == 0 {
+            return Err(KvError::NoGroup);
+        }
+
+        Ok(true)
+    }
+
+    /// XGROUP CREATECONSUMER key groupname consumername
+    /// Creates a consumer in a consumer group
+    pub fn xgroup_createconsumer(
+        &self,
+        key: &str,
+        group: &str,
+        consumer: &str,
+    ) -> Result<bool> {
+        let conn = self.core.conn.lock().unwrap_or_else(|e| e.into_inner());
+        let now = Self::now_ms();
+
+        let key_id = match self.get_stream_key_id(&conn, key)? {
+            Some(id) => id,
+            None => return Err(KvError::NoSuchKey),
+        };
+
+        // Get group_id
+        let group_id: i64 = match conn.query_row(
+            "SELECT id FROM stream_groups WHERE key_id = ?1 AND name = ?2",
+            params![key_id, group],
+            |row| row.get(0),
+        ) {
+            Ok(id) => id,
+            Err(_) => return Err(KvError::NoGroup),
+        };
+
+        // Check if consumer exists
+        let exists: bool = conn.query_row(
+            "SELECT 1 FROM stream_consumers WHERE group_id = ?1 AND name = ?2",
+            params![group_id, consumer],
+            |_| Ok(true),
+        ).unwrap_or(false);
+
+        if exists {
+            return Ok(false); // Consumer already exists
+        }
+
+        // Create consumer
+        conn.execute(
+            "INSERT INTO stream_consumers (group_id, name, seen_time) VALUES (?1, ?2, ?3)",
+            params![group_id, consumer, now],
+        )?;
+
+        Ok(true)
+    }
+
+    /// XGROUP DELCONSUMER key groupname consumername
+    /// Deletes a consumer from a consumer group
+    /// Returns the number of pending entries that were deleted
+    pub fn xgroup_delconsumer(
+        &self,
+        key: &str,
+        group: &str,
+        consumer: &str,
+    ) -> Result<i64> {
+        let conn = self.core.conn.lock().unwrap_or_else(|e| e.into_inner());
+
+        let key_id = match self.get_stream_key_id(&conn, key)? {
+            Some(id) => id,
+            None => return Err(KvError::NoSuchKey),
+        };
+
+        // Get group_id
+        let group_id: i64 = match conn.query_row(
+            "SELECT id FROM stream_groups WHERE key_id = ?1 AND name = ?2",
+            params![key_id, group],
+            |row| row.get(0),
+        ) {
+            Ok(id) => id,
+            Err(_) => return Err(KvError::NoGroup),
+        };
+
+        // Count pending entries for this consumer
+        let pending_count: i64 = conn.query_row(
+            "SELECT COUNT(*) FROM stream_pending WHERE group_id = ?1 AND consumer = ?2",
+            params![group_id, consumer],
+            |row| row.get(0),
+        ).unwrap_or(0);
+
+        // Delete pending entries for this consumer
+        conn.execute(
+            "DELETE FROM stream_pending WHERE group_id = ?1 AND consumer = ?2",
+            params![group_id, consumer],
+        )?;
+
+        // Delete consumer
+        conn.execute(
+            "DELETE FROM stream_consumers WHERE group_id = ?1 AND name = ?2",
+            params![group_id, consumer],
+        )?;
+
+        Ok(pending_count)
+    }
+
+    /// Helper: Get or create a consumer in a group
+    fn get_or_create_consumer(&self, conn: &Connection, group_id: i64, consumer: &str) -> Result<i64> {
+        let now = Self::now_ms();
+
+        // Try to get existing consumer
+        let result = conn.query_row(
+            "SELECT id FROM stream_consumers WHERE group_id = ?1 AND name = ?2",
+            params![group_id, consumer],
+            |row| row.get(0),
+        );
+
+        match result {
+            Ok(id) => {
+                // Update seen_time
+                conn.execute(
+                    "UPDATE stream_consumers SET seen_time = ?1 WHERE id = ?2",
+                    params![now, id],
+                )?;
+                Ok(id)
+            }
+            Err(_) => {
+                // Create new consumer
+                conn.execute(
+                    "INSERT INTO stream_consumers (group_id, name, seen_time) VALUES (?1, ?2, ?3)",
+                    params![group_id, consumer, now],
+                )?;
+                Ok(conn.last_insert_rowid())
+            }
+        }
+    }
+
+    /// Helper: Get group info (id, last_ms, last_seq) for a stream
+    fn get_group_info(&self, conn: &Connection, key_id: i64, group: &str) -> Result<Option<(i64, i64, i64)>> {
+        let result = conn.query_row(
+            "SELECT id, last_ms, last_seq FROM stream_groups WHERE key_id = ?1 AND name = ?2",
+            params![key_id, group],
+            |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+        );
+
+        match result {
+            Ok(info) => Ok(Some(info)),
+            Err(rusqlite::Error::QueryReturnedNoRows) => Ok(None),
+            Err(e) => Err(e.into()),
+        }
+    }
+
+    /// Helper: Get stream entry by stream_id (ms, seq)
+    fn get_stream_entry_id(&self, conn: &Connection, key_id: i64, stream_id: &StreamId) -> Option<i64> {
+        conn.query_row(
+            "SELECT id FROM streams WHERE key_id = ?1 AND entry_ms = ?2 AND entry_seq = ?3",
+            params![key_id, stream_id.ms, stream_id.seq],
+            |row| row.get(0),
+        ).ok()
+    }
+
+    /// XREADGROUP GROUP group consumer [COUNT count] [NOACK] STREAMS key [key ...] id [id ...]
+    /// Reads from streams as part of a consumer group
+    pub fn xreadgroup(
+        &self,
+        group: &str,
+        consumer: &str,
+        keys: &[&str],
+        ids: &[&str],  // ">" means new, other IDs mean pending
+        count: Option<i64>,
+        noack: bool,
+    ) -> Result<Vec<(String, Vec<StreamEntry>)>> {
+        if keys.len() != ids.len() {
+            return Err(KvError::SyntaxError);
+        }
+
+        self.maybe_autovacuum();
+        let conn = self.core.conn.lock().unwrap_or_else(|e| e.into_inner());
+        let now = Self::now_ms();
+        let mut results = Vec::new();
+
+        for (key, id_str) in keys.iter().zip(ids.iter()) {
+            let key_id = match self.get_stream_key_id(&conn, key)? {
+                Some(id) => id,
+                None => continue,
+            };
+
+            let (group_id, last_ms, last_seq) = match self.get_group_info(&conn, key_id, group)? {
+                Some(info) => info,
+                None => return Err(KvError::NoGroup),
+            };
+
+            // Ensure consumer exists
+            self.get_or_create_consumer(&conn, group_id, consumer)?;
+
+            let entries: Vec<StreamEntry> = if *id_str == ">" {
+                // Read new entries (after last_delivered_id)
+                let start = if last_seq == i64::MAX {
+                    StreamId::new(last_ms + 1, 0)
+                } else {
+                    StreamId::new(last_ms, last_seq + 1)
+                };
+
+                let limit = count.unwrap_or(i64::MAX);
+
+                let mut stmt = conn.prepare(
+                    "SELECT id, entry_ms, entry_seq, data FROM streams
+                     WHERE key_id = ?1
+                     AND (entry_ms > ?2 OR (entry_ms = ?2 AND entry_seq >= ?3))
+                     ORDER BY entry_ms ASC, entry_seq ASC
+                     LIMIT ?4",
+                )?;
+
+                let entries: Vec<(i64, StreamEntry)> = stmt
+                    .query_map(
+                        params![key_id, start.ms, start.seq, limit],
+                        |row| {
+                            let db_id: i64 = row.get(0)?;
+                            let ms: i64 = row.get(1)?;
+                            let seq: i64 = row.get(2)?;
+                            let data: Vec<u8> = row.get(3)?;
+                            Ok((db_id, StreamEntry::new(
+                                StreamId::new(ms, seq),
+                                Self::decode_stream_fields(&data),
+                            )))
+                        },
+                    )?
+                    .filter_map(|r| r.ok())
+                    .collect();
+
+                // Update last_delivered_id and add to pending (unless NOACK)
+                if !entries.is_empty() {
+                    let last_entry = entries.last().unwrap();
+                    conn.execute(
+                        "UPDATE stream_groups SET last_ms = ?1, last_seq = ?2 WHERE id = ?3",
+                        params![last_entry.1.id.ms, last_entry.1.id.seq, group_id],
+                    )?;
+
+                    if !noack {
+                        for (db_id, _entry) in &entries {
+                            conn.execute(
+                                "INSERT OR REPLACE INTO stream_pending
+                                 (key_id, group_id, entry_id, consumer, delivered_at, delivery_count)
+                                 VALUES (?1, ?2, ?3, ?4, ?5, 1)",
+                                params![key_id, group_id, db_id, consumer, now],
+                            )?;
+                        }
+                    }
+                }
+
+                entries.into_iter().map(|(_, e)| e).collect()
+            } else {
+                // Read pending entries for this consumer (re-delivery)
+                let start_id = if *id_str == "0" || *id_str == "0-0" {
+                    StreamId::min()
+                } else {
+                    match StreamId::parse(id_str) {
+                        Some(id) => id,
+                        None => return Err(KvError::SyntaxError),
+                    }
+                };
+
+                let limit = count.unwrap_or(i64::MAX);
+
+                // Get pending entries for this consumer
+                let mut stmt = conn.prepare(
+                    "SELECT s.id, s.entry_ms, s.entry_seq, s.data, sp.id as pending_id
+                     FROM stream_pending sp
+                     JOIN streams s ON s.id = sp.entry_id
+                     WHERE sp.group_id = ?1 AND sp.consumer = ?2
+                     AND (s.entry_ms > ?3 OR (s.entry_ms = ?3 AND s.entry_seq >= ?4))
+                     ORDER BY s.entry_ms ASC, s.entry_seq ASC
+                     LIMIT ?5",
+                )?;
+
+                let entries: Vec<(i64, StreamEntry, i64)> = stmt
+                    .query_map(
+                        params![group_id, consumer, start_id.ms, start_id.seq, limit],
+                        |row| {
+                            let db_id: i64 = row.get(0)?;
+                            let ms: i64 = row.get(1)?;
+                            let seq: i64 = row.get(2)?;
+                            let data: Vec<u8> = row.get(3)?;
+                            let pending_id: i64 = row.get(4)?;
+                            Ok((db_id, StreamEntry::new(
+                                StreamId::new(ms, seq),
+                                Self::decode_stream_fields(&data),
+                            ), pending_id))
+                        },
+                    )?
+                    .filter_map(|r| r.ok())
+                    .collect();
+
+                // Update delivery count and time
+                for (_, _, pending_id) in &entries {
+                    conn.execute(
+                        "UPDATE stream_pending SET delivered_at = ?1, delivery_count = delivery_count + 1 WHERE id = ?2",
+                        params![now, pending_id],
+                    )?;
+                }
+
+                entries.into_iter().map(|(_, e, _)| e).collect()
+            };
+
+            if !entries.is_empty() {
+                results.push(((*key).to_string(), entries));
+            }
+        }
+
+        Ok(results)
+    }
+
+    /// XACK key group id [id ...]
+    /// Acknowledges messages, removing them from the pending list
+    pub fn xack(&self, key: &str, group: &str, ids: &[StreamId]) -> Result<i64> {
+        if ids.is_empty() {
+            return Ok(0);
+        }
+
+        let conn = self.core.conn.lock().unwrap_or_else(|e| e.into_inner());
+
+        let key_id = match self.get_stream_key_id(&conn, key)? {
+            Some(id) => id,
+            None => return Ok(0),
+        };
+
+        let group_id: i64 = match conn.query_row(
+            "SELECT id FROM stream_groups WHERE key_id = ?1 AND name = ?2",
+            params![key_id, group],
+            |row| row.get(0),
+        ) {
+            Ok(id) => id,
+            Err(_) => return Ok(0), // Group doesn't exist
+        };
+
+        let mut acked = 0i64;
+        for id in ids {
+            // Find the stream entry id
+            if let Some(entry_id) = self.get_stream_entry_id(&conn, key_id, id) {
+                let deleted = conn.execute(
+                    "DELETE FROM stream_pending WHERE group_id = ?1 AND entry_id = ?2",
+                    params![group_id, entry_id],
+                )?;
+                acked += deleted as i64;
+            }
+        }
+
+        Ok(acked)
+    }
+
+    /// XPENDING key group [[IDLE min-idle-time] start end count [consumer]]
+    /// Returns pending entries info
+    pub fn xpending_summary(&self, key: &str, group: &str) -> Result<PendingSummary> {
+        let conn = self.core.conn.lock().unwrap_or_else(|e| e.into_inner());
+
+        let key_id = match self.get_stream_key_id(&conn, key)? {
+            Some(id) => id,
+            None => return Ok(PendingSummary {
+                count: 0,
+                smallest_id: None,
+                largest_id: None,
+                consumers: vec![],
+            }),
+        };
+
+        let group_id: i64 = match conn.query_row(
+            "SELECT id FROM stream_groups WHERE key_id = ?1 AND name = ?2",
+            params![key_id, group],
+            |row| row.get(0),
+        ) {
+            Ok(id) => id,
+            Err(_) => return Err(KvError::NoGroup),
+        };
+
+        // Get total count
+        let count: i64 = conn.query_row(
+            "SELECT COUNT(*) FROM stream_pending WHERE group_id = ?1",
+            params![group_id],
+            |row| row.get(0),
+        )?;
+
+        if count == 0 {
+            return Ok(PendingSummary {
+                count: 0,
+                smallest_id: None,
+                largest_id: None,
+                consumers: vec![],
+            });
+        }
+
+        // Get smallest ID
+        let smallest_id: Option<StreamId> = conn.query_row(
+            "SELECT s.entry_ms, s.entry_seq FROM stream_pending sp
+             JOIN streams s ON s.id = sp.entry_id
+             WHERE sp.group_id = ?1
+             ORDER BY s.entry_ms ASC, s.entry_seq ASC LIMIT 1",
+            params![group_id],
+            |row| Ok(StreamId::new(row.get(0)?, row.get(1)?)),
+        ).ok();
+
+        // Get largest ID
+        let largest_id: Option<StreamId> = conn.query_row(
+            "SELECT s.entry_ms, s.entry_seq FROM stream_pending sp
+             JOIN streams s ON s.id = sp.entry_id
+             WHERE sp.group_id = ?1
+             ORDER BY s.entry_ms DESC, s.entry_seq DESC LIMIT 1",
+            params![group_id],
+            |row| Ok(StreamId::new(row.get(0)?, row.get(1)?)),
+        ).ok();
+
+        // Get per-consumer counts
+        let mut stmt = conn.prepare(
+            "SELECT consumer, COUNT(*) FROM stream_pending WHERE group_id = ?1 GROUP BY consumer",
+        )?;
+        let consumers: Vec<(String, i64)> = stmt
+            .query_map(params![group_id], |row| Ok((row.get(0)?, row.get(1)?)))?
+            .filter_map(|r| r.ok())
+            .collect();
+
+        Ok(PendingSummary {
+            count,
+            smallest_id,
+            largest_id,
+            consumers,
+        })
+    }
+
+    /// XPENDING key group [IDLE min-idle-time] start end count [consumer]
+    /// Returns detailed pending entries
+    pub fn xpending_range(
+        &self,
+        key: &str,
+        group: &str,
+        start: StreamId,
+        end: StreamId,
+        count: i64,
+        consumer: Option<&str>,
+        idle_time: Option<i64>,
+    ) -> Result<Vec<PendingEntry>> {
+        let conn = self.core.conn.lock().unwrap_or_else(|e| e.into_inner());
+        let now = Self::now_ms();
+
+        let key_id = match self.get_stream_key_id(&conn, key)? {
+            Some(id) => id,
+            None => return Ok(vec![]),
+        };
+
+        let group_id: i64 = match conn.query_row(
+            "SELECT id FROM stream_groups WHERE key_id = ?1 AND name = ?2",
+            params![key_id, group],
+            |row| row.get(0),
+        ) {
+            Ok(id) => id,
+            Err(_) => return Err(KvError::NoGroup),
+        };
+
+        // Build query based on options
+        let (sql, params_vec): (String, Vec<Box<dyn rusqlite::ToSql>>) = if let Some(c) = consumer {
+            if let Some(idle) = idle_time {
+                let idle_cutoff = now - idle;
+                (
+                    "SELECT s.entry_ms, s.entry_seq, sp.consumer, sp.delivered_at, sp.delivery_count
+                     FROM stream_pending sp
+                     JOIN streams s ON s.id = sp.entry_id
+                     WHERE sp.group_id = ?1 AND sp.consumer = ?2 AND sp.delivered_at <= ?3
+                     AND (s.entry_ms > ?4 OR (s.entry_ms = ?4 AND s.entry_seq >= ?5))
+                     AND (s.entry_ms < ?6 OR (s.entry_ms = ?6 AND s.entry_seq <= ?7))
+                     ORDER BY s.entry_ms ASC, s.entry_seq ASC
+                     LIMIT ?8".to_string(),
+                    vec![
+                        Box::new(group_id) as Box<dyn rusqlite::ToSql>,
+                        Box::new(c.to_string()),
+                        Box::new(idle_cutoff),
+                        Box::new(start.ms),
+                        Box::new(start.seq),
+                        Box::new(end.ms),
+                        Box::new(end.seq),
+                        Box::new(count),
+                    ],
+                )
+            } else {
+                (
+                    "SELECT s.entry_ms, s.entry_seq, sp.consumer, sp.delivered_at, sp.delivery_count
+                     FROM stream_pending sp
+                     JOIN streams s ON s.id = sp.entry_id
+                     WHERE sp.group_id = ?1 AND sp.consumer = ?2
+                     AND (s.entry_ms > ?3 OR (s.entry_ms = ?3 AND s.entry_seq >= ?4))
+                     AND (s.entry_ms < ?5 OR (s.entry_ms = ?5 AND s.entry_seq <= ?6))
+                     ORDER BY s.entry_ms ASC, s.entry_seq ASC
+                     LIMIT ?7".to_string(),
+                    vec![
+                        Box::new(group_id) as Box<dyn rusqlite::ToSql>,
+                        Box::new(c.to_string()),
+                        Box::new(start.ms),
+                        Box::new(start.seq),
+                        Box::new(end.ms),
+                        Box::new(end.seq),
+                        Box::new(count),
+                    ],
+                )
+            }
+        } else if let Some(idle) = idle_time {
+            let idle_cutoff = now - idle;
+            (
+                "SELECT s.entry_ms, s.entry_seq, sp.consumer, sp.delivered_at, sp.delivery_count
+                 FROM stream_pending sp
+                 JOIN streams s ON s.id = sp.entry_id
+                 WHERE sp.group_id = ?1 AND sp.delivered_at <= ?2
+                 AND (s.entry_ms > ?3 OR (s.entry_ms = ?3 AND s.entry_seq >= ?4))
+                 AND (s.entry_ms < ?5 OR (s.entry_ms = ?5 AND s.entry_seq <= ?6))
+                 ORDER BY s.entry_ms ASC, s.entry_seq ASC
+                 LIMIT ?7".to_string(),
+                vec![
+                    Box::new(group_id) as Box<dyn rusqlite::ToSql>,
+                    Box::new(idle_cutoff),
+                    Box::new(start.ms),
+                    Box::new(start.seq),
+                    Box::new(end.ms),
+                    Box::new(end.seq),
+                    Box::new(count),
+                ],
+            )
+        } else {
+            (
+                "SELECT s.entry_ms, s.entry_seq, sp.consumer, sp.delivered_at, sp.delivery_count
+                 FROM stream_pending sp
+                 JOIN streams s ON s.id = sp.entry_id
+                 WHERE sp.group_id = ?1
+                 AND (s.entry_ms > ?2 OR (s.entry_ms = ?2 AND s.entry_seq >= ?3))
+                 AND (s.entry_ms < ?4 OR (s.entry_ms = ?4 AND s.entry_seq <= ?5))
+                 ORDER BY s.entry_ms ASC, s.entry_seq ASC
+                 LIMIT ?6".to_string(),
+                vec![
+                    Box::new(group_id) as Box<dyn rusqlite::ToSql>,
+                    Box::new(start.ms),
+                    Box::new(start.seq),
+                    Box::new(end.ms),
+                    Box::new(end.seq),
+                    Box::new(count),
+                ],
+            )
+        };
+
+        let mut stmt = conn.prepare(&sql)?;
+        let params_refs: Vec<&dyn rusqlite::ToSql> = params_vec.iter().map(|p| p.as_ref()).collect();
+
+        let entries: Vec<PendingEntry> = stmt
+            .query_map(params_refs.as_slice(), |row| {
+                let ms: i64 = row.get(0)?;
+                let seq: i64 = row.get(1)?;
+                let consumer: String = row.get(2)?;
+                let delivered_at: i64 = row.get(3)?;
+                let delivery_count: i64 = row.get(4)?;
+                Ok(PendingEntry {
+                    id: StreamId::new(ms, seq),
+                    consumer,
+                    idle: now - delivered_at,
+                    delivery_count,
+                })
+            })?
+            .filter_map(|r| r.ok())
+            .collect();
+
+        Ok(entries)
+    }
+
+    /// XCLAIM key group consumer min-idle-time id [id ...] [IDLE ms] [TIME ms] [RETRYCOUNT count] [FORCE] [JUSTID]
+    /// Claims pending entries and transfers them to a different consumer
+    pub fn xclaim(
+        &self,
+        key: &str,
+        group: &str,
+        consumer: &str,
+        min_idle_time: i64,
+        ids: &[StreamId],
+        idle_ms: Option<i64>,
+        time_ms: Option<i64>,
+        retry_count: Option<i64>,
+        force: bool,
+        justid: bool,
+    ) -> Result<Vec<StreamEntry>> {
+        let conn = self.core.conn.lock().unwrap_or_else(|e| e.into_inner());
+        let now = Self::now_ms();
+
+        let key_id = match self.get_stream_key_id(&conn, key)? {
+            Some(id) => id,
+            None => return Ok(vec![]),
+        };
+
+        let group_id: i64 = match conn.query_row(
+            "SELECT id FROM stream_groups WHERE key_id = ?1 AND name = ?2",
+            params![key_id, group],
+            |row| row.get(0),
+        ) {
+            Ok(id) => id,
+            Err(_) => return Err(KvError::NoGroup),
+        };
+
+        // Ensure consumer exists
+        self.get_or_create_consumer(&conn, group_id, consumer)?;
+
+        let idle_cutoff = now - min_idle_time;
+        let new_delivered_at = time_ms.unwrap_or(now);
+        let new_idle = if let Some(idle) = idle_ms {
+            now - idle
+        } else {
+            new_delivered_at
+        };
+
+        let mut claimed = Vec::new();
+
+        for id in ids {
+            // Get the stream entry
+            let entry_result: std::result::Result<(i64, Vec<u8>), _> = conn.query_row(
+                "SELECT id, data FROM streams WHERE key_id = ?1 AND entry_ms = ?2 AND entry_seq = ?3",
+                params![key_id, id.ms, id.seq],
+                |row| Ok((row.get(0)?, row.get(1)?)),
+            );
+
+            let (entry_id, data) = match entry_result {
+                Ok((eid, d)) => (eid, d),
+                Err(_) => continue, // Entry doesn't exist
+            };
+
+            // Check if entry is in pending list and meets idle requirement
+            let pending_info: Option<(i64, i64, i64)> = conn.query_row(
+                "SELECT id, delivered_at, delivery_count FROM stream_pending
+                 WHERE group_id = ?1 AND entry_id = ?2",
+                params![group_id, entry_id],
+                |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+            ).ok();
+
+            match pending_info {
+                Some((pending_id, delivered_at, old_count)) => {
+                    // Check if idle enough
+                    if delivered_at > idle_cutoff && !force {
+                        continue; // Not idle enough
+                    }
+
+                    // Update pending entry
+                    let new_count = retry_count.unwrap_or(old_count + 1);
+                    conn.execute(
+                        "UPDATE stream_pending SET consumer = ?1, delivered_at = ?2, delivery_count = ?3 WHERE id = ?4",
+                        params![consumer, new_idle, new_count, pending_id],
+                    )?;
+                }
+                None => {
+                    // Entry not in pending list
+                    if force {
+                        // Add to pending list
+                        let new_count = retry_count.unwrap_or(1);
+                        conn.execute(
+                            "INSERT INTO stream_pending (key_id, group_id, entry_id, consumer, delivered_at, delivery_count)
+                             VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
+                            params![key_id, group_id, entry_id, consumer, new_idle, new_count],
+                        )?;
+                    } else {
+                        continue;
+                    }
+                }
+            }
+
+            if !justid {
+                claimed.push(StreamEntry::new(*id, Self::decode_stream_fields(&data)));
+            } else {
+                claimed.push(StreamEntry::new(*id, vec![]));
+            }
+        }
+
+        Ok(claimed)
+    }
+
+    /// XINFO GROUPS key - get consumer groups for a stream
+    pub fn xinfo_groups(&self, key: &str) -> Result<Vec<ConsumerGroupInfo>> {
+        self.maybe_autovacuum();
+        let conn = self.core.conn.lock().unwrap_or_else(|e| e.into_inner());
+
+        let key_id = match self.get_stream_key_id(&conn, key)? {
+            Some(id) => id,
+            None => return Ok(vec![]),
+        };
+
+        let mut stmt = conn.prepare(
+            "SELECT sg.id, sg.name, sg.last_ms, sg.last_seq FROM stream_groups sg WHERE sg.key_id = ?1",
+        )?;
+
+        let groups: Vec<(i64, String, i64, i64)> = stmt
+            .query_map(params![key_id], |row| {
+                Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?))
+            })?
+            .filter_map(|r| r.ok())
+            .collect();
+
+        let mut result = Vec::new();
+        for (group_id, name, last_ms, last_seq) in groups {
+            // Count consumers
+            let consumers: i64 = conn.query_row(
+                "SELECT COUNT(*) FROM stream_consumers WHERE group_id = ?1",
+                params![group_id],
+                |row| row.get(0),
+            ).unwrap_or(0);
+
+            // Count pending
+            let pending: i64 = conn.query_row(
+                "SELECT COUNT(*) FROM stream_pending WHERE group_id = ?1",
+                params![group_id],
+                |row| row.get(0),
+            ).unwrap_or(0);
+
+            result.push(ConsumerGroupInfo {
+                name,
+                consumers,
+                pending,
+                last_delivered_id: StreamId::new(last_ms, last_seq),
+            });
+        }
+
+        Ok(result)
+    }
+
+    /// XINFO CONSUMERS key groupname - get consumers in a group
+    pub fn xinfo_consumers(&self, key: &str, group: &str) -> Result<Vec<ConsumerInfo>> {
+        self.maybe_autovacuum();
+        let conn = self.core.conn.lock().unwrap_or_else(|e| e.into_inner());
+        let now = Self::now_ms();
+
+        let key_id = match self.get_stream_key_id(&conn, key)? {
+            Some(id) => id,
+            None => return Err(KvError::NoSuchKey),
+        };
+
+        let group_id: i64 = match conn.query_row(
+            "SELECT id FROM stream_groups WHERE key_id = ?1 AND name = ?2",
+            params![key_id, group],
+            |row| row.get(0),
+        ) {
+            Ok(id) => id,
+            Err(_) => return Err(KvError::NoGroup),
+        };
+
+        let mut stmt = conn.prepare(
+            "SELECT sc.name, sc.seen_time FROM stream_consumers sc WHERE sc.group_id = ?1",
+        )?;
+
+        let consumers: Vec<(String, i64)> = stmt
+            .query_map(params![group_id], |row| {
+                Ok((row.get(0)?, row.get(1)?))
+            })?
+            .filter_map(|r| r.ok())
+            .collect();
+
+        let mut result = Vec::new();
+        for (name, seen_time) in consumers {
+            // Count pending for this consumer
+            let pending: i64 = conn.query_row(
+                "SELECT COUNT(*) FROM stream_pending WHERE group_id = ?1 AND consumer = ?2",
+                params![group_id, name],
+                |row| row.get(0),
+            ).unwrap_or(0);
+
+            result.push(ConsumerInfo {
+                name: name.clone(),
+                pending,
+                idle: now - seen_time,
+            });
+        }
+
+        Ok(result)
+    }
 }
 
 #[cfg(test)]
@@ -6605,5 +7449,296 @@ mod tests {
         assert_eq!(entries[0].fields.len(), 3);
         assert_eq!(entries[0].fields[0].0, b"field1");
         assert_eq!(entries[0].fields[0].1, b"value1");
+    }
+
+    // ==================== Consumer Group Tests (Session 14) ====================
+
+    #[test]
+    fn test_xgroup_create() {
+        let db = Db::open_memory().unwrap();
+
+        // Create stream first
+        let fields: Vec<(&[u8], &[u8])> = vec![(b"f", b"v")];
+        db.xadd("mystream", Some(StreamId::new(1000, 0)), &fields, false, None, None, false).unwrap();
+
+        // Create group
+        let result = db.xgroup_create("mystream", "mygroup", StreamId::new(0, 0), false);
+        assert!(result.is_ok());
+
+        // Group already exists
+        let result = db.xgroup_create("mystream", "mygroup", StreamId::new(0, 0), false);
+        assert!(matches!(result, Err(KvError::BusyGroup)));
+
+        // Stream doesn't exist
+        let result = db.xgroup_create("nonexistent", "mygroup", StreamId::new(0, 0), false);
+        assert!(matches!(result, Err(KvError::NoSuchKey)));
+
+        // MKSTREAM creates stream if it doesn't exist
+        let result = db.xgroup_create("newstream", "mygroup", StreamId::new(0, 0), true);
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn test_xgroup_destroy() {
+        let db = Db::open_memory().unwrap();
+
+        let fields: Vec<(&[u8], &[u8])> = vec![(b"f", b"v")];
+        db.xadd("mystream", Some(StreamId::new(1000, 0)), &fields, false, None, None, false).unwrap();
+        db.xgroup_create("mystream", "mygroup", StreamId::new(0, 0), false).unwrap();
+
+        let result = db.xgroup_destroy("mystream", "mygroup");
+        assert!(matches!(result, Ok(true)));
+
+        // Destroying non-existent group returns false
+        let result = db.xgroup_destroy("mystream", "mygroup");
+        assert!(matches!(result, Ok(false)));
+    }
+
+    #[test]
+    fn test_xgroup_setid() {
+        let db = Db::open_memory().unwrap();
+
+        let fields: Vec<(&[u8], &[u8])> = vec![(b"f", b"v")];
+        db.xadd("mystream", Some(StreamId::new(1000, 0)), &fields, false, None, None, false).unwrap();
+        db.xgroup_create("mystream", "mygroup", StreamId::new(0, 0), false).unwrap();
+
+        let result = db.xgroup_setid("mystream", "mygroup", StreamId::new(1000, 0));
+        assert!(result.is_ok());
+
+        // Non-existent group
+        let result = db.xgroup_setid("mystream", "nonexistent", StreamId::new(0, 0));
+        assert!(matches!(result, Err(KvError::NoGroup)));
+
+        // Non-existent key
+        let result = db.xgroup_setid("nonexistent", "mygroup", StreamId::new(0, 0));
+        assert!(matches!(result, Err(KvError::NoSuchKey)));
+    }
+
+    #[test]
+    fn test_xgroup_createconsumer() {
+        let db = Db::open_memory().unwrap();
+
+        let fields: Vec<(&[u8], &[u8])> = vec![(b"f", b"v")];
+        db.xadd("mystream", Some(StreamId::new(1000, 0)), &fields, false, None, None, false).unwrap();
+        db.xgroup_create("mystream", "mygroup", StreamId::new(0, 0), false).unwrap();
+
+        // Create consumer
+        let result = db.xgroup_createconsumer("mystream", "mygroup", "consumer1");
+        assert!(matches!(result, Ok(true)));
+
+        // Consumer already exists
+        let result = db.xgroup_createconsumer("mystream", "mygroup", "consumer1");
+        assert!(matches!(result, Ok(false)));
+
+        // Non-existent group
+        let result = db.xgroup_createconsumer("mystream", "nonexistent", "consumer1");
+        assert!(matches!(result, Err(KvError::NoGroup)));
+    }
+
+    #[test]
+    fn test_xgroup_delconsumer() {
+        let db = Db::open_memory().unwrap();
+
+        let fields: Vec<(&[u8], &[u8])> = vec![(b"f", b"v")];
+        db.xadd("mystream", Some(StreamId::new(1000, 0)), &fields, false, None, None, false).unwrap();
+        db.xgroup_create("mystream", "mygroup", StreamId::new(0, 0), false).unwrap();
+        db.xgroup_createconsumer("mystream", "mygroup", "consumer1").unwrap();
+
+        // Delete consumer (returns pending count)
+        let result = db.xgroup_delconsumer("mystream", "mygroup", "consumer1");
+        assert!(matches!(result, Ok(0)));
+    }
+
+    #[test]
+    fn test_xreadgroup_new_messages() {
+        let db = Db::open_memory().unwrap();
+
+        let fields: Vec<(&[u8], &[u8])> = vec![(b"f", b"v")];
+        db.xadd("mystream", Some(StreamId::new(1000, 0)), &fields, false, None, None, false).unwrap();
+        db.xadd("mystream", Some(StreamId::new(2000, 0)), &fields, false, None, None, false).unwrap();
+        db.xgroup_create("mystream", "mygroup", StreamId::new(0, 0), false).unwrap();
+
+        // Read new messages with >
+        let results = db.xreadgroup("mygroup", "consumer1", &["mystream"], &[">"], None, false).unwrap();
+        assert_eq!(results.len(), 1);
+        assert_eq!(results[0].0, "mystream");
+        assert_eq!(results[0].1.len(), 2);
+        assert_eq!(results[0].1[0].id, StreamId::new(1000, 0));
+        assert_eq!(results[0].1[1].id, StreamId::new(2000, 0));
+
+        // Reading again should return nothing (all delivered)
+        let results = db.xreadgroup("mygroup", "consumer1", &["mystream"], &[">"], None, false).unwrap();
+        assert!(results.is_empty());
+    }
+
+    #[test]
+    fn test_xreadgroup_pending() {
+        let db = Db::open_memory().unwrap();
+
+        let fields: Vec<(&[u8], &[u8])> = vec![(b"f", b"v")];
+        db.xadd("mystream", Some(StreamId::new(1000, 0)), &fields, false, None, None, false).unwrap();
+        db.xadd("mystream", Some(StreamId::new(2000, 0)), &fields, false, None, None, false).unwrap();
+        db.xgroup_create("mystream", "mygroup", StreamId::new(0, 0), false).unwrap();
+
+        // First read creates pending entries
+        db.xreadgroup("mygroup", "consumer1", &["mystream"], &[">"], None, false).unwrap();
+
+        // Read pending entries with 0
+        let results = db.xreadgroup("mygroup", "consumer1", &["mystream"], &["0"], None, false).unwrap();
+        assert_eq!(results.len(), 1);
+        assert_eq!(results[0].1.len(), 2);
+    }
+
+    #[test]
+    fn test_xreadgroup_noack() {
+        let db = Db::open_memory().unwrap();
+
+        let fields: Vec<(&[u8], &[u8])> = vec![(b"f", b"v")];
+        db.xadd("mystream", Some(StreamId::new(1000, 0)), &fields, false, None, None, false).unwrap();
+        db.xgroup_create("mystream", "mygroup", StreamId::new(0, 0), false).unwrap();
+
+        // Read with NOACK - should not add to pending
+        db.xreadgroup("mygroup", "consumer1", &["mystream"], &[">"], None, true).unwrap();
+
+        // Check pending is empty
+        let summary = db.xpending_summary("mystream", "mygroup").unwrap();
+        assert_eq!(summary.count, 0);
+    }
+
+    #[test]
+    fn test_xack() {
+        let db = Db::open_memory().unwrap();
+
+        let fields: Vec<(&[u8], &[u8])> = vec![(b"f", b"v")];
+        db.xadd("mystream", Some(StreamId::new(1000, 0)), &fields, false, None, None, false).unwrap();
+        db.xadd("mystream", Some(StreamId::new(2000, 0)), &fields, false, None, None, false).unwrap();
+        db.xgroup_create("mystream", "mygroup", StreamId::new(0, 0), false).unwrap();
+
+        // Read messages to create pending entries
+        db.xreadgroup("mygroup", "consumer1", &["mystream"], &[">"], None, false).unwrap();
+
+        // Acknowledge one message
+        let acked = db.xack("mystream", "mygroup", &[StreamId::new(1000, 0)]).unwrap();
+        assert_eq!(acked, 1);
+
+        // Check pending
+        let summary = db.xpending_summary("mystream", "mygroup").unwrap();
+        assert_eq!(summary.count, 1);
+
+        // Acknowledge already acked message returns 0
+        let acked = db.xack("mystream", "mygroup", &[StreamId::new(1000, 0)]).unwrap();
+        assert_eq!(acked, 0);
+    }
+
+    #[test]
+    fn test_xpending_summary() {
+        let db = Db::open_memory().unwrap();
+
+        let fields: Vec<(&[u8], &[u8])> = vec![(b"f", b"v")];
+        db.xadd("mystream", Some(StreamId::new(1000, 0)), &fields, false, None, None, false).unwrap();
+        db.xadd("mystream", Some(StreamId::new(2000, 0)), &fields, false, None, None, false).unwrap();
+        db.xgroup_create("mystream", "mygroup", StreamId::new(0, 0), false).unwrap();
+
+        // Read messages
+        db.xreadgroup("mygroup", "consumer1", &["mystream"], &[">"], None, false).unwrap();
+
+        let summary = db.xpending_summary("mystream", "mygroup").unwrap();
+        assert_eq!(summary.count, 2);
+        assert_eq!(summary.smallest_id, Some(StreamId::new(1000, 0)));
+        assert_eq!(summary.largest_id, Some(StreamId::new(2000, 0)));
+        assert_eq!(summary.consumers.len(), 1);
+        assert_eq!(summary.consumers[0].0, "consumer1");
+        assert_eq!(summary.consumers[0].1, 2);
+    }
+
+    #[test]
+    fn test_xpending_range() {
+        let db = Db::open_memory().unwrap();
+
+        let fields: Vec<(&[u8], &[u8])> = vec![(b"f", b"v")];
+        db.xadd("mystream", Some(StreamId::new(1000, 0)), &fields, false, None, None, false).unwrap();
+        db.xadd("mystream", Some(StreamId::new(2000, 0)), &fields, false, None, None, false).unwrap();
+        db.xgroup_create("mystream", "mygroup", StreamId::new(0, 0), false).unwrap();
+
+        db.xreadgroup("mygroup", "consumer1", &["mystream"], &[">"], None, false).unwrap();
+
+        let entries = db.xpending_range("mystream", "mygroup", StreamId::min(), StreamId::max(), 10, None, None).unwrap();
+        assert_eq!(entries.len(), 2);
+        assert_eq!(entries[0].id, StreamId::new(1000, 0));
+        assert_eq!(entries[0].consumer, "consumer1");
+        assert_eq!(entries[0].delivery_count, 1);
+    }
+
+    #[test]
+    fn test_xclaim() {
+        let db = Db::open_memory().unwrap();
+
+        let fields: Vec<(&[u8], &[u8])> = vec![(b"f", b"v")];
+        db.xadd("mystream", Some(StreamId::new(1000, 0)), &fields, false, None, None, false).unwrap();
+        db.xgroup_create("mystream", "mygroup", StreamId::new(0, 0), false).unwrap();
+
+        // Read message with consumer1
+        db.xreadgroup("mygroup", "consumer1", &["mystream"], &[">"], None, false).unwrap();
+
+        // Claim with consumer2 using FORCE (no min-idle-time requirement)
+        let claimed = db.xclaim(
+            "mystream", "mygroup", "consumer2", 0,
+            &[StreamId::new(1000, 0)],
+            None, None, None, true, false
+        ).unwrap();
+        assert_eq!(claimed.len(), 1);
+        assert_eq!(claimed[0].id, StreamId::new(1000, 0));
+
+        // Check that pending now shows consumer2
+        let entries = db.xpending_range("mystream", "mygroup", StreamId::min(), StreamId::max(), 10, None, None).unwrap();
+        assert_eq!(entries[0].consumer, "consumer2");
+    }
+
+    #[test]
+    fn test_xclaim_justid() {
+        let db = Db::open_memory().unwrap();
+
+        let fields: Vec<(&[u8], &[u8])> = vec![(b"f", b"v")];
+        db.xadd("mystream", Some(StreamId::new(1000, 0)), &fields, false, None, None, false).unwrap();
+        db.xgroup_create("mystream", "mygroup", StreamId::new(0, 0), false).unwrap();
+
+        db.xreadgroup("mygroup", "consumer1", &["mystream"], &[">"], None, false).unwrap();
+
+        // Claim with JUSTID - should return empty fields
+        let claimed = db.xclaim(
+            "mystream", "mygroup", "consumer2", 0,
+            &[StreamId::new(1000, 0)],
+            None, None, None, true, true
+        ).unwrap();
+        assert_eq!(claimed.len(), 1);
+        assert_eq!(claimed[0].id, StreamId::new(1000, 0));
+        assert!(claimed[0].fields.is_empty());
+    }
+
+    #[test]
+    fn test_xinfo_groups() {
+        let db = Db::open_memory().unwrap();
+
+        let fields: Vec<(&[u8], &[u8])> = vec![(b"f", b"v")];
+        db.xadd("mystream", Some(StreamId::new(1000, 0)), &fields, false, None, None, false).unwrap();
+        db.xgroup_create("mystream", "group1", StreamId::new(0, 0), false).unwrap();
+        db.xgroup_create("mystream", "group2", StreamId::new(1000, 0), false).unwrap();
+
+        let groups = db.xinfo_groups("mystream").unwrap();
+        assert_eq!(groups.len(), 2);
+    }
+
+    #[test]
+    fn test_xinfo_consumers() {
+        let db = Db::open_memory().unwrap();
+
+        let fields: Vec<(&[u8], &[u8])> = vec![(b"f", b"v")];
+        db.xadd("mystream", Some(StreamId::new(1000, 0)), &fields, false, None, None, false).unwrap();
+        db.xgroup_create("mystream", "mygroup", StreamId::new(0, 0), false).unwrap();
+        db.xgroup_createconsumer("mystream", "mygroup", "consumer1").unwrap();
+        db.xgroup_createconsumer("mystream", "mygroup", "consumer2").unwrap();
+
+        let consumers = db.xinfo_consumers("mystream", "mygroup").unwrap();
+        assert_eq!(consumers.len(), 2);
     }
 }

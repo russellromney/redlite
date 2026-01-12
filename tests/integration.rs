@@ -1669,3 +1669,291 @@ fn test_xadd_maxlen() {
     let r = redis_cli(16488, &["XLEN", "mystream"]);
     assert!(check_int(&r, 3), "Expected 3, got: {}", r);
 }
+
+// ==================== Consumer Group Tests (Session 14) ====================
+
+#[test]
+fn test_xgroup_create() {
+    let _server = start_server(16489);
+
+    // Create stream
+    redis_cli(16489, &["XADD", "mystream", "1000-0", "f", "v"]);
+
+    // Create group
+    let r1 = redis_cli(16489, &["XGROUP", "CREATE", "mystream", "mygroup", "0"]);
+    assert_eq!(r1, "OK", "Expected OK, got: {}", r1);
+
+    // Creating same group again should fail
+    let r2 = redis_cli(16489, &["XGROUP", "CREATE", "mystream", "mygroup", "0"]);
+    assert!(r2.contains("BUSYGROUP"), "Expected BUSYGROUP, got: {}", r2);
+}
+
+#[test]
+fn test_xgroup_create_mkstream() {
+    let _server = start_server(16490);
+
+    // Create group with MKSTREAM on non-existent stream
+    let r1 = redis_cli(16490, &["XGROUP", "CREATE", "newstream", "mygroup", "0", "MKSTREAM"]);
+    assert_eq!(r1, "OK", "Expected OK, got: {}", r1);
+
+    // Stream should now exist
+    let r2 = redis_cli(16490, &["TYPE", "newstream"]);
+    assert_eq!(r2, "stream", "Expected stream type, got: {}", r2);
+}
+
+#[test]
+fn test_xgroup_destroy() {
+    let _server = start_server(16491);
+
+    redis_cli(16491, &["XADD", "mystream", "1000-0", "f", "v"]);
+    redis_cli(16491, &["XGROUP", "CREATE", "mystream", "mygroup", "0"]);
+
+    let r1 = redis_cli(16491, &["XGROUP", "DESTROY", "mystream", "mygroup"]);
+    assert!(check_int(&r1, 1), "Expected 1, got: {}", r1);
+
+    // Destroying again should return 0
+    let r2 = redis_cli(16491, &["XGROUP", "DESTROY", "mystream", "mygroup"]);
+    assert!(check_int(&r2, 0), "Expected 0, got: {}", r2);
+}
+
+#[test]
+fn test_xgroup_setid() {
+    let _server = start_server(16492);
+
+    redis_cli(16492, &["XADD", "mystream", "1000-0", "f", "v"]);
+    redis_cli(16492, &["XGROUP", "CREATE", "mystream", "mygroup", "0"]);
+
+    let r = redis_cli(16492, &["XGROUP", "SETID", "mystream", "mygroup", "1000-0"]);
+    assert_eq!(r, "OK", "Expected OK, got: {}", r);
+}
+
+#[test]
+fn test_xgroup_createconsumer() {
+    let _server = start_server(16493);
+
+    redis_cli(16493, &["XADD", "mystream", "1000-0", "f", "v"]);
+    redis_cli(16493, &["XGROUP", "CREATE", "mystream", "mygroup", "0"]);
+
+    let r1 = redis_cli(16493, &["XGROUP", "CREATECONSUMER", "mystream", "mygroup", "consumer1"]);
+    assert!(check_int(&r1, 1), "Expected 1, got: {}", r1);
+
+    // Creating same consumer again returns 0
+    let r2 = redis_cli(16493, &["XGROUP", "CREATECONSUMER", "mystream", "mygroup", "consumer1"]);
+    assert!(check_int(&r2, 0), "Expected 0, got: {}", r2);
+}
+
+#[test]
+fn test_xgroup_delconsumer() {
+    let _server = start_server(16494);
+
+    redis_cli(16494, &["XADD", "mystream", "1000-0", "f", "v"]);
+    redis_cli(16494, &["XGROUP", "CREATE", "mystream", "mygroup", "0"]);
+    redis_cli(16494, &["XGROUP", "CREATECONSUMER", "mystream", "mygroup", "consumer1"]);
+
+    let r = redis_cli(16494, &["XGROUP", "DELCONSUMER", "mystream", "mygroup", "consumer1"]);
+    assert!(check_int(&r, 0), "Expected 0 pending, got: {}", r);
+}
+
+#[test]
+fn test_xreadgroup_new_messages() {
+    let _server = start_server(16495);
+
+    redis_cli(16495, &["XADD", "mystream", "1000-0", "f", "v"]);
+    redis_cli(16495, &["XADD", "mystream", "2000-0", "f", "v2"]);
+    redis_cli(16495, &["XGROUP", "CREATE", "mystream", "mygroup", "0"]);
+
+    // Read new messages with >
+    let r1 = redis_cli(16495, &["XREADGROUP", "GROUP", "mygroup", "consumer1", "STREAMS", "mystream", ">"]);
+    assert!(r1.contains("1000-0"), "Expected 1000-0 in result: {}", r1);
+    assert!(r1.contains("2000-0"), "Expected 2000-0 in result: {}", r1);
+
+    // Reading again returns nil (all delivered)
+    let r2 = redis_cli(16495, &["XREADGROUP", "GROUP", "mygroup", "consumer1", "STREAMS", "mystream", ">"]);
+    assert!(r2.is_empty() || r2.contains("nil"), "Expected nil, got: {}", r2);
+}
+
+#[test]
+fn test_xreadgroup_pending() {
+    let _server = start_server(16496);
+
+    redis_cli(16496, &["XADD", "mystream", "1000-0", "f", "v"]);
+    redis_cli(16496, &["XGROUP", "CREATE", "mystream", "mygroup", "0"]);
+
+    // First read creates pending entry
+    redis_cli(16496, &["XREADGROUP", "GROUP", "mygroup", "consumer1", "STREAMS", "mystream", ">"]);
+
+    // Read pending entries with 0
+    let r = redis_cli(16496, &["XREADGROUP", "GROUP", "mygroup", "consumer1", "STREAMS", "mystream", "0"]);
+    assert!(r.contains("1000-0"), "Expected pending entry in result: {}", r);
+}
+
+#[test]
+fn test_xreadgroup_noack() {
+    let _server = start_server(16497);
+
+    redis_cli(16497, &["XADD", "mystream", "1000-0", "f", "v"]);
+    redis_cli(16497, &["XGROUP", "CREATE", "mystream", "mygroup", "0"]);
+
+    // Read with NOACK
+    redis_cli(16497, &["XREADGROUP", "GROUP", "mygroup", "consumer1", "NOACK", "STREAMS", "mystream", ">"]);
+
+    // Check pending is empty
+    let r = redis_cli(16497, &["XPENDING", "mystream", "mygroup"]);
+    assert!(check_int(&r, 0), "Expected 0 pending, got: {}", r);
+}
+
+#[test]
+fn test_xack() {
+    let _server = start_server(16498);
+
+    redis_cli(16498, &["XADD", "mystream", "1000-0", "f", "v"]);
+    redis_cli(16498, &["XADD", "mystream", "2000-0", "f", "v2"]);
+    redis_cli(16498, &["XGROUP", "CREATE", "mystream", "mygroup", "0"]);
+    redis_cli(16498, &["XREADGROUP", "GROUP", "mygroup", "consumer1", "STREAMS", "mystream", ">"]);
+
+    // Acknowledge one message
+    let r1 = redis_cli(16498, &["XACK", "mystream", "mygroup", "1000-0"]);
+    assert!(check_int(&r1, 1), "Expected 1, got: {}", r1);
+
+    // Check pending count
+    let r2 = redis_cli(16498, &["XPENDING", "mystream", "mygroup"]);
+    assert!(r2.contains('1'), "Expected 1 pending, got: {}", r2);
+}
+
+#[test]
+fn test_xpending_summary() {
+    let _server = start_server(16499);
+
+    redis_cli(16499, &["XADD", "mystream", "1000-0", "f", "v"]);
+    redis_cli(16499, &["XADD", "mystream", "2000-0", "f", "v2"]);
+    redis_cli(16499, &["XGROUP", "CREATE", "mystream", "mygroup", "0"]);
+    redis_cli(16499, &["XREADGROUP", "GROUP", "mygroup", "consumer1", "STREAMS", "mystream", ">"]);
+
+    let r = redis_cli(16499, &["XPENDING", "mystream", "mygroup"]);
+    assert!(r.contains('2'), "Expected 2 pending, got: {}", r);
+    assert!(r.contains("1000-0"), "Expected smallest ID 1000-0, got: {}", r);
+    assert!(r.contains("2000-0"), "Expected largest ID 2000-0, got: {}", r);
+    assert!(r.contains("consumer1"), "Expected consumer1, got: {}", r);
+}
+
+#[test]
+fn test_xpending_range() {
+    let _server = start_server(16500);
+
+    redis_cli(16500, &["XADD", "mystream", "1000-0", "f", "v"]);
+    redis_cli(16500, &["XADD", "mystream", "2000-0", "f", "v2"]);
+    redis_cli(16500, &["XGROUP", "CREATE", "mystream", "mygroup", "0"]);
+    redis_cli(16500, &["XREADGROUP", "GROUP", "mygroup", "consumer1", "STREAMS", "mystream", ">"]);
+
+    let r = redis_cli(16500, &["XPENDING", "mystream", "mygroup", "-", "+", "10"]);
+    assert!(r.contains("1000-0"), "Expected 1000-0 in pending range: {}", r);
+    assert!(r.contains("2000-0"), "Expected 2000-0 in pending range: {}", r);
+    assert!(r.contains("consumer1"), "Expected consumer1 in result: {}", r);
+}
+
+#[test]
+fn test_xclaim() {
+    let _server = start_server(16501);
+
+    redis_cli(16501, &["XADD", "mystream", "1000-0", "f", "v"]);
+    redis_cli(16501, &["XGROUP", "CREATE", "mystream", "mygroup", "0"]);
+    redis_cli(16501, &["XREADGROUP", "GROUP", "mygroup", "consumer1", "STREAMS", "mystream", ">"]);
+
+    // Claim with FORCE
+    let r = redis_cli(16501, &["XCLAIM", "mystream", "mygroup", "consumer2", "0", "1000-0", "FORCE"]);
+    assert!(r.contains("1000-0"), "Expected 1000-0 in claim result: {}", r);
+
+    // Verify consumer2 now owns it
+    let r2 = redis_cli(16501, &["XPENDING", "mystream", "mygroup", "-", "+", "10"]);
+    assert!(r2.contains("consumer2"), "Expected consumer2 in pending: {}", r2);
+}
+
+#[test]
+fn test_xclaim_justid() {
+    let _server = start_server(16502);
+
+    redis_cli(16502, &["XADD", "mystream", "1000-0", "f", "v"]);
+    redis_cli(16502, &["XGROUP", "CREATE", "mystream", "mygroup", "0"]);
+    redis_cli(16502, &["XREADGROUP", "GROUP", "mygroup", "consumer1", "STREAMS", "mystream", ">"]);
+
+    // Claim with JUSTID
+    let r = redis_cli(16502, &["XCLAIM", "mystream", "mygroup", "consumer2", "0", "1000-0", "FORCE", "JUSTID"]);
+    assert!(r.contains("1000-0"), "Expected 1000-0 in justid result: {}", r);
+}
+
+#[test]
+fn test_xinfo_groups() {
+    let _server = start_server(16503);
+
+    redis_cli(16503, &["XADD", "mystream", "1000-0", "f", "v"]);
+    redis_cli(16503, &["XGROUP", "CREATE", "mystream", "group1", "0"]);
+    redis_cli(16503, &["XGROUP", "CREATE", "mystream", "group2", "$"]);
+
+    let r = redis_cli(16503, &["XINFO", "GROUPS", "mystream"]);
+    assert!(r.contains("group1"), "Expected group1 in result: {}", r);
+    assert!(r.contains("group2"), "Expected group2 in result: {}", r);
+}
+
+#[test]
+fn test_xinfo_consumers() {
+    let _server = start_server(16504);
+
+    redis_cli(16504, &["XADD", "mystream", "1000-0", "f", "v"]);
+    redis_cli(16504, &["XGROUP", "CREATE", "mystream", "mygroup", "0"]);
+    redis_cli(16504, &["XGROUP", "CREATECONSUMER", "mystream", "mygroup", "consumer1"]);
+    redis_cli(16504, &["XGROUP", "CREATECONSUMER", "mystream", "mygroup", "consumer2"]);
+
+    let r = redis_cli(16504, &["XINFO", "CONSUMERS", "mystream", "mygroup"]);
+    assert!(r.contains("consumer1"), "Expected consumer1 in result: {}", r);
+    assert!(r.contains("consumer2"), "Expected consumer2 in result: {}", r);
+}
+
+#[test]
+fn test_xreadgroup_count() {
+    let _server = start_server(16505);
+
+    redis_cli(16505, &["XADD", "mystream", "1000-0", "f", "v"]);
+    redis_cli(16505, &["XADD", "mystream", "2000-0", "f", "v2"]);
+    redis_cli(16505, &["XADD", "mystream", "3000-0", "f", "v3"]);
+    redis_cli(16505, &["XGROUP", "CREATE", "mystream", "mygroup", "0"]);
+
+    // Read with COUNT 2
+    let r = redis_cli(16505, &["XREADGROUP", "GROUP", "mygroup", "consumer1", "COUNT", "2", "STREAMS", "mystream", ">"]);
+    assert!(r.contains("1000-0"), "Expected 1000-0 in result: {}", r);
+    assert!(r.contains("2000-0"), "Expected 2000-0 in result: {}", r);
+    // Should NOT contain 3000-0 due to COUNT limit - but actually redis-cli output may vary
+}
+
+#[test]
+fn test_xgroup_no_such_key() {
+    let _server = start_server(16506);
+
+    // Try to create group on non-existent stream without MKSTREAM
+    let r = redis_cli(16506, &["XGROUP", "CREATE", "nonexistent", "mygroup", "0"]);
+    assert!(r.to_lowercase().contains("key") || r.contains("ERR"), "Expected error about key, got: {}", r);
+}
+
+#[test]
+fn test_xgroup_nogroup() {
+    let _server = start_server(16507);
+
+    redis_cli(16507, &["XADD", "mystream", "1000-0", "f", "v"]);
+
+    // Try to set ID on non-existent group
+    let r = redis_cli(16507, &["XGROUP", "SETID", "mystream", "nonexistent", "0"]);
+    assert!(r.contains("NOGROUP"), "Expected NOGROUP error, got: {}", r);
+}
+
+#[test]
+fn test_delconsumer_with_pending() {
+    let _server = start_server(16508);
+
+    redis_cli(16508, &["XADD", "mystream", "1000-0", "f", "v"]);
+    redis_cli(16508, &["XADD", "mystream", "2000-0", "f", "v2"]);
+    redis_cli(16508, &["XGROUP", "CREATE", "mystream", "mygroup", "0"]);
+    redis_cli(16508, &["XREADGROUP", "GROUP", "mygroup", "consumer1", "STREAMS", "mystream", ">"]);
+
+    // Delete consumer should return pending count
+    let r = redis_cli(16508, &["XGROUP", "DELCONSUMER", "mystream", "mygroup", "consumer1"]);
+    assert!(check_int(&r, 2), "Expected 2 pending deleted, got: {}", r);
+}

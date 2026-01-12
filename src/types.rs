@@ -171,3 +171,38 @@ pub struct StreamInfo {
     pub first_entry: Option<StreamEntry>,
     pub last_entry: Option<StreamEntry>,
 }
+
+/// Consumer group info (returned by XINFO GROUPS)
+#[derive(Debug, Clone)]
+pub struct ConsumerGroupInfo {
+    pub name: String,
+    pub consumers: i64,      // Number of consumers in this group
+    pub pending: i64,        // Number of pending entries
+    pub last_delivered_id: StreamId,
+}
+
+/// Consumer info (returned by XINFO CONSUMERS)
+#[derive(Debug, Clone)]
+pub struct ConsumerInfo {
+    pub name: String,
+    pub pending: i64,        // Number of pending entries for this consumer
+    pub idle: i64,           // Milliseconds since last interaction
+}
+
+/// Pending entry info (returned by XPENDING)
+#[derive(Debug, Clone)]
+pub struct PendingEntry {
+    pub id: StreamId,
+    pub consumer: String,
+    pub idle: i64,           // Milliseconds since last delivery
+    pub delivery_count: i64, // Number of times this entry has been delivered
+}
+
+/// Summary for XPENDING without range arguments
+#[derive(Debug, Clone)]
+pub struct PendingSummary {
+    pub count: i64,                // Total pending entries in group
+    pub smallest_id: Option<StreamId>,
+    pub largest_id: Option<StreamId>,
+    pub consumers: Vec<(String, i64)>,  // Consumer name -> pending count
+}

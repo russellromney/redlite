@@ -29,6 +29,12 @@ pub enum KvError {
     #[error("invalid data")]
     InvalidData,
 
+    #[error("BUSYGROUP Consumer Group name already exists")]
+    BusyGroup,
+
+    #[error("NOGROUP No such consumer group")]
+    NoGroup,
+
     #[error("database error: {0}")]
     Database(#[from] rusqlite::Error),
 

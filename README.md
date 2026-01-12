@@ -150,7 +150,15 @@ redis-cli -p 6767 GET foo
 - `XREAD` (with COUNT)
 - `XTRIM` (MAXLEN, MINID)
 - `XDEL`
-- `XINFO STREAM`
+- `XINFO STREAM`, `XINFO GROUPS`, `XINFO CONSUMERS`
+
+### Stream Consumer Groups
+- `XGROUP CREATE`, `XGROUP DESTROY`, `XGROUP SETID`
+- `XGROUP CREATECONSUMER`, `XGROUP DELCONSUMER`
+- `XREADGROUP` (with COUNT, NOACK)
+- `XACK`
+- `XPENDING` (summary and range forms, with IDLE filter)
+- `XCLAIM` (with IDLE, TIME, RETRYCOUNT, FORCE, JUSTID)
 
 ### Server
 - `PING`, `ECHO`, `QUIT`, `COMMAND`
@@ -187,6 +195,9 @@ Data stored in SQLite with these tables:
 - `sets` - Set members
 - `zsets` - Sorted set members with scores
 - `streams` - Stream entries (timestamp-sequence IDs, MessagePack fields)
+- `stream_groups` - Consumer groups (name, last delivered ID)
+- `stream_consumers` - Consumers in groups (name, last seen time)
+- `stream_pending` - Pending entries (entry, consumer, delivery count)
 
 ## License
 

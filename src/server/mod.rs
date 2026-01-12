@@ -163,6 +163,12 @@ fn execute_command(db: &mut Db, args: &[Vec<u8>]) -> RespValue {
         "XTRIM" => cmd_xtrim(db, cmd_args),
         "XDEL" => cmd_xdel(db, cmd_args),
         "XINFO" => cmd_xinfo(db, cmd_args),
+        // Stream consumer group commands (Session 14)
+        "XGROUP" => cmd_xgroup(db, cmd_args),
+        "XREADGROUP" => cmd_xreadgroup(db, cmd_args),
+        "XACK" => cmd_xack(db, cmd_args),
+        "XPENDING" => cmd_xpending(db, cmd_args),
+        "XCLAIM" => cmd_xclaim(db, cmd_args),
         _ => RespValue::error(format!("unknown command '{}'", cmd)),
     }
 }
@@ -2639,9 +2645,54 @@ fn cmd_xinfo(db: &Db, args: &[Vec<u8>]) -> RespValue {
                 Err(e) => RespValue::error(e.to_string()),
             }
         }
-        "GROUPS" | "CONSUMERS" => {
-            // Consumer groups - Session 14
-            RespValue::error("XINFO GROUPS/CONSUMERS not implemented yet")
+        "GROUPS" => {
+            match db.xinfo_groups(key) {
+                Ok(groups) => {
+                    let arr: Vec<RespValue> = groups.iter().map(|g| {
+                        RespValue::Array(Some(vec![
+                            RespValue::BulkString(Some(b"name".to_vec())),
+                            RespValue::BulkString(Some(g.name.clone().into_bytes())),
+                            RespValue::BulkString(Some(b"consumers".to_vec())),
+                            RespValue::Integer(g.consumers),
+                            RespValue::BulkString(Some(b"pending".to_vec())),
+                            RespValue::Integer(g.pending),
+                            RespValue::BulkString(Some(b"last-delivered-id".to_vec())),
+                            RespValue::BulkString(Some(g.last_delivered_id.to_string().into_bytes())),
+                        ]))
+                    }).collect();
+                    RespValue::Array(Some(arr))
+                }
+                Err(KvError::WrongType) => RespValue::wrong_type(),
+                Err(e) => RespValue::error(e.to_string()),
+            }
+        }
+        "CONSUMERS" => {
+            if args.len() < 3 {
+                return RespValue::error("wrong number of arguments for 'xinfo consumers' command");
+            }
+            let groupname = match std::str::from_utf8(&args[2]) {
+                Ok(g) => g,
+                Err(_) => return RespValue::error("invalid group name"),
+            };
+            match db.xinfo_consumers(key, groupname) {
+                Ok(consumers) => {
+                    let arr: Vec<RespValue> = consumers.iter().map(|c| {
+                        RespValue::Array(Some(vec![
+                            RespValue::BulkString(Some(b"name".to_vec())),
+                            RespValue::BulkString(Some(c.name.clone().into_bytes())),
+                            RespValue::BulkString(Some(b"pending".to_vec())),
+                            RespValue::Integer(c.pending),
+                            RespValue::BulkString(Some(b"idle".to_vec())),
+                            RespValue::Integer(c.idle),
+                        ]))
+                    }).collect();
+                    RespValue::Array(Some(arr))
+                }
+                Err(KvError::NoSuchKey) => RespValue::error("no such key"),
+                Err(KvError::NoGroup) => RespValue::error("NOGROUP No such consumer group"),
+                Err(KvError::WrongType) => RespValue::wrong_type(),
+                Err(e) => RespValue::error(e.to_string()),
+            }
         }
         _ => RespValue::error("unknown subcommand"),
     }
@@ -2673,4 +2724,512 @@ fn format_single_entry(entry: &crate::types::StreamEntry) -> RespValue {
         RespValue::BulkString(Some(entry.id.to_string().into_bytes())),
         RespValue::Array(Some(fields)),
     ]))
+}
+
+// --- Consumer Group Commands (Session 14) ---
+
+fn cmd_xgroup(db: &Db, args: &[Vec<u8>]) -> RespValue {
+    if args.len() < 2 {
+        return RespValue::error("wrong number of arguments for 'xgroup' command");
+    }
+
+    let subcommand = match std::str::from_utf8(&args[0]) {
+        Ok(s) => s.to_uppercase(),
+        Err(_) => return RespValue::error("invalid subcommand"),
+    };
+
+    match subcommand.as_str() {
+        "CREATE" => {
+            // XGROUP CREATE key groupname id|$ [MKSTREAM]
+            if args.len() < 4 {
+                return RespValue::error("wrong number of arguments for 'xgroup create' command");
+            }
+            let key = match std::str::from_utf8(&args[1]) {
+                Ok(k) => k,
+                Err(_) => return RespValue::error("invalid key"),
+            };
+            let groupname = match std::str::from_utf8(&args[2]) {
+                Ok(g) => g,
+                Err(_) => return RespValue::error("invalid group name"),
+            };
+            let id_str = match std::str::from_utf8(&args[3]) {
+                Ok(s) => s,
+                Err(_) => return RespValue::error("invalid ID"),
+            };
+
+            // Check for MKSTREAM option
+            let mut mkstream = false;
+            for arg in args[4..].iter() {
+                let s = std::str::from_utf8(arg).unwrap_or("").to_uppercase();
+                if s == "MKSTREAM" {
+                    mkstream = true;
+                }
+            }
+
+            // Parse ID - $ means use the last ID
+            let id = if id_str == "$" {
+                // Use 0-0 for $ which will be treated as "start from newest"
+                // In Redis, $ means start from the last entry
+                match db.xinfo_stream(key) {
+                    Ok(Some(info)) => info.last_generated_id,
+                    Ok(None) => StreamId::new(0, 0),
+                    Err(_) => StreamId::new(0, 0),
+                }
+            } else if id_str == "0" || id_str == "0-0" {
+                StreamId::new(0, 0)
+            } else {
+                match StreamId::parse(id_str) {
+                    Some(id) => id,
+                    None => return RespValue::error("invalid ID"),
+                }
+            };
+
+            match db.xgroup_create(key, groupname, id, mkstream) {
+                Ok(_) => RespValue::ok(),
+                Err(KvError::NoSuchKey) => RespValue::error("The XGROUP subcommand requires the key to exist"),
+                Err(KvError::BusyGroup) => RespValue::error("BUSYGROUP Consumer Group name already exists"),
+                Err(KvError::WrongType) => RespValue::wrong_type(),
+                Err(e) => RespValue::error(e.to_string()),
+            }
+        }
+        "DESTROY" => {
+            // XGROUP DESTROY key groupname
+            if args.len() < 3 {
+                return RespValue::error("wrong number of arguments for 'xgroup destroy' command");
+            }
+            let key = match std::str::from_utf8(&args[1]) {
+                Ok(k) => k,
+                Err(_) => return RespValue::error("invalid key"),
+            };
+            let groupname = match std::str::from_utf8(&args[2]) {
+                Ok(g) => g,
+                Err(_) => return RespValue::error("invalid group name"),
+            };
+
+            match db.xgroup_destroy(key, groupname) {
+                Ok(destroyed) => RespValue::Integer(if destroyed { 1 } else { 0 }),
+                Err(KvError::WrongType) => RespValue::wrong_type(),
+                Err(e) => RespValue::error(e.to_string()),
+            }
+        }
+        "SETID" => {
+            // XGROUP SETID key groupname id|$
+            if args.len() < 4 {
+                return RespValue::error("wrong number of arguments for 'xgroup setid' command");
+            }
+            let key = match std::str::from_utf8(&args[1]) {
+                Ok(k) => k,
+                Err(_) => return RespValue::error("invalid key"),
+            };
+            let groupname = match std::str::from_utf8(&args[2]) {
+                Ok(g) => g,
+                Err(_) => return RespValue::error("invalid group name"),
+            };
+            let id_str = match std::str::from_utf8(&args[3]) {
+                Ok(s) => s,
+                Err(_) => return RespValue::error("invalid ID"),
+            };
+
+            let id = if id_str == "$" {
+                match db.xinfo_stream(key) {
+                    Ok(Some(info)) => info.last_generated_id,
+                    Ok(None) => StreamId::new(0, 0),
+                    Err(_) => StreamId::new(0, 0),
+                }
+            } else {
+                match StreamId::parse(id_str) {
+                    Some(id) => id,
+                    None => return RespValue::error("invalid ID"),
+                }
+            };
+
+            match db.xgroup_setid(key, groupname, id) {
+                Ok(_) => RespValue::ok(),
+                Err(KvError::NoSuchKey) => RespValue::error("no such key"),
+                Err(KvError::NoGroup) => RespValue::error("NOGROUP No such consumer group"),
+                Err(KvError::WrongType) => RespValue::wrong_type(),
+                Err(e) => RespValue::error(e.to_string()),
+            }
+        }
+        "CREATECONSUMER" => {
+            // XGROUP CREATECONSUMER key groupname consumername
+            if args.len() < 4 {
+                return RespValue::error("wrong number of arguments for 'xgroup createconsumer' command");
+            }
+            let key = match std::str::from_utf8(&args[1]) {
+                Ok(k) => k,
+                Err(_) => return RespValue::error("invalid key"),
+            };
+            let groupname = match std::str::from_utf8(&args[2]) {
+                Ok(g) => g,
+                Err(_) => return RespValue::error("invalid group name"),
+            };
+            let consumername = match std::str::from_utf8(&args[3]) {
+                Ok(c) => c,
+                Err(_) => return RespValue::error("invalid consumer name"),
+            };
+
+            match db.xgroup_createconsumer(key, groupname, consumername) {
+                Ok(created) => RespValue::Integer(if created { 1 } else { 0 }),
+                Err(KvError::NoSuchKey) => RespValue::error("no such key"),
+                Err(KvError::NoGroup) => RespValue::error("NOGROUP No such consumer group"),
+                Err(KvError::WrongType) => RespValue::wrong_type(),
+                Err(e) => RespValue::error(e.to_string()),
+            }
+        }
+        "DELCONSUMER" => {
+            // XGROUP DELCONSUMER key groupname consumername
+            if args.len() < 4 {
+                return RespValue::error("wrong number of arguments for 'xgroup delconsumer' command");
+            }
+            let key = match std::str::from_utf8(&args[1]) {
+                Ok(k) => k,
+                Err(_) => return RespValue::error("invalid key"),
+            };
+            let groupname = match std::str::from_utf8(&args[2]) {
+                Ok(g) => g,
+                Err(_) => return RespValue::error("invalid group name"),
+            };
+            let consumername = match std::str::from_utf8(&args[3]) {
+                Ok(c) => c,
+                Err(_) => return RespValue::error("invalid consumer name"),
+            };
+
+            match db.xgroup_delconsumer(key, groupname, consumername) {
+                Ok(pending_count) => RespValue::Integer(pending_count),
+                Err(KvError::NoSuchKey) => RespValue::error("no such key"),
+                Err(KvError::NoGroup) => RespValue::error("NOGROUP No such consumer group"),
+                Err(KvError::WrongType) => RespValue::wrong_type(),
+                Err(e) => RespValue::error(e.to_string()),
+            }
+        }
+        _ => RespValue::error(format!("unknown xgroup subcommand '{}'", subcommand)),
+    }
+}
+
+fn cmd_xreadgroup(db: &Db, args: &[Vec<u8>]) -> RespValue {
+    // XREADGROUP GROUP group consumer [COUNT count] [NOACK] STREAMS key [key ...] id [id ...]
+    if args.len() < 6 {
+        return RespValue::error("wrong number of arguments for 'xreadgroup' command");
+    }
+
+    // First arg must be GROUP
+    let first = std::str::from_utf8(&args[0]).unwrap_or("").to_uppercase();
+    if first != "GROUP" {
+        return RespValue::error("syntax error: expected GROUP");
+    }
+
+    let group = match std::str::from_utf8(&args[1]) {
+        Ok(g) => g,
+        Err(_) => return RespValue::error("invalid group name"),
+    };
+
+    let consumer = match std::str::from_utf8(&args[2]) {
+        Ok(c) => c,
+        Err(_) => return RespValue::error("invalid consumer name"),
+    };
+
+    // Parse options
+    let mut i = 3;
+    let mut count: Option<i64> = None;
+    let mut noack = false;
+
+    while i < args.len() {
+        let arg = std::str::from_utf8(&args[i]).unwrap_or("").to_uppercase();
+        if arg == "COUNT" {
+            i += 1;
+            if i >= args.len() {
+                return RespValue::error("syntax error");
+            }
+            count = std::str::from_utf8(&args[i]).ok().and_then(|s| s.parse().ok());
+            if count.is_none() {
+                return RespValue::error("value is not an integer or out of range");
+            }
+            i += 1;
+        } else if arg == "NOACK" {
+            noack = true;
+            i += 1;
+        } else if arg == "STREAMS" {
+            i += 1;
+            break;
+        } else {
+            return RespValue::error("syntax error");
+        }
+    }
+
+    // Parse keys and IDs
+    let remaining = &args[i..];
+    if remaining.is_empty() || remaining.len() % 2 != 0 {
+        return RespValue::error("Unbalanced XREADGROUP list of streams: for each stream key an ID must be specified");
+    }
+
+    let mid = remaining.len() / 2;
+    let keys: Vec<&str> = match remaining[..mid].iter().map(|k| std::str::from_utf8(k)).collect::<std::result::Result<Vec<_>, _>>() {
+        Ok(k) => k,
+        Err(_) => return RespValue::error("invalid key"),
+    };
+
+    let ids: Vec<&str> = match remaining[mid..].iter().map(|id| std::str::from_utf8(id)).collect::<std::result::Result<Vec<_>, _>>() {
+        Ok(i) => i,
+        Err(_) => return RespValue::error("invalid ID"),
+    };
+
+    match db.xreadgroup(group, consumer, &keys, &ids, count, noack) {
+        Ok(results) => {
+            if results.is_empty() {
+                return RespValue::null();
+            }
+            let arr: Vec<RespValue> = results
+                .iter()
+                .map(|(key, entries)| {
+                    RespValue::Array(Some(vec![
+                        RespValue::BulkString(Some(key.as_bytes().to_vec())),
+                        format_stream_entries(entries),
+                    ]))
+                })
+                .collect();
+            RespValue::Array(Some(arr))
+        }
+        Err(KvError::NoGroup) => RespValue::error("NOGROUP No such consumer group"),
+        Err(KvError::WrongType) => RespValue::wrong_type(),
+        Err(KvError::SyntaxError) => RespValue::error("syntax error"),
+        Err(e) => RespValue::error(e.to_string()),
+    }
+}
+
+fn cmd_xack(db: &Db, args: &[Vec<u8>]) -> RespValue {
+    // XACK key group id [id ...]
+    if args.len() < 3 {
+        return RespValue::error("wrong number of arguments for 'xack' command");
+    }
+
+    let key = match std::str::from_utf8(&args[0]) {
+        Ok(k) => k,
+        Err(_) => return RespValue::error("invalid key"),
+    };
+
+    let group = match std::str::from_utf8(&args[1]) {
+        Ok(g) => g,
+        Err(_) => return RespValue::error("invalid group name"),
+    };
+
+    let ids: Vec<StreamId> = match args[2..].iter().map(|id| {
+        let s = std::str::from_utf8(id).ok()?;
+        StreamId::parse(s)
+    }).collect::<Option<Vec<_>>>() {
+        Some(ids) => ids,
+        None => return RespValue::error("invalid stream ID"),
+    };
+
+    match db.xack(key, group, &ids) {
+        Ok(count) => RespValue::Integer(count),
+        Err(KvError::WrongType) => RespValue::wrong_type(),
+        Err(e) => RespValue::error(e.to_string()),
+    }
+}
+
+fn cmd_xpending(db: &Db, args: &[Vec<u8>]) -> RespValue {
+    // XPENDING key group [[IDLE min-idle-time] start end count [consumer]]
+    if args.len() < 2 {
+        return RespValue::error("wrong number of arguments for 'xpending' command");
+    }
+
+    let key = match std::str::from_utf8(&args[0]) {
+        Ok(k) => k,
+        Err(_) => return RespValue::error("invalid key"),
+    };
+
+    let group = match std::str::from_utf8(&args[1]) {
+        Ok(g) => g,
+        Err(_) => return RespValue::error("invalid group name"),
+    };
+
+    if args.len() == 2 {
+        // Summary form
+        match db.xpending_summary(key, group) {
+            Ok(summary) => {
+                if summary.count == 0 {
+                    return RespValue::Array(Some(vec![
+                        RespValue::Integer(0),
+                        RespValue::null(),
+                        RespValue::null(),
+                        RespValue::null(),
+                    ]));
+                }
+                let consumers_arr: Vec<RespValue> = summary.consumers.iter().map(|(name, count)| {
+                    RespValue::Array(Some(vec![
+                        RespValue::BulkString(Some(name.as_bytes().to_vec())),
+                        RespValue::BulkString(Some(count.to_string().into_bytes())),
+                    ]))
+                }).collect();
+
+                RespValue::Array(Some(vec![
+                    RespValue::Integer(summary.count),
+                    summary.smallest_id.map_or(RespValue::null(), |id| RespValue::BulkString(Some(id.to_string().into_bytes()))),
+                    summary.largest_id.map_or(RespValue::null(), |id| RespValue::BulkString(Some(id.to_string().into_bytes()))),
+                    if consumers_arr.is_empty() { RespValue::null() } else { RespValue::Array(Some(consumers_arr)) },
+                ]))
+            }
+            Err(KvError::NoGroup) => RespValue::error("NOGROUP No such consumer group"),
+            Err(KvError::WrongType) => RespValue::wrong_type(),
+            Err(e) => RespValue::error(e.to_string()),
+        }
+    } else {
+        // Range form: XPENDING key group [IDLE min-idle-time] start end count [consumer]
+        let mut i = 2;
+        let mut idle_time: Option<i64> = None;
+
+        // Check for IDLE option
+        let next = std::str::from_utf8(&args[i]).unwrap_or("").to_uppercase();
+        if next == "IDLE" {
+            i += 1;
+            if i >= args.len() {
+                return RespValue::error("syntax error");
+            }
+            idle_time = std::str::from_utf8(&args[i]).ok().and_then(|s| s.parse().ok());
+            if idle_time.is_none() {
+                return RespValue::error("value is not an integer or out of range");
+            }
+            i += 1;
+        }
+
+        if args.len() < i + 3 {
+            return RespValue::error("wrong number of arguments for 'xpending' command");
+        }
+
+        let start_str = std::str::from_utf8(&args[i]).unwrap_or("-");
+        let end_str = std::str::from_utf8(&args[i + 1]).unwrap_or("+");
+        let count: i64 = match std::str::from_utf8(&args[i + 2]).ok().and_then(|s| s.parse().ok()) {
+            Some(c) => c,
+            None => return RespValue::error("value is not an integer or out of range"),
+        };
+
+        let start = StreamId::parse(start_str).unwrap_or(StreamId::min());
+        let end = StreamId::parse(end_str).unwrap_or(StreamId::max());
+
+        let consumer = if args.len() > i + 3 {
+            std::str::from_utf8(&args[i + 3]).ok()
+        } else {
+            None
+        };
+
+        match db.xpending_range(key, group, start, end, count, consumer, idle_time) {
+            Ok(entries) => {
+                let arr: Vec<RespValue> = entries.iter().map(|e| {
+                    RespValue::Array(Some(vec![
+                        RespValue::BulkString(Some(e.id.to_string().into_bytes())),
+                        RespValue::BulkString(Some(e.consumer.as_bytes().to_vec())),
+                        RespValue::Integer(e.idle),
+                        RespValue::Integer(e.delivery_count),
+                    ]))
+                }).collect();
+                RespValue::Array(Some(arr))
+            }
+            Err(KvError::NoGroup) => RespValue::error("NOGROUP No such consumer group"),
+            Err(KvError::WrongType) => RespValue::wrong_type(),
+            Err(e) => RespValue::error(e.to_string()),
+        }
+    }
+}
+
+fn cmd_xclaim(db: &Db, args: &[Vec<u8>]) -> RespValue {
+    // XCLAIM key group consumer min-idle-time id [id ...] [IDLE ms] [TIME ms] [RETRYCOUNT count] [FORCE] [JUSTID]
+    if args.len() < 5 {
+        return RespValue::error("wrong number of arguments for 'xclaim' command");
+    }
+
+    let key = match std::str::from_utf8(&args[0]) {
+        Ok(k) => k,
+        Err(_) => return RespValue::error("invalid key"),
+    };
+
+    let group = match std::str::from_utf8(&args[1]) {
+        Ok(g) => g,
+        Err(_) => return RespValue::error("invalid group name"),
+    };
+
+    let consumer = match std::str::from_utf8(&args[2]) {
+        Ok(c) => c,
+        Err(_) => return RespValue::error("invalid consumer name"),
+    };
+
+    let min_idle_time: i64 = match std::str::from_utf8(&args[3]).ok().and_then(|s| s.parse().ok()) {
+        Some(t) => t,
+        None => return RespValue::error("value is not an integer or out of range"),
+    };
+
+    // Parse IDs and options
+    let mut ids: Vec<StreamId> = Vec::new();
+    let mut idle_ms: Option<i64> = None;
+    let mut time_ms: Option<i64> = None;
+    let mut retry_count: Option<i64> = None;
+    let mut force = false;
+    let mut justid = false;
+
+    let mut i = 4;
+    while i < args.len() {
+        let arg = std::str::from_utf8(&args[i]).unwrap_or("");
+        let arg_upper = arg.to_uppercase();
+
+        if arg_upper == "IDLE" {
+            i += 1;
+            if i >= args.len() {
+                return RespValue::error("syntax error");
+            }
+            idle_ms = std::str::from_utf8(&args[i]).ok().and_then(|s| s.parse().ok());
+            if idle_ms.is_none() {
+                return RespValue::error("value is not an integer or out of range");
+            }
+        } else if arg_upper == "TIME" {
+            i += 1;
+            if i >= args.len() {
+                return RespValue::error("syntax error");
+            }
+            time_ms = std::str::from_utf8(&args[i]).ok().and_then(|s| s.parse().ok());
+            if time_ms.is_none() {
+                return RespValue::error("value is not an integer or out of range");
+            }
+        } else if arg_upper == "RETRYCOUNT" {
+            i += 1;
+            if i >= args.len() {
+                return RespValue::error("syntax error");
+            }
+            retry_count = std::str::from_utf8(&args[i]).ok().and_then(|s| s.parse().ok());
+            if retry_count.is_none() {
+                return RespValue::error("value is not an integer or out of range");
+            }
+        } else if arg_upper == "FORCE" {
+            force = true;
+        } else if arg_upper == "JUSTID" {
+            justid = true;
+        } else {
+            // Try to parse as ID
+            match StreamId::parse(arg) {
+                Some(id) => ids.push(id),
+                None => return RespValue::error("invalid stream ID"),
+            }
+        }
+        i += 1;
+    }
+
+    if ids.is_empty() {
+        return RespValue::error("wrong number of arguments for 'xclaim' command");
+    }
+
+    match db.xclaim(key, group, consumer, min_idle_time, &ids, idle_ms, time_ms, retry_count, force, justid) {
+        Ok(entries) => {
+            if justid {
+                // Return just the IDs
+                let arr: Vec<RespValue> = entries.iter().map(|e| {
+                    RespValue::BulkString(Some(e.id.to_string().into_bytes()))
+                }).collect();
+                RespValue::Array(Some(arr))
+            } else {
+                format_stream_entries(&entries)
+            }
+        }
+        Err(KvError::NoGroup) => RespValue::error("NOGROUP No such consumer group"),
+        Err(KvError::WrongType) => RespValue::wrong_type(),
+        Err(e) => RespValue::error(e.to_string()),
+    }
 }

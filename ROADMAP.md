@@ -152,21 +152,21 @@ Incremental implementation plan. Each session = one commit = one testable featur
 - [x] Unit tests (17 new tests) + integration tests (13 new tests)
 - [x] **Test:** 195 unit tests + 101 integration tests passing
 
-### Session 14: Streams (Consumer Groups)
-- [ ] Schema: `stream_groups` (key_id, name, last_id), `stream_pending` (key_id, group, entry_id, consumer, delivered_at, delivery_count)
-- [ ] XGROUP CREATE key groupname id|$ [MKSTREAM]
-- [ ] XGROUP DESTROY key groupname
-- [ ] XGROUP SETID key groupname id|$
-- [ ] XGROUP CREATECONSUMER key groupname consumername
-- [ ] XGROUP DELCONSUMER key groupname consumername
-- [ ] XREADGROUP GROUP group consumer [COUNT count] [NOACK] STREAMS key [key ...] id [id ...]
-- [ ] XACK key group id [id ...]
-- [ ] XPENDING key group [[IDLE min-idle-time] start end count [consumer]]
-- [ ] XCLAIM key group consumer min-idle-time id [id ...] [IDLE ms] [TIME ms] [RETRYCOUNT count] [FORCE] [JUSTID]
-- [ ] XINFO GROUPS key
-- [ ] XINFO CONSUMERS key groupname
-- [ ] Unit tests + integration tests
-- [ ] **Test:** redis-cli consumer group operations
+### Session 14: Streams (Consumer Groups) ✅
+- [x] Schema: `stream_groups`, `stream_consumers`, `stream_pending` (already in schema.sql)
+- [x] XGROUP CREATE key groupname id|$ [MKSTREAM]
+- [x] XGROUP DESTROY key groupname
+- [x] XGROUP SETID key groupname id|$
+- [x] XGROUP CREATECONSUMER key groupname consumername
+- [x] XGROUP DELCONSUMER key groupname consumername
+- [x] XREADGROUP GROUP group consumer [COUNT count] [NOACK] STREAMS key [key ...] id [id ...]
+- [x] XACK key group id [id ...]
+- [x] XPENDING key group [[IDLE min-idle-time] start end count [consumer]]
+- [x] XCLAIM key group consumer min-idle-time id [id ...] [IDLE ms] [TIME ms] [RETRYCOUNT count] [FORCE] [JUSTID]
+- [x] XINFO GROUPS key
+- [x] XINFO CONSUMERS key groupname
+- [x] Unit tests (15 new tests) + integration tests (20 new tests)
+- [x] **Test:** 210 unit tests + 121 integration tests passing
 
 ### Session 15: Blocking Reads (Server Mode Only)
 - [ ] Server: Add `notify: Arc<RwLock<HashMap<String, broadcast::Sender<()>>>>` for key notifications
