@@ -10,16 +10,10 @@ SQLite-backed Redis-compatible embedded key-value store written in Rust.
 - **Redis compatible** - Existing clients just work (for most operations)
 - **Easy backup** - just use using SQLite WAL-tailing tools like  [litestream](url) or [walsync](url)
 - **Extra features**
-  - created/updated - `KEYINFO mykey`
-  - save version history: `SET mykey 1 HISTORY`
-  - fetch version ranges:
-    - before: `GET mykey HISTORY 0 676767` [LIMIT n]
-    - including and after: `GET mykey 676767` [LIMIT n]
-  - configure retention: `CONFIG SET history-retention-days 30`
-  - remove old versions: `COMPACT HISTORY mykey`
-  - time travel queries: `GET mykey AS OF 6767676767`
-  - full-text search: `FTSEARCH "hello world" [LIMIT n]`
-  - hash search: `HFTSEARCH user:* "alice" [LIMIT n]`
+  - Key metadata: `KEYINFO mykey` (type, ttl, created_at, updated_at)
+  - Manual cleanup: `VACUUM` (delete expired + reclaim disk)
+  - Auto cleanup: `AUTOVACUUM ON` (default, cleans every 60s)
+  - **Planned**: Version history, time-travel queries, full-text search
 
 ## Install
 
@@ -66,6 +60,19 @@ db2.select(1)?;               // Switch db2 to database 1
 // db1 and db2 share data but have independent selected database
 db1.set("key", b"db0 value", None)?;  // Goes to db 0
 db2.set("key", b"db1 value", None)?;  // Goes to db 1
+
+// Key metadata
+if let Some(info) = db.keyinfo("key")? {
+    println!("Type: {:?}, TTL: {}s, Created: {}",
+             info.key_type, info.ttl, info.created_at);
+}
+
+// Manual cleanup (deletes expired + SQLite VACUUM)
+let deleted = db.vacuum()?;
+
+// Autovacuum config (default: ON @ 60s)
+db.set_autovacuum(true);
+db.set_autovacuum_interval(30_000);  // 30 seconds
 ```
 
 ### Server Mode
@@ -144,8 +151,10 @@ redis-cli -p 6767 GET foo
 - `FLUSHDB` (delete all keys in current database)
 - `INFO` (server stats, keyspace)
 
-### Planned
-- **Custom**: VACUUM, KEYINFO (type, ttl, created_at, updated_at)
+### Custom Commands (redlite extensions)
+- `VACUUM` - Delete all expired keys + SQLite VACUUM to reclaim disk space
+- `KEYINFO key` - Returns type, ttl, created_at, updated_at
+- `AUTOVACUUM [ON|OFF|INTERVAL <ms>]` - Automatic expiration cleanup (default: ON @ 60s)
 
 ## Testing
 
