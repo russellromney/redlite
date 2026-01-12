@@ -2,9 +2,14 @@
 name = "redlite"
 version = "0.1.0"
 edition = "2021"
-description = "SQLite-backed Redis-compatible KV store"
-license = "MIT"
+rust-version = "1.70"
+description = "SQLite-backed Redis-compatible embedded key-value store"
+license = "Apache-2.0"
 repository = "https://github.com/russellromney/redlite"
+documentation = "https://docs.rs/redlite"
+readme = "README.md"
+keywords = ["redis", "sqlite", "kv", "database", "embedded"]
+categories = ["database", "caching"]
 
 [lib]
 name = "redlite"

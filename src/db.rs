@@ -179,17 +179,15 @@ impl Db {
         let db = self.selected_db;
         let now = Self::now_ms();
 
-        let result: std::result::Result<(Vec<u8>, Option<i64>), _> = conn.query_row(
-            "SELECT s.value, k.expire_at
-             FROM keys k
-             JOIN strings s ON s.key_id = k.id
-             WHERE k.db = ?1 AND k.key = ?2",
+        // First check if the key exists and get its type
+        let key_info: std::result::Result<(i64, i32, Option<i64>), _> = conn.query_row(
+            "SELECT id, type, expire_at FROM keys WHERE db = ?1 AND key = ?2",
             params![db, key],
-            |row| Ok((row.get(0)?, row.get(1)?)),
+            |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
         );
 
-        match result {
-            Ok((value, expire_at)) => {
+        match key_info {
+            Ok((key_id, key_type, expire_at)) => {
                 // Check expiration
                 if let Some(exp) = expire_at {
                     if exp <= now {
@@ -199,7 +197,24 @@ impl Db {
                         return Ok(None);
                     }
                 }
-                Ok(Some(value))
+
+                // Check type - must be string
+                if key_type != KeyType::String as i32 {
+                    return Err(KvError::WrongType);
+                }
+
+                // Get the string value
+                let result: std::result::Result<Vec<u8>, _> = conn.query_row(
+                    "SELECT value FROM strings WHERE key_id = ?1",
+                    params![key_id],
+                    |row| row.get(0),
+                );
+
+                match result {
+                    Ok(value) => Ok(Some(value)),
+                    Err(rusqlite::Error::QueryReturnedNoRows) => Ok(None),
+                    Err(e) => Err(e.into()),
+                }
             }
             Err(rusqlite::Error::QueryReturnedNoRows) => Ok(None),
             Err(e) => Err(e.into()),
@@ -515,29 +530,50 @@ impl Db {
         let db = self.selected_db;
         let now = Self::now_ms();
 
-        // Get current value and TTL
-        let result: std::result::Result<(Vec<u8>, Option<i64>), _> = conn.query_row(
-            "SELECT s.value, k.expire_at
-             FROM keys k
-             JOIN strings s ON s.key_id = k.id
-             WHERE k.db = ?1 AND k.key = ?2",
+        // First check if the key exists and get its type
+        let key_info: std::result::Result<(i64, i32, Option<i64>), _> = conn.query_row(
+            "SELECT id, type, expire_at FROM keys WHERE db = ?1 AND key = ?2",
             params![db, key],
-            |row| Ok((row.get(0)?, row.get(1)?)),
+            |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
         );
 
-        let (current_val, preserve_ttl): (i64, Option<i64>) = match result {
-            Ok((value, expire_at)) => {
-                // Check expiration - if expired, treat as 0 and clear TTL
-                // Lazy expiration: upsert will overwrite the expired data
+        let (current_val, preserve_ttl): (i64, Option<i64>) = match key_info {
+            Ok((key_id, key_type, expire_at)) => {
+                // Check expiration
                 if let Some(exp) = expire_at {
                     if exp <= now {
+                        // Expired - treat as new key
                         (0, None)
                     } else {
+                        // Check type - must be string
+                        if key_type != KeyType::String as i32 {
+                            return Err(KvError::WrongType);
+                        }
+                        // Get the current value
+                        let value: Vec<u8> = conn
+                            .query_row(
+                                "SELECT value FROM strings WHERE key_id = ?1",
+                                params![key_id],
+                                |row| row.get(0),
+                            )
+                            .unwrap_or_default();
                         let s = std::str::from_utf8(&value).map_err(|_| KvError::NotInteger)?;
                         let val = s.parse().map_err(|_| KvError::NotInteger)?;
                         (val, Some(exp))
                     }
                 } else {
+                    // Check type - must be string
+                    if key_type != KeyType::String as i32 {
+                        return Err(KvError::WrongType);
+                    }
+                    // Get the current value
+                    let value: Vec<u8> = conn
+                        .query_row(
+                            "SELECT value FROM strings WHERE key_id = ?1",
+                            params![key_id],
+                            |row| row.get(0),
+                        )
+                        .unwrap_or_default();
                     let s = std::str::from_utf8(&value).map_err(|_| KvError::NotInteger)?;
                     let val = s.parse().map_err(|_| KvError::NotInteger)?;
                     (val, None)
@@ -584,18 +620,15 @@ impl Db {
         let db = self.selected_db;
         let now = Self::now_ms();
 
-        // Get current value, TTL, and key_id
-        let result: std::result::Result<(i64, Vec<u8>, Option<i64>), _> = conn.query_row(
-            "SELECT k.id, s.value, k.expire_at
-             FROM keys k
-             JOIN strings s ON s.key_id = k.id
-             WHERE k.db = ?1 AND k.key = ?2",
+        // First check if the key exists and get its type
+        let key_info: std::result::Result<(i64, i32, Option<i64>), _> = conn.query_row(
+            "SELECT id, type, expire_at FROM keys WHERE db = ?1 AND key = ?2",
             params![db, key],
             |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
         );
 
-        let (current_val, preserve_ttl): (f64, Option<i64>) = match result {
-            Ok((key_id, value, expire_at)) => {
+        let (current_val, preserve_ttl): (f64, Option<i64>) = match key_info {
+            Ok((key_id, key_type, expire_at)) => {
                 // Check expiration
                 if let Some(exp) = expire_at {
                     if exp <= now {
@@ -603,11 +636,35 @@ impl Db {
                         conn.execute("DELETE FROM keys WHERE id = ?1", params![key_id])?;
                         (0.0, None)
                     } else {
+                        // Check type - must be string
+                        if key_type != KeyType::String as i32 {
+                            return Err(KvError::WrongType);
+                        }
+                        // Get the current value
+                        let value: Vec<u8> = conn
+                            .query_row(
+                                "SELECT value FROM strings WHERE key_id = ?1",
+                                params![key_id],
+                                |row| row.get(0),
+                            )
+                            .unwrap_or_default();
                         let s = std::str::from_utf8(&value).map_err(|_| KvError::NotFloat)?;
                         let val = s.parse().map_err(|_| KvError::NotFloat)?;
                         (val, Some(exp))
                     }
                 } else {
+                    // Check type - must be string
+                    if key_type != KeyType::String as i32 {
+                        return Err(KvError::WrongType);
+                    }
+                    // Get the current value
+                    let value: Vec<u8> = conn
+                        .query_row(
+                            "SELECT value FROM strings WHERE key_id = ?1",
+                            params![key_id],
+                            |row| row.get(0),
+                        )
+                        .unwrap_or_default();
                     let s = std::str::from_utf8(&value).map_err(|_| KvError::NotFloat)?;
                     let val = s.parse().map_err(|_| KvError::NotFloat)?;
                     (val, None)
@@ -721,37 +778,48 @@ impl Db {
         let db = self.selected_db;
         let now = Self::now_ms();
 
-        // Get current value
-        let result: std::result::Result<(i64, Vec<u8>, Option<i64>), _> = conn.query_row(
-            "SELECT k.id, s.value, k.expire_at
-             FROM keys k
-             JOIN strings s ON s.key_id = k.id
-             WHERE k.db = ?1 AND k.key = ?2",
+        // First check if the key exists and get its type
+        let key_info: std::result::Result<(i64, i32, Option<i64>), _> = conn.query_row(
+            "SELECT id, type, expire_at FROM keys WHERE db = ?1 AND key = ?2",
             params![db, key],
             |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
         );
 
-        match result {
-            Ok((key_id, current_value, expire_at)) => {
+        match key_info {
+            Ok((key_id, key_type, expire_at)) => {
                 // Check expiration
-                let current = if let Some(exp) = expire_at {
+                if let Some(exp) = expire_at {
                     if exp <= now {
-                        Vec::new() // Expired, treat as empty
-                    } else {
-                        current_value
+                        // Expired - create new key
+                        drop(conn);
+                        self.set(key, value, None)?;
+                        return Ok(value.len() as i64);
                     }
-                } else {
-                    current_value
-                };
+                }
 
-                let mut new_value = current;
+                // Check type - must be string
+                if key_type != KeyType::String as i32 {
+                    return Err(KvError::WrongType);
+                }
+
+                // Get the current string value
+                let current_value: Vec<u8> = conn
+                    .query_row(
+                        "SELECT value FROM strings WHERE key_id = ?1",
+                        params![key_id],
+                        |row| row.get(0),
+                    )
+                    .unwrap_or_default();
+
+                let mut new_value = current_value;
                 new_value.extend_from_slice(value);
                 let new_len = new_value.len() as i64;
 
                 // Update value (preserve existing TTL - Redis behavior)
                 conn.execute(
-                    "UPDATE strings SET value = ?1 WHERE key_id = ?2",
-                    params![new_value, key_id],
+                    "INSERT INTO strings (key_id, value) VALUES (?1, ?2)
+                     ON CONFLICT(key_id) DO UPDATE SET value = excluded.value",
+                    params![key_id, new_value],
                 )?;
 
                 // Update timestamp but preserve expiration
@@ -3698,6 +3766,36 @@ mod tests {
         assert_eq!(db.get("msg").unwrap(), Some(b"Hello Redis".to_vec()));
 
         cleanup_db(&path);
+    }
+
+    #[test]
+    fn test_string_wrong_type() {
+        let db = Db::open_memory().unwrap();
+
+        // Create a hash key
+        db.hset("myhash", &[("field", b"value".as_slice())]).unwrap();
+
+        // String operations on hash should fail with WrongType
+        assert!(matches!(db.get("myhash"), Err(KvError::WrongType)));
+        assert!(matches!(db.incr("myhash"), Err(KvError::WrongType)));
+        assert!(matches!(db.incrby("myhash", 5), Err(KvError::WrongType)));
+        assert!(matches!(db.incrbyfloat("myhash", 1.5), Err(KvError::WrongType)));
+        assert!(matches!(db.append("myhash", b"test"), Err(KvError::WrongType)));
+
+        // Create a list key
+        db.lpush("mylist", &[b"a"]).unwrap();
+
+        // String operations on list should fail with WrongType
+        assert!(matches!(db.get("mylist"), Err(KvError::WrongType)));
+        assert!(matches!(db.incr("mylist"), Err(KvError::WrongType)));
+        assert!(matches!(db.append("mylist", b"test"), Err(KvError::WrongType)));
+
+        // Create a set key
+        db.sadd("myset", &[b"member"]).unwrap();
+
+        // String operations on set should fail with WrongType
+        assert!(matches!(db.get("myset"), Err(KvError::WrongType)));
+        assert!(matches!(db.incr("myset"), Err(KvError::WrongType)));
     }
 
     // --- Session 6: Hash operations tests ---

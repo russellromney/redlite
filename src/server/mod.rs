@@ -195,7 +195,7 @@ fn cmd_select(db: &mut Db, args: &[Vec<u8>]) -> RespValue {
 
     match db.select(db_index) {
         Ok(()) => RespValue::ok(),
-        Err(_) => RespValue::error("ERR DB index is out of range"),
+        Err(_) => RespValue::error("DB index is out of range"),
     }
 }
 
