@@ -177,13 +177,12 @@ Incremental implementation plan. Each session = one commit = one testable featur
 - [x] Embedded mode returns Closed for blocking operations (subscribe_key)
 - [x] **Test:** 7 unit tests, all 340 tests passing (217 lib + 121 integration + 2 doc)
 
-### Session 15.2: Blocking Reads — Broadcasting on Writes
-- [ ] Make LPUSH broadcast to channel after insert
-- [ ] Make RPUSH broadcast to channel after insert
-- [ ] Make XADD broadcast to channel after insert
-- [ ] Update XADD for stream consumer groups
-- [ ] Implement channel cleanup (remove unused channels)
-- [ ] **Test:** Writes notify waiting readers
+### Session 15.2: Blocking Reads — Broadcasting on Writes ✅
+- [x] Make LPUSH broadcast to channel after insert
+- [x] Make RPUSH broadcast to channel after insert
+- [x] Make XADD broadcast to channel after insert
+- [x] Implement async notification spawning for sync methods
+- [x] **Test:** 8 unit tests + 5 integration tests, all 352 tests passing (224 lib + 126 integration + 2 doc)
 
 ### Session 15.3: Blocking Reads — Blocking Commands
 - [ ] Make execute_command async

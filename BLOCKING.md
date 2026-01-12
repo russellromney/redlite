@@ -74,14 +74,14 @@ XREADGROUP GROUP mygroup consumer1 BLOCK 5000 STREAMS mystream >
 - [x] Attach notifier in `handle_connection()` for each server connection
 - [x] 7 unit tests covering all notification paths, 340 total tests passing
 
-### Session 15.2: Broadcasting on Writes (Next)
-- [ ] Make LPUSH broadcast notification after insert
-- [ ] Make RPUSH broadcast notification after insert
-- [ ] Make XADD broadcast notification after insert
-- [ ] Implement channel cleanup (remove unused channels)
-- [ ] Add integration tests with concurrent writes
+### Session 15.2: Broadcasting on Writes ✅
+- [x] Make LPUSH broadcast notification after insert
+- [x] Make RPUSH broadcast notification after insert
+- [x] Make XADD broadcast notification after insert
+- [x] Implement async notification spawning (tokio::spawn)
+- [x] Add unit and integration tests with concurrent writes
 
-### Session 15.3: Blocking Commands (After 15.2)
+### Session 15.3: Blocking Commands (Next)
 - [ ] Make execute_command async
 - [ ] Implement BLPOP, BRPOP with timeout handling
 - [ ] Implement XREAD BLOCK with timeout handling
@@ -117,13 +117,15 @@ loop {
 }
 ```
 
-### Current Status (Session 15.1)
-- ✅ Notification infrastructure ready
+### Current Status (Session 15.2)
+- ✅ Notification infrastructure ready (Session 15.1)
 - ✅ Server mode detection via `is_server_mode()`
 - ✅ Key subscription channels via `subscribe_key()`
 - ✅ Notification sending via `notify_key()` (channels created lazily)
 - ✅ Embedded mode safely returns closed channels
-- ⏳ Blocking commands implementation (coming in 15.2-15.3)
+- ✅ LPUSH, RPUSH, XADD broadcast notifications on write
+- ✅ Async notification spawning with `tokio::spawn()`
+- ⏳ Blocking commands implementation (BLPOP, BRPOP, XREAD BLOCK coming in 15.3)
 
 ## Edge Cases
 
