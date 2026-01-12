@@ -102,13 +102,34 @@ redis-cli -p 6767 GET foo
 - `HKEYS`, `HVALS`, `HLEN`
 - `HINCRBY`, `HINCRBYFLOAT`
 
+### Lists
+- `LPUSH`, `RPUSH`
+- `LPOP`, `RPOP` (with optional count)
+- `LLEN`, `LRANGE`
+- `LINDEX`, `LSET`
+- `LTRIM`
+
+### Sets
+- `SADD`, `SREM`
+- `SMEMBERS`, `SISMEMBER`
+- `SCARD`
+- `SPOP`, `SRANDMEMBER` (with optional count)
+- `SDIFF`, `SINTER`, `SUNION`
+
+### Sorted Sets
+- `ZADD`, `ZREM`
+- `ZSCORE`, `ZRANK`, `ZREVRANK`
+- `ZCARD`
+- `ZRANGE`, `ZREVRANGE` (with WITHSCORES)
+- `ZRANGEBYSCORE` (with LIMIT)
+- `ZCOUNT`
+- `ZINCRBY`
+- `ZREMRANGEBYRANK`, `ZREMRANGEBYSCORE`
+
 ### Server
 - `PING`, `ECHO`, `QUIT`, `COMMAND`
 
 ### Planned
-- **Lists**: LPUSH, RPUSH, LPOP, RPOP, LRANGE
-- **Sets**: SADD, SREM, SMEMBERS, SINTER, SUNION
-- **Sorted Sets**: ZADD, ZRANGE, ZSCORE, ZRANK
 - **Custom**: VACUUM, KEYINFO (type, ttl, created_at, updated_at)
 
 ## Testing

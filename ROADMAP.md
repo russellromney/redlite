@@ -63,33 +63,39 @@ Incremental implementation plan. Each session = one commit = one testable featur
 - [x] Integration tests (13 new tests)
 - [x] **Test:** 86 unit tests + 36 integration tests passing
 
-### Session 7: Lists
-- [ ] LPUSH, RPUSH
-- [ ] LPOP, RPOP
-- [ ] LLEN, LRANGE
-- [ ] LINDEX, LSET
-- [ ] LTRIM
-- [ ] Integer gap positioning
-- [ ] **Test:** redis-cli list operations
+### Session 7: Lists ✅
+- [x] LPUSH, RPUSH
+- [x] LPOP, RPOP (with optional count)
+- [x] LLEN, LRANGE
+- [x] LINDEX, LSET
+- [x] LTRIM
+- [x] Integer gap positioning (POS_GAP = 1,000,000)
+- [x] Unit tests (22 new tests)
+- [x] Integration tests (10 new tests)
+- [x] **Test:** 108 unit tests + 46 integration tests passing
 
-### Session 8: Sets
-- [ ] SADD, SREM
-- [ ] SMEMBERS, SISMEMBER
-- [ ] SCARD
-- [ ] SPOP, SRANDMEMBER
-- [ ] SDIFF, SINTER, SUNION
-- [ ] **Test:** redis-cli set operations
+### Session 8: Sets ✅
+- [x] SADD, SREM
+- [x] SMEMBERS, SISMEMBER
+- [x] SCARD
+- [x] SPOP (with optional count), SRANDMEMBER (with positive/negative count)
+- [x] SDIFF, SINTER, SUNION
+- [x] Unit tests (23 new tests)
+- [x] Integration tests (11 new tests)
+- [x] **Test:** 131 unit tests + 57 integration tests passing
 
-### Session 9: Sorted Sets
-- [ ] ZADD, ZREM
-- [ ] ZSCORE, ZRANK, ZREVRANK
-- [ ] ZCARD
-- [ ] ZRANGE, ZREVRANGE
-- [ ] ZRANGEBYSCORE
-- [ ] ZCOUNT
-- [ ] ZINCRBY
-- [ ] ZREMRANGEBYRANK, ZREMRANGEBYSCORE
-- [ ] **Test:** redis-cli sorted set operations
+### Session 9: Sorted Sets ✅
+- [x] ZADD, ZREM
+- [x] ZSCORE, ZRANK, ZREVRANK
+- [x] ZCARD
+- [x] ZRANGE, ZREVRANGE
+- [x] ZRANGEBYSCORE
+- [x] ZCOUNT
+- [x] ZINCRBY
+- [x] ZREMRANGEBYRANK, ZREMRANGEBYSCORE
+- [x] Unit tests (24 new tests)
+- [x] Integration tests (13 new tests)
+- [x] **Test:** 155 unit tests + 70 integration tests passing
 
 ### Session 10: Server Operations
 - [ ] PING, ECHO
@@ -234,7 +240,7 @@ redis-cli -p 6767 PUBLISH events "hello"
 
 Commands: SUBSCRIBE, UNSUBSCRIBE, PUBLISH, PSUBSCRIBE, PUNSUBSCRIBE
 
-**Note:** Embedded mode can use streams (XADD/XREAD) for durable messaging within a single process.
+_Embedded mode returns error for all Pub/Sub commands._
 
 ### History Tracking (Opt-in)
 

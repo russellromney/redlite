@@ -2,7 +2,7 @@
 
 ## V1 Commands
 
-### Strings (Core KV)
+### Strings (Core KV) ✅
 
 | Command | Description |
 |---------|-------------|
@@ -21,7 +21,7 @@
 | APPEND | Append to string |
 | STRLEN | Get string length |
 
-### Key Management
+### Key Management ✅
 
 | Command | Description |
 |---------|-------------|
@@ -40,7 +40,7 @@
 | DBSIZE | Key count |
 | FLUSHDB | Delete all keys in current db |
 
-### Hashes
+### Hashes ✅
 
 | Command | Description |
 |---------|-------------|
@@ -57,36 +57,36 @@
 | HINCRBYFLOAT | Increment field float |
 | HSETNX | Set field if not exists |
 
-### Lists
+### Lists ✅
 
 | Command | Description |
 |---------|-------------|
 | LPUSH | Prepend value(s) |
 | RPUSH | Append value(s) |
-| LPOP | Pop from front |
-| RPOP | Pop from back |
+| LPOP | Pop from front (optional count) |
+| RPOP | Pop from back (optional count) |
 | LLEN | List length |
 | LRANGE | Get range |
 | LINDEX | Get by index |
 | LSET | Set by index |
 | LTRIM | Trim list to range |
 
-### Sets
+### Sets ✅
 
 | Command | Description |
 |---------|-------------|
-| SADD | Add member(s) |
-| SREM | Remove member(s) |
+| SADD | Add member(s), returns count added |
+| SREM | Remove member(s), returns count removed |
 | SMEMBERS | Get all members |
-| SISMEMBER | Check membership |
+| SISMEMBER | Check membership (0/1) |
 | SCARD | Count members |
-| SPOP | Pop random member |
-| SRANDMEMBER | Get random member(s) |
+| SPOP | Pop random member(s) (optional count) |
+| SRANDMEMBER | Get random member(s) (optional count, negative allows repeats) |
 | SDIFF | Difference of sets |
 | SINTER | Intersection of sets |
 | SUNION | Union of sets |
 
-### Sorted Sets
+### Sorted Sets ✅
 
 | Command | Description |
 |---------|-------------|

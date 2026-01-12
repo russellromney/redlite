@@ -5,6 +5,7 @@ use tokio::net::{TcpListener, TcpStream};
 use crate::db::Db;
 use crate::error::KvError;
 use crate::resp::{RespReader, RespValue};
+use crate::types::ZMember;
 
 pub struct Server {
     db: Arc<Db>,
@@ -118,6 +119,31 @@ fn execute_command(db: &Db, args: &[Vec<u8>]) -> RespValue {
         "LINDEX" => cmd_lindex(db, cmd_args),
         "LSET" => cmd_lset(db, cmd_args),
         "LTRIM" => cmd_ltrim(db, cmd_args),
+        // Set operations
+        "SADD" => cmd_sadd(db, cmd_args),
+        "SREM" => cmd_srem(db, cmd_args),
+        "SMEMBERS" => cmd_smembers(db, cmd_args),
+        "SISMEMBER" => cmd_sismember(db, cmd_args),
+        "SCARD" => cmd_scard(db, cmd_args),
+        "SPOP" => cmd_spop(db, cmd_args),
+        "SRANDMEMBER" => cmd_srandmember(db, cmd_args),
+        "SDIFF" => cmd_sdiff(db, cmd_args),
+        "SINTER" => cmd_sinter(db, cmd_args),
+        "SUNION" => cmd_sunion(db, cmd_args),
+        // Sorted set operations
+        "ZADD" => cmd_zadd(db, cmd_args),
+        "ZREM" => cmd_zrem(db, cmd_args),
+        "ZSCORE" => cmd_zscore(db, cmd_args),
+        "ZRANK" => cmd_zrank(db, cmd_args),
+        "ZREVRANK" => cmd_zrevrank(db, cmd_args),
+        "ZCARD" => cmd_zcard(db, cmd_args),
+        "ZRANGE" => cmd_zrange(db, cmd_args),
+        "ZREVRANGE" => cmd_zrevrange(db, cmd_args),
+        "ZRANGEBYSCORE" => cmd_zrangebyscore(db, cmd_args),
+        "ZCOUNT" => cmd_zcount(db, cmd_args),
+        "ZINCRBY" => cmd_zincrby(db, cmd_args),
+        "ZREMRANGEBYRANK" => cmd_zremrangebyrank(db, cmd_args),
+        "ZREMRANGEBYSCORE" => cmd_zremrangebyscore(db, cmd_args),
         _ => RespValue::error(format!("unknown command '{}'", cmd)),
     }
 }
@@ -1248,6 +1274,712 @@ fn cmd_ltrim(db: &Db, args: &[Vec<u8>]) -> RespValue {
 
     match db.ltrim(key, start, stop) {
         Ok(()) => RespValue::ok(),
+        Err(KvError::WrongType) => RespValue::wrong_type(),
+        Err(e) => RespValue::error(e.to_string()),
+    }
+}
+
+// --- Set operations ---
+
+fn cmd_sadd(db: &Db, args: &[Vec<u8>]) -> RespValue {
+    if args.len() < 2 {
+        return RespValue::error("wrong number of arguments for 'sadd' command");
+    }
+
+    let key = match std::str::from_utf8(&args[0]) {
+        Ok(k) => k,
+        Err(_) => return RespValue::error("invalid key"),
+    };
+
+    let members: Vec<&[u8]> = args[1..].iter().map(|v| v.as_slice()).collect();
+
+    match db.sadd(key, &members) {
+        Ok(count) => RespValue::Integer(count),
+        Err(KvError::WrongType) => RespValue::wrong_type(),
+        Err(e) => RespValue::error(e.to_string()),
+    }
+}
+
+fn cmd_srem(db: &Db, args: &[Vec<u8>]) -> RespValue {
+    if args.len() < 2 {
+        return RespValue::error("wrong number of arguments for 'srem' command");
+    }
+
+    let key = match std::str::from_utf8(&args[0]) {
+        Ok(k) => k,
+        Err(_) => return RespValue::error("invalid key"),
+    };
+
+    let members: Vec<&[u8]> = args[1..].iter().map(|v| v.as_slice()).collect();
+
+    match db.srem(key, &members) {
+        Ok(count) => RespValue::Integer(count),
+        Err(KvError::WrongType) => RespValue::wrong_type(),
+        Err(e) => RespValue::error(e.to_string()),
+    }
+}
+
+fn cmd_smembers(db: &Db, args: &[Vec<u8>]) -> RespValue {
+    if args.len() != 1 {
+        return RespValue::error("wrong number of arguments for 'smembers' command");
+    }
+
+    let key = match std::str::from_utf8(&args[0]) {
+        Ok(k) => k,
+        Err(_) => return RespValue::error("invalid key"),
+    };
+
+    match db.smembers(key) {
+        Ok(members) => RespValue::Array(Some(
+            members
+                .into_iter()
+                .map(|m| RespValue::BulkString(Some(m)))
+                .collect(),
+        )),
+        Err(KvError::WrongType) => RespValue::wrong_type(),
+        Err(e) => RespValue::error(e.to_string()),
+    }
+}
+
+fn cmd_sismember(db: &Db, args: &[Vec<u8>]) -> RespValue {
+    if args.len() != 2 {
+        return RespValue::error("wrong number of arguments for 'sismember' command");
+    }
+
+    let key = match std::str::from_utf8(&args[0]) {
+        Ok(k) => k,
+        Err(_) => return RespValue::error("invalid key"),
+    };
+
+    match db.sismember(key, &args[1]) {
+        Ok(true) => RespValue::Integer(1),
+        Ok(false) => RespValue::Integer(0),
+        Err(KvError::WrongType) => RespValue::wrong_type(),
+        Err(e) => RespValue::error(e.to_string()),
+    }
+}
+
+fn cmd_scard(db: &Db, args: &[Vec<u8>]) -> RespValue {
+    if args.len() != 1 {
+        return RespValue::error("wrong number of arguments for 'scard' command");
+    }
+
+    let key = match std::str::from_utf8(&args[0]) {
+        Ok(k) => k,
+        Err(_) => return RespValue::error("invalid key"),
+    };
+
+    match db.scard(key) {
+        Ok(count) => RespValue::Integer(count),
+        Err(KvError::WrongType) => RespValue::wrong_type(),
+        Err(e) => RespValue::error(e.to_string()),
+    }
+}
+
+fn cmd_spop(db: &Db, args: &[Vec<u8>]) -> RespValue {
+    if args.is_empty() || args.len() > 2 {
+        return RespValue::error("wrong number of arguments for 'spop' command");
+    }
+
+    let key = match std::str::from_utf8(&args[0]) {
+        Ok(k) => k,
+        Err(_) => return RespValue::error("invalid key"),
+    };
+
+    let count: Option<usize> = if args.len() == 2 {
+        match std::str::from_utf8(&args[1])
+            .ok()
+            .and_then(|s| s.parse().ok())
+        {
+            Some(c) => Some(c),
+            None => return RespValue::error("value is not an integer or out of range"),
+        }
+    } else {
+        None
+    };
+
+    match db.spop(key, count) {
+        Ok(values) => {
+            if args.len() == 1 {
+                // Single pop - return single value or nil
+                if values.is_empty() {
+                    RespValue::null()
+                } else {
+                    RespValue::BulkString(Some(values.into_iter().next().unwrap()))
+                }
+            } else {
+                // Count specified - return array
+                RespValue::Array(Some(
+                    values
+                        .into_iter()
+                        .map(|v| RespValue::BulkString(Some(v)))
+                        .collect(),
+                ))
+            }
+        }
+        Err(KvError::WrongType) => RespValue::wrong_type(),
+        Err(e) => RespValue::error(e.to_string()),
+    }
+}
+
+fn cmd_srandmember(db: &Db, args: &[Vec<u8>]) -> RespValue {
+    if args.is_empty() || args.len() > 2 {
+        return RespValue::error("wrong number of arguments for 'srandmember' command");
+    }
+
+    let key = match std::str::from_utf8(&args[0]) {
+        Ok(k) => k,
+        Err(_) => return RespValue::error("invalid key"),
+    };
+
+    let count: Option<i64> = if args.len() == 2 {
+        match std::str::from_utf8(&args[1])
+            .ok()
+            .and_then(|s| s.parse().ok())
+        {
+            Some(c) => Some(c),
+            None => return RespValue::error("value is not an integer or out of range"),
+        }
+    } else {
+        None
+    };
+
+    match db.srandmember(key, count) {
+        Ok(values) => {
+            if args.len() == 1 {
+                // No count - return single value or nil
+                if values.is_empty() {
+                    RespValue::null()
+                } else {
+                    RespValue::BulkString(Some(values.into_iter().next().unwrap()))
+                }
+            } else {
+                // Count specified - return array
+                RespValue::Array(Some(
+                    values
+                        .into_iter()
+                        .map(|v| RespValue::BulkString(Some(v)))
+                        .collect(),
+                ))
+            }
+        }
+        Err(KvError::WrongType) => RespValue::wrong_type(),
+        Err(e) => RespValue::error(e.to_string()),
+    }
+}
+
+fn cmd_sdiff(db: &Db, args: &[Vec<u8>]) -> RespValue {
+    if args.is_empty() {
+        return RespValue::error("wrong number of arguments for 'sdiff' command");
+    }
+
+    let keys: Vec<&str> = match args
+        .iter()
+        .map(|k| std::str::from_utf8(k))
+        .collect::<std::result::Result<Vec<_>, _>>()
+    {
+        Ok(k) => k,
+        Err(_) => return RespValue::error("invalid key"),
+    };
+
+    match db.sdiff(&keys) {
+        Ok(members) => RespValue::Array(Some(
+            members
+                .into_iter()
+                .map(|m| RespValue::BulkString(Some(m)))
+                .collect(),
+        )),
+        Err(KvError::WrongType) => RespValue::wrong_type(),
+        Err(e) => RespValue::error(e.to_string()),
+    }
+}
+
+fn cmd_sinter(db: &Db, args: &[Vec<u8>]) -> RespValue {
+    if args.is_empty() {
+        return RespValue::error("wrong number of arguments for 'sinter' command");
+    }
+
+    let keys: Vec<&str> = match args
+        .iter()
+        .map(|k| std::str::from_utf8(k))
+        .collect::<std::result::Result<Vec<_>, _>>()
+    {
+        Ok(k) => k,
+        Err(_) => return RespValue::error("invalid key"),
+    };
+
+    match db.sinter(&keys) {
+        Ok(members) => RespValue::Array(Some(
+            members
+                .into_iter()
+                .map(|m| RespValue::BulkString(Some(m)))
+                .collect(),
+        )),
+        Err(KvError::WrongType) => RespValue::wrong_type(),
+        Err(e) => RespValue::error(e.to_string()),
+    }
+}
+
+fn cmd_sunion(db: &Db, args: &[Vec<u8>]) -> RespValue {
+    if args.is_empty() {
+        return RespValue::error("wrong number of arguments for 'sunion' command");
+    }
+
+    let keys: Vec<&str> = match args
+        .iter()
+        .map(|k| std::str::from_utf8(k))
+        .collect::<std::result::Result<Vec<_>, _>>()
+    {
+        Ok(k) => k,
+        Err(_) => return RespValue::error("invalid key"),
+    };
+
+    match db.sunion(&keys) {
+        Ok(members) => RespValue::Array(Some(
+            members
+                .into_iter()
+                .map(|m| RespValue::BulkString(Some(m)))
+                .collect(),
+        )),
+        Err(KvError::WrongType) => RespValue::wrong_type(),
+        Err(e) => RespValue::error(e.to_string()),
+    }
+}
+
+// --- Session 9: Sorted Set command handlers ---
+
+fn cmd_zadd(db: &Db, args: &[Vec<u8>]) -> RespValue {
+    if args.len() < 3 || (args.len() - 1) % 2 != 0 {
+        return RespValue::error("wrong number of arguments for 'zadd' command");
+    }
+
+    let key = match std::str::from_utf8(&args[0]) {
+        Ok(k) => k,
+        Err(_) => return RespValue::error("invalid key"),
+    };
+
+    // Parse score-member pairs
+    let mut members = Vec::new();
+    let mut i = 1;
+    while i < args.len() {
+        let score_str = match std::str::from_utf8(&args[i]) {
+            Ok(s) => s,
+            Err(_) => return RespValue::error("invalid score"),
+        };
+        let score: f64 = match score_str.parse() {
+            Ok(s) => s,
+            Err(_) => return RespValue::error("value is not a valid float"),
+        };
+        let member = args[i + 1].clone();
+        members.push(ZMember::new(score, member));
+        i += 2;
+    }
+
+    match db.zadd(key, &members) {
+        Ok(count) => RespValue::Integer(count),
+        Err(KvError::WrongType) => RespValue::wrong_type(),
+        Err(e) => RespValue::error(e.to_string()),
+    }
+}
+
+fn cmd_zrem(db: &Db, args: &[Vec<u8>]) -> RespValue {
+    if args.len() < 2 {
+        return RespValue::error("wrong number of arguments for 'zrem' command");
+    }
+
+    let key = match std::str::from_utf8(&args[0]) {
+        Ok(k) => k,
+        Err(_) => return RespValue::error("invalid key"),
+    };
+
+    let members: Vec<&[u8]> = args[1..].iter().map(|v| v.as_slice()).collect();
+
+    match db.zrem(key, &members) {
+        Ok(count) => RespValue::Integer(count),
+        Err(KvError::WrongType) => RespValue::wrong_type(),
+        Err(e) => RespValue::error(e.to_string()),
+    }
+}
+
+fn cmd_zscore(db: &Db, args: &[Vec<u8>]) -> RespValue {
+    if args.len() != 2 {
+        return RespValue::error("wrong number of arguments for 'zscore' command");
+    }
+
+    let key = match std::str::from_utf8(&args[0]) {
+        Ok(k) => k,
+        Err(_) => return RespValue::error("invalid key"),
+    };
+
+    match db.zscore(key, &args[1]) {
+        Ok(Some(score)) => RespValue::BulkString(Some(score.to_string().into_bytes())),
+        Ok(None) => RespValue::BulkString(None),
+        Err(KvError::WrongType) => RespValue::wrong_type(),
+        Err(e) => RespValue::error(e.to_string()),
+    }
+}
+
+fn cmd_zrank(db: &Db, args: &[Vec<u8>]) -> RespValue {
+    if args.len() != 2 {
+        return RespValue::error("wrong number of arguments for 'zrank' command");
+    }
+
+    let key = match std::str::from_utf8(&args[0]) {
+        Ok(k) => k,
+        Err(_) => return RespValue::error("invalid key"),
+    };
+
+    match db.zrank(key, &args[1]) {
+        Ok(Some(rank)) => RespValue::Integer(rank),
+        Ok(None) => RespValue::BulkString(None),
+        Err(KvError::WrongType) => RespValue::wrong_type(),
+        Err(e) => RespValue::error(e.to_string()),
+    }
+}
+
+fn cmd_zrevrank(db: &Db, args: &[Vec<u8>]) -> RespValue {
+    if args.len() != 2 {
+        return RespValue::error("wrong number of arguments for 'zrevrank' command");
+    }
+
+    let key = match std::str::from_utf8(&args[0]) {
+        Ok(k) => k,
+        Err(_) => return RespValue::error("invalid key"),
+    };
+
+    match db.zrevrank(key, &args[1]) {
+        Ok(Some(rank)) => RespValue::Integer(rank),
+        Ok(None) => RespValue::BulkString(None),
+        Err(KvError::WrongType) => RespValue::wrong_type(),
+        Err(e) => RespValue::error(e.to_string()),
+    }
+}
+
+fn cmd_zcard(db: &Db, args: &[Vec<u8>]) -> RespValue {
+    if args.len() != 1 {
+        return RespValue::error("wrong number of arguments for 'zcard' command");
+    }
+
+    let key = match std::str::from_utf8(&args[0]) {
+        Ok(k) => k,
+        Err(_) => return RespValue::error("invalid key"),
+    };
+
+    match db.zcard(key) {
+        Ok(count) => RespValue::Integer(count),
+        Err(KvError::WrongType) => RespValue::wrong_type(),
+        Err(e) => RespValue::error(e.to_string()),
+    }
+}
+
+fn cmd_zrange(db: &Db, args: &[Vec<u8>]) -> RespValue {
+    if args.len() < 3 || args.len() > 4 {
+        return RespValue::error("wrong number of arguments for 'zrange' command");
+    }
+
+    let key = match std::str::from_utf8(&args[0]) {
+        Ok(k) => k,
+        Err(_) => return RespValue::error("invalid key"),
+    };
+
+    let start: i64 = match std::str::from_utf8(&args[1]).ok().and_then(|s| s.parse().ok()) {
+        Some(v) => v,
+        None => return RespValue::error("value is not an integer or out of range"),
+    };
+
+    let stop: i64 = match std::str::from_utf8(&args[2]).ok().and_then(|s| s.parse().ok()) {
+        Some(v) => v,
+        None => return RespValue::error("value is not an integer or out of range"),
+    };
+
+    let with_scores = args.len() == 4
+        && std::str::from_utf8(&args[3])
+            .map(|s| s.eq_ignore_ascii_case("WITHSCORES"))
+            .unwrap_or(false);
+
+    match db.zrange(key, start, stop, with_scores) {
+        Ok(members) => {
+            if with_scores {
+                let mut result = Vec::new();
+                for m in members {
+                    result.push(RespValue::BulkString(Some(m.member)));
+                    result.push(RespValue::BulkString(Some(m.score.to_string().into_bytes())));
+                }
+                RespValue::Array(Some(result))
+            } else {
+                RespValue::Array(Some(
+                    members
+                        .into_iter()
+                        .map(|m| RespValue::BulkString(Some(m.member)))
+                        .collect(),
+                ))
+            }
+        }
+        Err(KvError::WrongType) => RespValue::wrong_type(),
+        Err(e) => RespValue::error(e.to_string()),
+    }
+}
+
+fn cmd_zrevrange(db: &Db, args: &[Vec<u8>]) -> RespValue {
+    if args.len() < 3 || args.len() > 4 {
+        return RespValue::error("wrong number of arguments for 'zrevrange' command");
+    }
+
+    let key = match std::str::from_utf8(&args[0]) {
+        Ok(k) => k,
+        Err(_) => return RespValue::error("invalid key"),
+    };
+
+    let start: i64 = match std::str::from_utf8(&args[1]).ok().and_then(|s| s.parse().ok()) {
+        Some(v) => v,
+        None => return RespValue::error("value is not an integer or out of range"),
+    };
+
+    let stop: i64 = match std::str::from_utf8(&args[2]).ok().and_then(|s| s.parse().ok()) {
+        Some(v) => v,
+        None => return RespValue::error("value is not an integer or out of range"),
+    };
+
+    let with_scores = args.len() == 4
+        && std::str::from_utf8(&args[3])
+            .map(|s| s.eq_ignore_ascii_case("WITHSCORES"))
+            .unwrap_or(false);
+
+    match db.zrevrange(key, start, stop, with_scores) {
+        Ok(members) => {
+            if with_scores {
+                let mut result = Vec::new();
+                for m in members {
+                    result.push(RespValue::BulkString(Some(m.member)));
+                    result.push(RespValue::BulkString(Some(m.score.to_string().into_bytes())));
+                }
+                RespValue::Array(Some(result))
+            } else {
+                RespValue::Array(Some(
+                    members
+                        .into_iter()
+                        .map(|m| RespValue::BulkString(Some(m.member)))
+                        .collect(),
+                ))
+            }
+        }
+        Err(KvError::WrongType) => RespValue::wrong_type(),
+        Err(e) => RespValue::error(e.to_string()),
+    }
+}
+
+fn cmd_zrangebyscore(db: &Db, args: &[Vec<u8>]) -> RespValue {
+    if args.len() < 3 {
+        return RespValue::error("wrong number of arguments for 'zrangebyscore' command");
+    }
+
+    let key = match std::str::from_utf8(&args[0]) {
+        Ok(k) => k,
+        Err(_) => return RespValue::error("invalid key"),
+    };
+
+    // Parse min score (supports -inf)
+    let min_str = match std::str::from_utf8(&args[1]) {
+        Ok(s) => s,
+        Err(_) => return RespValue::error("invalid min score"),
+    };
+    let min: f64 = if min_str.eq_ignore_ascii_case("-inf") {
+        f64::NEG_INFINITY
+    } else {
+        match min_str.parse() {
+            Ok(v) => v,
+            Err(_) => return RespValue::error("min is not a float"),
+        }
+    };
+
+    // Parse max score (supports +inf)
+    let max_str = match std::str::from_utf8(&args[2]) {
+        Ok(s) => s,
+        Err(_) => return RespValue::error("invalid max score"),
+    };
+    let max: f64 = if max_str.eq_ignore_ascii_case("+inf") || max_str.eq_ignore_ascii_case("inf") {
+        f64::INFINITY
+    } else {
+        match max_str.parse() {
+            Ok(v) => v,
+            Err(_) => return RespValue::error("max is not a float"),
+        }
+    };
+
+    // Parse optional LIMIT offset count
+    let mut offset: Option<i64> = None;
+    let mut count: Option<i64> = None;
+
+    let mut i = 3;
+    while i < args.len() {
+        let opt = match std::str::from_utf8(&args[i]) {
+            Ok(s) => s,
+            Err(_) => return RespValue::error("invalid option"),
+        };
+        if opt.eq_ignore_ascii_case("LIMIT") {
+            if i + 2 >= args.len() {
+                return RespValue::error("syntax error");
+            }
+            offset = match std::str::from_utf8(&args[i + 1]).ok().and_then(|s| s.parse().ok()) {
+                Some(v) => Some(v),
+                None => return RespValue::error("value is not an integer or out of range"),
+            };
+            count = match std::str::from_utf8(&args[i + 2]).ok().and_then(|s| s.parse().ok()) {
+                Some(v) => Some(v),
+                None => return RespValue::error("value is not an integer or out of range"),
+            };
+            i += 3;
+        } else {
+            i += 1;
+        }
+    }
+
+    match db.zrangebyscore(key, min, max, offset, count) {
+        Ok(members) => RespValue::Array(Some(
+            members
+                .into_iter()
+                .map(|m| RespValue::BulkString(Some(m.member)))
+                .collect(),
+        )),
+        Err(KvError::WrongType) => RespValue::wrong_type(),
+        Err(e) => RespValue::error(e.to_string()),
+    }
+}
+
+fn cmd_zcount(db: &Db, args: &[Vec<u8>]) -> RespValue {
+    if args.len() != 3 {
+        return RespValue::error("wrong number of arguments for 'zcount' command");
+    }
+
+    let key = match std::str::from_utf8(&args[0]) {
+        Ok(k) => k,
+        Err(_) => return RespValue::error("invalid key"),
+    };
+
+    // Parse min score (supports -inf)
+    let min_str = match std::str::from_utf8(&args[1]) {
+        Ok(s) => s,
+        Err(_) => return RespValue::error("invalid min score"),
+    };
+    let min: f64 = if min_str.eq_ignore_ascii_case("-inf") {
+        f64::NEG_INFINITY
+    } else {
+        match min_str.parse() {
+            Ok(v) => v,
+            Err(_) => return RespValue::error("min is not a float"),
+        }
+    };
+
+    // Parse max score (supports +inf)
+    let max_str = match std::str::from_utf8(&args[2]) {
+        Ok(s) => s,
+        Err(_) => return RespValue::error("invalid max score"),
+    };
+    let max: f64 = if max_str.eq_ignore_ascii_case("+inf") || max_str.eq_ignore_ascii_case("inf") {
+        f64::INFINITY
+    } else {
+        match max_str.parse() {
+            Ok(v) => v,
+            Err(_) => return RespValue::error("max is not a float"),
+        }
+    };
+
+    match db.zcount(key, min, max) {
+        Ok(count) => RespValue::Integer(count),
+        Err(KvError::WrongType) => RespValue::wrong_type(),
+        Err(e) => RespValue::error(e.to_string()),
+    }
+}
+
+fn cmd_zincrby(db: &Db, args: &[Vec<u8>]) -> RespValue {
+    if args.len() != 3 {
+        return RespValue::error("wrong number of arguments for 'zincrby' command");
+    }
+
+    let key = match std::str::from_utf8(&args[0]) {
+        Ok(k) => k,
+        Err(_) => return RespValue::error("invalid key"),
+    };
+
+    let increment: f64 = match std::str::from_utf8(&args[1]).ok().and_then(|s| s.parse().ok()) {
+        Some(v) => v,
+        None => return RespValue::error("value is not a valid float"),
+    };
+
+    match db.zincrby(key, increment, &args[2]) {
+        Ok(new_score) => RespValue::BulkString(Some(new_score.to_string().into_bytes())),
+        Err(KvError::WrongType) => RespValue::wrong_type(),
+        Err(e) => RespValue::error(e.to_string()),
+    }
+}
+
+fn cmd_zremrangebyrank(db: &Db, args: &[Vec<u8>]) -> RespValue {
+    if args.len() != 3 {
+        return RespValue::error("wrong number of arguments for 'zremrangebyrank' command");
+    }
+
+    let key = match std::str::from_utf8(&args[0]) {
+        Ok(k) => k,
+        Err(_) => return RespValue::error("invalid key"),
+    };
+
+    let start: i64 = match std::str::from_utf8(&args[1]).ok().and_then(|s| s.parse().ok()) {
+        Some(v) => v,
+        None => return RespValue::error("value is not an integer or out of range"),
+    };
+
+    let stop: i64 = match std::str::from_utf8(&args[2]).ok().and_then(|s| s.parse().ok()) {
+        Some(v) => v,
+        None => return RespValue::error("value is not an integer or out of range"),
+    };
+
+    match db.zremrangebyrank(key, start, stop) {
+        Ok(count) => RespValue::Integer(count),
+        Err(KvError::WrongType) => RespValue::wrong_type(),
+        Err(e) => RespValue::error(e.to_string()),
+    }
+}
+
+fn cmd_zremrangebyscore(db: &Db, args: &[Vec<u8>]) -> RespValue {
+    if args.len() != 3 {
+        return RespValue::error("wrong number of arguments for 'zremrangebyscore' command");
+    }
+
+    let key = match std::str::from_utf8(&args[0]) {
+        Ok(k) => k,
+        Err(_) => return RespValue::error("invalid key"),
+    };
+
+    // Parse min score (supports -inf)
+    let min_str = match std::str::from_utf8(&args[1]) {
+        Ok(s) => s,
+        Err(_) => return RespValue::error("invalid min score"),
+    };
+    let min: f64 = if min_str.eq_ignore_ascii_case("-inf") {
+        f64::NEG_INFINITY
+    } else {
+        match min_str.parse() {
+            Ok(v) => v,
+            Err(_) => return RespValue::error("min is not a float"),
+        }
+    };
+
+    // Parse max score (supports +inf)
+    let max_str = match std::str::from_utf8(&args[2]) {
+        Ok(s) => s,
+        Err(_) => return RespValue::error("invalid max score"),
+    };
+    let max: f64 = if max_str.eq_ignore_ascii_case("+inf") || max_str.eq_ignore_ascii_case("inf") {
+        f64::INFINITY
+    } else {
+        match max_str.parse() {
+            Ok(v) => v,
+            Err(_) => return RespValue::error("max is not a float"),
+        }
+    };
+
+    match db.zremrangebyscore(key, min, max) {
+        Ok(count) => RespValue::Integer(count),
         Err(KvError::WrongType) => RespValue::wrong_type(),
         Err(e) => RespValue::error(e.to_string()),
     }

@@ -3,7 +3,7 @@ use std::sync::Mutex;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use crate::error::{KvError, Result};
-use crate::types::{KeyType, SetOptions};
+use crate::types::{KeyType, SetOptions, ZMember};
 
 pub struct Db {
     conn: Mutex<Connection>,
@@ -1710,6 +1710,1004 @@ impl Db {
 
         Ok(())
     }
+
+    // --- Session 8: Set operations ---
+
+    /// Helper to create a new set key
+    fn create_set_key(&self, conn: &Connection, key: &str) -> Result<i64> {
+        let db = self.current_db();
+        let now = Self::now_ms();
+
+        conn.execute(
+            "INSERT INTO keys (db, key, type, created_at, updated_at)
+             VALUES (?1, ?2, ?3, ?4, ?4)",
+            params![db, key, KeyType::Set as i32, now],
+        )?;
+
+        let key_id: i64 = conn.query_row(
+            "SELECT id FROM keys WHERE db = ?1 AND key = ?2",
+            params![db, key],
+            |row| row.get(0),
+        )?;
+
+        Ok(key_id)
+    }
+
+    /// Get or create a set key, returns key_id
+    fn get_or_create_set_key(&self, conn: &Connection, key: &str) -> Result<i64> {
+        let db = self.current_db();
+        let now = Self::now_ms();
+
+        let existing: std::result::Result<(i64, i32, Option<i64>), _> = conn.query_row(
+            "SELECT id, type, expire_at FROM keys WHERE db = ?1 AND key = ?2",
+            params![db, key],
+            |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+        );
+
+        match existing {
+            Ok((key_id, key_type, expire_at)) => {
+                // Check expiration
+                if let Some(exp) = expire_at {
+                    if exp <= now {
+                        // Expired - delete and create new
+                        conn.execute("DELETE FROM keys WHERE id = ?1", params![key_id])?;
+                        return self.create_set_key(conn, key);
+                    }
+                }
+                // Check type
+                if key_type != KeyType::Set as i32 {
+                    return Err(KvError::WrongType);
+                }
+                Ok(key_id)
+            }
+            Err(rusqlite::Error::QueryReturnedNoRows) => self.create_set_key(conn, key),
+            Err(e) => Err(e.into()),
+        }
+    }
+
+    /// Get set key_id if it exists and is valid
+    fn get_set_key_id(&self, conn: &Connection, key: &str) -> Result<Option<i64>> {
+        let db = self.current_db();
+        let now = Self::now_ms();
+
+        let result: std::result::Result<(i64, i32, Option<i64>), _> = conn.query_row(
+            "SELECT id, type, expire_at FROM keys WHERE db = ?1 AND key = ?2",
+            params![db, key],
+            |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+        );
+
+        match result {
+            Ok((key_id, key_type, expire_at)) => {
+                // Check expiration
+                if let Some(exp) = expire_at {
+                    if exp <= now {
+                        return Ok(None);
+                    }
+                }
+                // Check type
+                if key_type != KeyType::Set as i32 {
+                    return Err(KvError::WrongType);
+                }
+                Ok(Some(key_id))
+            }
+            Err(rusqlite::Error::QueryReturnedNoRows) => Ok(None),
+            Err(e) => Err(e.into()),
+        }
+    }
+
+    /// SADD key member [member ...] - add members to set, returns count of new members added
+    pub fn sadd(&self, key: &str, members: &[&[u8]]) -> Result<i64> {
+        if members.is_empty() {
+            return Ok(0);
+        }
+
+        let conn = self.conn.lock().unwrap_or_else(|e| e.into_inner());
+        let key_id = self.get_or_create_set_key(&conn, key)?;
+
+        let mut added = 0i64;
+        for member in members {
+            let result = conn.execute(
+                "INSERT OR IGNORE INTO sets (key_id, member) VALUES (?1, ?2)",
+                params![key_id, member],
+            )?;
+            added += result as i64;
+        }
+
+        // Update timestamp
+        let now = Self::now_ms();
+        conn.execute(
+            "UPDATE keys SET updated_at = ?1 WHERE id = ?2",
+            params![now, key_id],
+        )?;
+
+        Ok(added)
+    }
+
+    /// SREM key member [member ...] - remove members from set, returns count removed
+    pub fn srem(&self, key: &str, members: &[&[u8]]) -> Result<i64> {
+        if members.is_empty() {
+            return Ok(0);
+        }
+
+        let conn = self.conn.lock().unwrap_or_else(|e| e.into_inner());
+
+        let key_id = match self.get_set_key_id(&conn, key)? {
+            Some(id) => id,
+            None => return Ok(0),
+        };
+
+        let mut removed = 0i64;
+        for member in members {
+            let result = conn.execute(
+                "DELETE FROM sets WHERE key_id = ?1 AND member = ?2",
+                params![key_id, member],
+            )?;
+            removed += result as i64;
+        }
+
+        // Clean up empty set
+        let remaining: i64 = conn.query_row(
+            "SELECT COUNT(*) FROM sets WHERE key_id = ?1",
+            params![key_id],
+            |row| row.get(0),
+        )?;
+
+        if remaining == 0 {
+            conn.execute("DELETE FROM keys WHERE id = ?1", params![key_id])?;
+        } else {
+            // Update timestamp
+            let now = Self::now_ms();
+            conn.execute(
+                "UPDATE keys SET updated_at = ?1 WHERE id = ?2",
+                params![now, key_id],
+            )?;
+        }
+
+        Ok(removed)
+    }
+
+    /// SMEMBERS key - get all members of set
+    pub fn smembers(&self, key: &str) -> Result<Vec<Vec<u8>>> {
+        let conn = self.conn.lock().unwrap_or_else(|e| e.into_inner());
+
+        let key_id = match self.get_set_key_id(&conn, key)? {
+            Some(id) => id,
+            None => return Ok(vec![]),
+        };
+
+        let mut stmt = conn.prepare(
+            "SELECT member FROM sets WHERE key_id = ?1",
+        )?;
+
+        let rows = stmt.query_map(params![key_id], |row| row.get::<_, Vec<u8>>(0))?;
+
+        let mut members = Vec::new();
+        for row in rows {
+            members.push(row?);
+        }
+
+        Ok(members)
+    }
+
+    /// SISMEMBER key member - check if member exists in set (returns true/false)
+    pub fn sismember(&self, key: &str, member: &[u8]) -> Result<bool> {
+        let conn = self.conn.lock().unwrap_or_else(|e| e.into_inner());
+
+        let key_id = match self.get_set_key_id(&conn, key)? {
+            Some(id) => id,
+            None => return Ok(false),
+        };
+
+        let exists: bool = conn
+            .query_row(
+                "SELECT 1 FROM sets WHERE key_id = ?1 AND member = ?2",
+                params![key_id, member],
+                |_| Ok(true),
+            )
+            .unwrap_or(false);
+
+        Ok(exists)
+    }
+
+    /// SCARD key - get cardinality (number of members) of set
+    pub fn scard(&self, key: &str) -> Result<i64> {
+        let conn = self.conn.lock().unwrap_or_else(|e| e.into_inner());
+
+        let key_id = match self.get_set_key_id(&conn, key)? {
+            Some(id) => id,
+            None => return Ok(0),
+        };
+
+        let count: i64 = conn.query_row(
+            "SELECT COUNT(*) FROM sets WHERE key_id = ?1",
+            params![key_id],
+            |row| row.get(0),
+        )?;
+
+        Ok(count)
+    }
+
+    /// SPOP key [count] - remove and return random member(s)
+    pub fn spop(&self, key: &str, count: Option<usize>) -> Result<Vec<Vec<u8>>> {
+        let conn = self.conn.lock().unwrap_or_else(|e| e.into_inner());
+
+        let key_id = match self.get_set_key_id(&conn, key)? {
+            Some(id) => id,
+            None => return Ok(vec![]),
+        };
+
+        let count = count.unwrap_or(1);
+
+        // Get random members using SQLite's RANDOM()
+        let mut stmt = conn.prepare(
+            "SELECT rowid, member FROM sets WHERE key_id = ?1 ORDER BY RANDOM() LIMIT ?2",
+        )?;
+        let rows = stmt.query_map(params![key_id, count as i64], |row| {
+            Ok((row.get::<_, i64>(0)?, row.get::<_, Vec<u8>>(1)?))
+        })?;
+
+        let mut results = Vec::new();
+        let mut rowids = Vec::new();
+        for row in rows {
+            let (rowid, member) = row?;
+            rowids.push(rowid);
+            results.push(member);
+        }
+
+        // Delete popped members
+        for rowid in &rowids {
+            conn.execute("DELETE FROM sets WHERE rowid = ?1", params![rowid])?;
+        }
+
+        // Clean up empty set
+        let remaining: i64 = conn.query_row(
+            "SELECT COUNT(*) FROM sets WHERE key_id = ?1",
+            params![key_id],
+            |row| row.get(0),
+        )?;
+
+        if remaining == 0 {
+            conn.execute("DELETE FROM keys WHERE id = ?1", params![key_id])?;
+        } else if !results.is_empty() {
+            // Update timestamp
+            let now = Self::now_ms();
+            conn.execute(
+                "UPDATE keys SET updated_at = ?1 WHERE id = ?2",
+                params![now, key_id],
+            )?;
+        }
+
+        Ok(results)
+    }
+
+    /// SRANDMEMBER key [count] - get random member(s) without removing
+    pub fn srandmember(&self, key: &str, count: Option<i64>) -> Result<Vec<Vec<u8>>> {
+        let conn = self.conn.lock().unwrap_or_else(|e| e.into_inner());
+
+        let key_id = match self.get_set_key_id(&conn, key)? {
+            Some(id) => id,
+            None => return Ok(vec![]),
+        };
+
+        // Handle count semantics:
+        // - No count: return single element
+        // - Positive count: return up to count distinct elements
+        // - Negative count: return |count| elements (may repeat)
+        let count = count.unwrap_or(1);
+        let allow_repeats = count < 0;
+        let limit = count.abs();
+
+        if allow_repeats {
+            // With negative count, we may need to return duplicates
+            // Get all members and sample with replacement
+            let mut stmt = conn.prepare(
+                "SELECT member FROM sets WHERE key_id = ?1",
+            )?;
+            let rows = stmt.query_map(params![key_id], |row| row.get::<_, Vec<u8>>(0))?;
+
+            let all_members: Vec<Vec<u8>> = rows.filter_map(|r| r.ok()).collect();
+
+            if all_members.is_empty() {
+                return Ok(vec![]);
+            }
+
+            // Sample with replacement using random indices
+            let mut results = Vec::new();
+            for _ in 0..limit {
+                // Use a simple random selection by querying with RANDOM() each time
+                let member: Vec<u8> = conn.query_row(
+                    "SELECT member FROM sets WHERE key_id = ?1 ORDER BY RANDOM() LIMIT 1",
+                    params![key_id],
+                    |row| row.get(0),
+                )?;
+                results.push(member);
+            }
+            Ok(results)
+        } else {
+            // Positive count: distinct elements
+            let mut stmt = conn.prepare(
+                "SELECT member FROM sets WHERE key_id = ?1 ORDER BY RANDOM() LIMIT ?2",
+            )?;
+            let rows = stmt.query_map(params![key_id, limit], |row| row.get::<_, Vec<u8>>(0))?;
+
+            let mut results = Vec::new();
+            for row in rows {
+                results.push(row?);
+            }
+            Ok(results)
+        }
+    }
+
+    /// SDIFF key [key ...] - return members in first set but not in subsequent sets
+    pub fn sdiff(&self, keys: &[&str]) -> Result<Vec<Vec<u8>>> {
+        if keys.is_empty() {
+            return Ok(vec![]);
+        }
+
+        // Get members of first set
+        let mut result = self.smembers(keys[0])?;
+
+        // Remove members that exist in subsequent sets
+        for key in &keys[1..] {
+            let other_members = self.smembers(key)?;
+            result.retain(|m| !other_members.contains(m));
+        }
+
+        Ok(result)
+    }
+
+    /// SINTER key [key ...] - return intersection of all sets
+    pub fn sinter(&self, keys: &[&str]) -> Result<Vec<Vec<u8>>> {
+        if keys.is_empty() {
+            return Ok(vec![]);
+        }
+
+        // Get members of first set
+        let mut result = self.smembers(keys[0])?;
+
+        // Keep only members that exist in all subsequent sets
+        for key in &keys[1..] {
+            let other_members = self.smembers(key)?;
+            result.retain(|m| other_members.contains(m));
+        }
+
+        Ok(result)
+    }
+
+    /// SUNION key [key ...] - return union of all sets
+    pub fn sunion(&self, keys: &[&str]) -> Result<Vec<Vec<u8>>> {
+        let mut result: Vec<Vec<u8>> = Vec::new();
+
+        for key in keys {
+            let members = self.smembers(key)?;
+            for member in members {
+                if !result.contains(&member) {
+                    result.push(member);
+                }
+            }
+        }
+
+        Ok(result)
+    }
+
+    // --- Session 9: Sorted Set operations ---
+
+    /// Helper to create a new sorted set key
+    fn create_zset_key(&self, conn: &Connection, key: &str) -> Result<i64> {
+        let db = self.current_db();
+        let now = Self::now_ms();
+
+        conn.execute(
+            "INSERT INTO keys (db, key, type, created_at, updated_at)
+             VALUES (?1, ?2, ?3, ?4, ?4)",
+            params![db, key, KeyType::ZSet as i32, now],
+        )?;
+
+        let key_id: i64 = conn.query_row(
+            "SELECT id FROM keys WHERE db = ?1 AND key = ?2",
+            params![db, key],
+            |row| row.get(0),
+        )?;
+
+        Ok(key_id)
+    }
+
+    /// Get or create a sorted set key, returns key_id
+    fn get_or_create_zset_key(&self, conn: &Connection, key: &str) -> Result<i64> {
+        let db = self.current_db();
+        let now = Self::now_ms();
+
+        let existing: std::result::Result<(i64, i32, Option<i64>), _> = conn.query_row(
+            "SELECT id, type, expire_at FROM keys WHERE db = ?1 AND key = ?2",
+            params![db, key],
+            |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+        );
+
+        match existing {
+            Ok((key_id, key_type, expire_at)) => {
+                // Check expiration
+                if let Some(exp) = expire_at {
+                    if exp <= now {
+                        // Expired - delete and create new
+                        conn.execute("DELETE FROM keys WHERE id = ?1", params![key_id])?;
+                        return self.create_zset_key(conn, key);
+                    }
+                }
+                // Check type
+                if key_type != KeyType::ZSet as i32 {
+                    return Err(KvError::WrongType);
+                }
+                Ok(key_id)
+            }
+            Err(rusqlite::Error::QueryReturnedNoRows) => self.create_zset_key(conn, key),
+            Err(e) => Err(e.into()),
+        }
+    }
+
+    /// Get sorted set key_id if it exists and is valid
+    fn get_zset_key_id(&self, conn: &Connection, key: &str) -> Result<Option<i64>> {
+        let db = self.current_db();
+        let now = Self::now_ms();
+
+        let result: std::result::Result<(i64, i32, Option<i64>), _> = conn.query_row(
+            "SELECT id, type, expire_at FROM keys WHERE db = ?1 AND key = ?2",
+            params![db, key],
+            |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+        );
+
+        match result {
+            Ok((key_id, key_type, expire_at)) => {
+                // Check expiration
+                if let Some(exp) = expire_at {
+                    if exp <= now {
+                        return Ok(None);
+                    }
+                }
+                // Check type
+                if key_type != KeyType::ZSet as i32 {
+                    return Err(KvError::WrongType);
+                }
+                Ok(Some(key_id))
+            }
+            Err(rusqlite::Error::QueryReturnedNoRows) => Ok(None),
+            Err(e) => Err(e.into()),
+        }
+    }
+
+    /// ZADD key score member [score member ...] - add members with scores, returns count added
+    pub fn zadd(&self, key: &str, members: &[ZMember]) -> Result<i64> {
+        if members.is_empty() {
+            return Ok(0);
+        }
+
+        let conn = self.conn.lock().unwrap_or_else(|e| e.into_inner());
+        let key_id = self.get_or_create_zset_key(&conn, key)?;
+
+        let mut added = 0i64;
+        for m in members {
+            // Check if member already exists
+            let exists: bool = conn
+                .query_row(
+                    "SELECT 1 FROM zsets WHERE key_id = ?1 AND member = ?2",
+                    params![key_id, &m.member],
+                    |_| Ok(true),
+                )
+                .unwrap_or(false);
+
+            if exists {
+                // Update score
+                conn.execute(
+                    "UPDATE zsets SET score = ?1 WHERE key_id = ?2 AND member = ?3",
+                    params![m.score, key_id, &m.member],
+                )?;
+            } else {
+                // Insert new member
+                conn.execute(
+                    "INSERT INTO zsets (key_id, member, score) VALUES (?1, ?2, ?3)",
+                    params![key_id, &m.member, m.score],
+                )?;
+                added += 1;
+            }
+        }
+
+        // Update timestamp
+        let now = Self::now_ms();
+        conn.execute(
+            "UPDATE keys SET updated_at = ?1 WHERE id = ?2",
+            params![now, key_id],
+        )?;
+
+        Ok(added)
+    }
+
+    /// ZREM key member [member ...] - remove members, returns count removed
+    pub fn zrem(&self, key: &str, members: &[&[u8]]) -> Result<i64> {
+        if members.is_empty() {
+            return Ok(0);
+        }
+
+        let conn = self.conn.lock().unwrap_or_else(|e| e.into_inner());
+
+        let key_id = match self.get_zset_key_id(&conn, key)? {
+            Some(id) => id,
+            None => return Ok(0),
+        };
+
+        let mut removed = 0i64;
+        for member in members {
+            let result = conn.execute(
+                "DELETE FROM zsets WHERE key_id = ?1 AND member = ?2",
+                params![key_id, member],
+            )?;
+            removed += result as i64;
+        }
+
+        // Clean up empty set
+        let remaining: i64 = conn.query_row(
+            "SELECT COUNT(*) FROM zsets WHERE key_id = ?1",
+            params![key_id],
+            |row| row.get(0),
+        )?;
+
+        if remaining == 0 {
+            conn.execute("DELETE FROM keys WHERE id = ?1", params![key_id])?;
+        } else {
+            // Update timestamp
+            let now = Self::now_ms();
+            conn.execute(
+                "UPDATE keys SET updated_at = ?1 WHERE id = ?2",
+                params![now, key_id],
+            )?;
+        }
+
+        Ok(removed)
+    }
+
+    /// ZSCORE key member - get score of member
+    pub fn zscore(&self, key: &str, member: &[u8]) -> Result<Option<f64>> {
+        let conn = self.conn.lock().unwrap_or_else(|e| e.into_inner());
+
+        let key_id = match self.get_zset_key_id(&conn, key)? {
+            Some(id) => id,
+            None => return Ok(None),
+        };
+
+        let score: std::result::Result<f64, _> = conn.query_row(
+            "SELECT score FROM zsets WHERE key_id = ?1 AND member = ?2",
+            params![key_id, member],
+            |row| row.get(0),
+        );
+
+        match score {
+            Ok(s) => Ok(Some(s)),
+            Err(rusqlite::Error::QueryReturnedNoRows) => Ok(None),
+            Err(e) => Err(e.into()),
+        }
+    }
+
+    /// ZRANK key member - get rank (0-based, ascending by score)
+    pub fn zrank(&self, key: &str, member: &[u8]) -> Result<Option<i64>> {
+        let conn = self.conn.lock().unwrap_or_else(|e| e.into_inner());
+
+        let key_id = match self.get_zset_key_id(&conn, key)? {
+            Some(id) => id,
+            None => return Ok(None),
+        };
+
+        // First check if member exists and get its score
+        let member_score: std::result::Result<f64, _> = conn.query_row(
+            "SELECT score FROM zsets WHERE key_id = ?1 AND member = ?2",
+            params![key_id, member],
+            |row| row.get(0),
+        );
+
+        let score = match member_score {
+            Ok(s) => s,
+            Err(rusqlite::Error::QueryReturnedNoRows) => return Ok(None),
+            Err(e) => return Err(e.into()),
+        };
+
+        // Count members with lower score, or same score but lexicographically smaller member
+        let rank: i64 = conn.query_row(
+            "SELECT COUNT(*) FROM zsets WHERE key_id = ?1 AND (score < ?2 OR (score = ?2 AND member < ?3))",
+            params![key_id, score, member],
+            |row| row.get(0),
+        )?;
+
+        Ok(Some(rank))
+    }
+
+    /// ZREVRANK key member - get rank (descending by score)
+    pub fn zrevrank(&self, key: &str, member: &[u8]) -> Result<Option<i64>> {
+        let conn = self.conn.lock().unwrap_or_else(|e| e.into_inner());
+
+        let key_id = match self.get_zset_key_id(&conn, key)? {
+            Some(id) => id,
+            None => return Ok(None),
+        };
+
+        // First check if member exists and get its score
+        let member_score: std::result::Result<f64, _> = conn.query_row(
+            "SELECT score FROM zsets WHERE key_id = ?1 AND member = ?2",
+            params![key_id, member],
+            |row| row.get(0),
+        );
+
+        let score = match member_score {
+            Ok(s) => s,
+            Err(rusqlite::Error::QueryReturnedNoRows) => return Ok(None),
+            Err(e) => return Err(e.into()),
+        };
+
+        // Count members with higher score, or same score but lexicographically larger member
+        let rank: i64 = conn.query_row(
+            "SELECT COUNT(*) FROM zsets WHERE key_id = ?1 AND (score > ?2 OR (score = ?2 AND member > ?3))",
+            params![key_id, score, member],
+            |row| row.get(0),
+        )?;
+
+        Ok(Some(rank))
+    }
+
+    /// ZCARD key - get cardinality
+    pub fn zcard(&self, key: &str) -> Result<i64> {
+        let conn = self.conn.lock().unwrap_or_else(|e| e.into_inner());
+
+        let key_id = match self.get_zset_key_id(&conn, key)? {
+            Some(id) => id,
+            None => return Ok(0),
+        };
+
+        let count: i64 = conn.query_row(
+            "SELECT COUNT(*) FROM zsets WHERE key_id = ?1",
+            params![key_id],
+            |row| row.get(0),
+        )?;
+
+        Ok(count)
+    }
+
+    /// ZRANGE key start stop [WITHSCORES] - get members by rank range (ascending)
+    pub fn zrange(&self, key: &str, start: i64, stop: i64, with_scores: bool) -> Result<Vec<ZMember>> {
+        let conn = self.conn.lock().unwrap_or_else(|e| e.into_inner());
+
+        let key_id = match self.get_zset_key_id(&conn, key)? {
+            Some(id) => id,
+            None => return Ok(vec![]),
+        };
+
+        // Get total count for negative index handling
+        let total: i64 = conn.query_row(
+            "SELECT COUNT(*) FROM zsets WHERE key_id = ?1",
+            params![key_id],
+            |row| row.get(0),
+        )?;
+
+        if total == 0 {
+            return Ok(vec![]);
+        }
+
+        // Convert negative indices to positive
+        let start = if start < 0 {
+            (total + start).max(0)
+        } else {
+            start.min(total)
+        };
+
+        let stop = if stop < 0 {
+            (total + stop).max(0)
+        } else {
+            stop.min(total - 1)
+        };
+
+        if start > stop || start >= total {
+            return Ok(vec![]);
+        }
+
+        let limit = stop - start + 1;
+
+        let mut stmt = conn.prepare(
+            "SELECT member, score FROM zsets WHERE key_id = ?1 ORDER BY score ASC, member ASC LIMIT ?2 OFFSET ?3",
+        )?;
+
+        let rows = stmt.query_map(params![key_id, limit, start], |row| {
+            Ok(ZMember {
+                member: row.get(0)?,
+                score: row.get(1)?,
+            })
+        })?;
+
+        let mut results = Vec::new();
+        for row in rows {
+            let m = row?;
+            if with_scores {
+                results.push(m);
+            } else {
+                results.push(ZMember {
+                    member: m.member,
+                    score: 0.0, // Score not needed but struct requires it
+                });
+            }
+        }
+
+        Ok(results)
+    }
+
+    /// ZREVRANGE key start stop [WITHSCORES] - get members by rank range (descending)
+    pub fn zrevrange(&self, key: &str, start: i64, stop: i64, with_scores: bool) -> Result<Vec<ZMember>> {
+        let conn = self.conn.lock().unwrap_or_else(|e| e.into_inner());
+
+        let key_id = match self.get_zset_key_id(&conn, key)? {
+            Some(id) => id,
+            None => return Ok(vec![]),
+        };
+
+        // Get total count for negative index handling
+        let total: i64 = conn.query_row(
+            "SELECT COUNT(*) FROM zsets WHERE key_id = ?1",
+            params![key_id],
+            |row| row.get(0),
+        )?;
+
+        if total == 0 {
+            return Ok(vec![]);
+        }
+
+        // Convert negative indices to positive
+        let start = if start < 0 {
+            (total + start).max(0)
+        } else {
+            start.min(total)
+        };
+
+        let stop = if stop < 0 {
+            (total + stop).max(0)
+        } else {
+            stop.min(total - 1)
+        };
+
+        if start > stop || start >= total {
+            return Ok(vec![]);
+        }
+
+        let limit = stop - start + 1;
+
+        let mut stmt = conn.prepare(
+            "SELECT member, score FROM zsets WHERE key_id = ?1 ORDER BY score DESC, member DESC LIMIT ?2 OFFSET ?3",
+        )?;
+
+        let rows = stmt.query_map(params![key_id, limit, start], |row| {
+            Ok(ZMember {
+                member: row.get(0)?,
+                score: row.get(1)?,
+            })
+        })?;
+
+        let mut results = Vec::new();
+        for row in rows {
+            let m = row?;
+            if with_scores {
+                results.push(m);
+            } else {
+                results.push(ZMember {
+                    member: m.member,
+                    score: 0.0,
+                });
+            }
+        }
+
+        Ok(results)
+    }
+
+    /// ZRANGEBYSCORE key min max [LIMIT offset count] - get members by score range
+    pub fn zrangebyscore(
+        &self,
+        key: &str,
+        min: f64,
+        max: f64,
+        offset: Option<i64>,
+        count: Option<i64>,
+    ) -> Result<Vec<ZMember>> {
+        let conn = self.conn.lock().unwrap_or_else(|e| e.into_inner());
+
+        let key_id = match self.get_zset_key_id(&conn, key)? {
+            Some(id) => id,
+            None => return Ok(vec![]),
+        };
+
+        let offset = offset.unwrap_or(0);
+        let count = count.unwrap_or(i64::MAX);
+
+        let mut stmt = conn.prepare(
+            "SELECT member, score FROM zsets WHERE key_id = ?1 AND score >= ?2 AND score <= ?3
+             ORDER BY score ASC, member ASC LIMIT ?4 OFFSET ?5",
+        )?;
+
+        let rows = stmt.query_map(params![key_id, min, max, count, offset], |row| {
+            Ok(ZMember {
+                member: row.get(0)?,
+                score: row.get(1)?,
+            })
+        })?;
+
+        let mut results = Vec::new();
+        for row in rows {
+            results.push(row?);
+        }
+
+        Ok(results)
+    }
+
+    /// ZCOUNT key min max - count members in score range
+    pub fn zcount(&self, key: &str, min: f64, max: f64) -> Result<i64> {
+        let conn = self.conn.lock().unwrap_or_else(|e| e.into_inner());
+
+        let key_id = match self.get_zset_key_id(&conn, key)? {
+            Some(id) => id,
+            None => return Ok(0),
+        };
+
+        let count: i64 = conn.query_row(
+            "SELECT COUNT(*) FROM zsets WHERE key_id = ?1 AND score >= ?2 AND score <= ?3",
+            params![key_id, min, max],
+            |row| row.get(0),
+        )?;
+
+        Ok(count)
+    }
+
+    /// ZINCRBY key increment member - increment score of member
+    pub fn zincrby(&self, key: &str, increment: f64, member: &[u8]) -> Result<f64> {
+        let conn = self.conn.lock().unwrap_or_else(|e| e.into_inner());
+        let key_id = self.get_or_create_zset_key(&conn, key)?;
+
+        // Check if member exists
+        let existing_score: std::result::Result<f64, _> = conn.query_row(
+            "SELECT score FROM zsets WHERE key_id = ?1 AND member = ?2",
+            params![key_id, member],
+            |row| row.get(0),
+        );
+
+        let new_score = match existing_score {
+            Ok(score) => {
+                let new_score = score + increment;
+                conn.execute(
+                    "UPDATE zsets SET score = ?1 WHERE key_id = ?2 AND member = ?3",
+                    params![new_score, key_id, member],
+                )?;
+                new_score
+            }
+            Err(rusqlite::Error::QueryReturnedNoRows) => {
+                conn.execute(
+                    "INSERT INTO zsets (key_id, member, score) VALUES (?1, ?2, ?3)",
+                    params![key_id, member, increment],
+                )?;
+                increment
+            }
+            Err(e) => return Err(e.into()),
+        };
+
+        // Update timestamp
+        let now = Self::now_ms();
+        conn.execute(
+            "UPDATE keys SET updated_at = ?1 WHERE id = ?2",
+            params![now, key_id],
+        )?;
+
+        Ok(new_score)
+    }
+
+    /// ZREMRANGEBYRANK key start stop - remove members by rank range
+    pub fn zremrangebyrank(&self, key: &str, start: i64, stop: i64) -> Result<i64> {
+        let conn = self.conn.lock().unwrap_or_else(|e| e.into_inner());
+
+        let key_id = match self.get_zset_key_id(&conn, key)? {
+            Some(id) => id,
+            None => return Ok(0),
+        };
+
+        // Get total count for negative index handling
+        let total: i64 = conn.query_row(
+            "SELECT COUNT(*) FROM zsets WHERE key_id = ?1",
+            params![key_id],
+            |row| row.get(0),
+        )?;
+
+        if total == 0 {
+            return Ok(0);
+        }
+
+        // Convert negative indices to positive
+        let start = if start < 0 {
+            (total + start).max(0)
+        } else {
+            start.min(total)
+        };
+
+        let stop = if stop < 0 {
+            (total + stop).max(0)
+        } else {
+            stop.min(total - 1)
+        };
+
+        if start > stop || start >= total {
+            return Ok(0);
+        }
+
+        let limit = stop - start + 1;
+
+        // Get rowids to delete
+        let mut stmt = conn.prepare(
+            "SELECT rowid FROM zsets WHERE key_id = ?1 ORDER BY score ASC, member ASC LIMIT ?2 OFFSET ?3",
+        )?;
+
+        let rowids: Vec<i64> = stmt
+            .query_map(params![key_id, limit, start], |row| row.get(0))?
+            .filter_map(|r| r.ok())
+            .collect();
+
+        let removed = rowids.len() as i64;
+
+        // Delete by rowids
+        for rowid in &rowids {
+            conn.execute("DELETE FROM zsets WHERE rowid = ?1", params![rowid])?;
+        }
+
+        // Clean up empty set
+        let remaining: i64 = conn.query_row(
+            "SELECT COUNT(*) FROM zsets WHERE key_id = ?1",
+            params![key_id],
+            |row| row.get(0),
+        )?;
+
+        if remaining == 0 {
+            conn.execute("DELETE FROM keys WHERE id = ?1", params![key_id])?;
+        } else if removed > 0 {
+            // Update timestamp
+            let now = Self::now_ms();
+            conn.execute(
+                "UPDATE keys SET updated_at = ?1 WHERE id = ?2",
+                params![now, key_id],
+            )?;
+        }
+
+        Ok(removed)
+    }
+
+    /// ZREMRANGEBYSCORE key min max - remove members by score range
+    pub fn zremrangebyscore(&self, key: &str, min: f64, max: f64) -> Result<i64> {
+        let conn = self.conn.lock().unwrap_or_else(|e| e.into_inner());
+
+        let key_id = match self.get_zset_key_id(&conn, key)? {
+            Some(id) => id,
+            None => return Ok(0),
+        };
+
+        let removed = conn.execute(
+            "DELETE FROM zsets WHERE key_id = ?1 AND score >= ?2 AND score <= ?3",
+            params![key_id, min, max],
+        )? as i64;
+
+        // Clean up empty set
+        let remaining: i64 = conn.query_row(
+            "SELECT COUNT(*) FROM zsets WHERE key_id = ?1",
+            params![key_id],
+            |row| row.get(0),
+        )?;
+
+        if remaining == 0 {
+            conn.execute("DELETE FROM keys WHERE id = ?1", params![key_id])?;
+        } else if removed > 0 {
+            // Update timestamp
+            let now = Self::now_ms();
+            conn.execute(
+                "UPDATE keys SET updated_at = ?1 WHERE id = ?2",
+                params![now, key_id],
+            )?;
+        }
+
+        Ok(removed)
+    }
 }
 
 #[cfg(test)]
@@ -3200,6 +4198,942 @@ mod tests {
             let db = Db::open(&path).unwrap();
             let items = db.lrange("mylist", 0, -1).unwrap();
             assert_eq!(items, vec![b"persisted".to_vec()]);
+        }
+
+        cleanup_db(&path);
+    }
+
+    // --- Session 8: Set operation tests (memory mode) ---
+
+    #[test]
+    fn test_sadd_smembers() {
+        let db = Db::open_memory().unwrap();
+
+        // SADD returns count of new members
+        assert_eq!(db.sadd("myset", &[b"a", b"b", b"c"]).unwrap(), 3);
+
+        // Adding duplicates should not increase count
+        assert_eq!(db.sadd("myset", &[b"a", b"d"]).unwrap(), 1);
+
+        // Check members
+        let members = db.smembers("myset").unwrap();
+        assert_eq!(members.len(), 4);
+        assert!(members.contains(&b"a".to_vec()));
+        assert!(members.contains(&b"b".to_vec()));
+        assert!(members.contains(&b"c".to_vec()));
+        assert!(members.contains(&b"d".to_vec()));
+    }
+
+    #[test]
+    fn test_sadd_creates_set() {
+        let db = Db::open_memory().unwrap();
+
+        db.sadd("myset", &[b"member"]).unwrap();
+        assert_eq!(db.key_type("myset").unwrap(), Some(KeyType::Set));
+    }
+
+    #[test]
+    fn test_srem() {
+        let db = Db::open_memory().unwrap();
+
+        db.sadd("myset", &[b"a", b"b", b"c"]).unwrap();
+
+        // Remove one member
+        assert_eq!(db.srem("myset", &[b"a"]).unwrap(), 1);
+        assert_eq!(db.scard("myset").unwrap(), 2);
+
+        // Remove multiple members (one exists, one doesn't)
+        assert_eq!(db.srem("myset", &[b"b", b"nonexistent"]).unwrap(), 1);
+        assert_eq!(db.scard("myset").unwrap(), 1);
+
+        // Remove from nonexistent key
+        assert_eq!(db.srem("nokey", &[b"x"]).unwrap(), 0);
+    }
+
+    #[test]
+    fn test_srem_deletes_empty_set() {
+        let db = Db::open_memory().unwrap();
+
+        db.sadd("myset", &[b"only"]).unwrap();
+        db.srem("myset", &[b"only"]).unwrap();
+
+        // Key should be deleted
+        assert_eq!(db.key_type("myset").unwrap(), None);
+    }
+
+    #[test]
+    fn test_sismember() {
+        let db = Db::open_memory().unwrap();
+
+        db.sadd("myset", &[b"a", b"b"]).unwrap();
+
+        assert!(db.sismember("myset", b"a").unwrap());
+        assert!(db.sismember("myset", b"b").unwrap());
+        assert!(!db.sismember("myset", b"c").unwrap());
+
+        // Nonexistent key
+        assert!(!db.sismember("nokey", b"x").unwrap());
+    }
+
+    #[test]
+    fn test_scard() {
+        let db = Db::open_memory().unwrap();
+
+        assert_eq!(db.scard("myset").unwrap(), 0);
+
+        db.sadd("myset", &[b"a", b"b", b"c"]).unwrap();
+        assert_eq!(db.scard("myset").unwrap(), 3);
+
+        db.sadd("myset", &[b"d"]).unwrap();
+        assert_eq!(db.scard("myset").unwrap(), 4);
+    }
+
+    #[test]
+    fn test_spop() {
+        let db = Db::open_memory().unwrap();
+
+        db.sadd("myset", &[b"a", b"b", b"c"]).unwrap();
+
+        // Pop single
+        let popped = db.spop("myset", None).unwrap();
+        assert_eq!(popped.len(), 1);
+        assert_eq!(db.scard("myset").unwrap(), 2);
+
+        // Pop multiple
+        let popped = db.spop("myset", Some(2)).unwrap();
+        assert_eq!(popped.len(), 2);
+        assert_eq!(db.scard("myset").unwrap(), 0);
+
+        // Key should be deleted when empty
+        assert_eq!(db.key_type("myset").unwrap(), None);
+    }
+
+    #[test]
+    fn test_spop_empty() {
+        let db = Db::open_memory().unwrap();
+
+        let result = db.spop("nokey", None).unwrap();
+        assert!(result.is_empty());
+    }
+
+    #[test]
+    fn test_srandmember() {
+        let db = Db::open_memory().unwrap();
+
+        db.sadd("myset", &[b"a", b"b", b"c"]).unwrap();
+
+        // Get random member without removing
+        let result = db.srandmember("myset", None).unwrap();
+        assert_eq!(result.len(), 1);
+        assert_eq!(db.scard("myset").unwrap(), 3); // Still 3 members
+
+        // Get multiple distinct
+        let result = db.srandmember("myset", Some(2)).unwrap();
+        assert_eq!(result.len(), 2);
+
+        // Positive count larger than set size
+        let result = db.srandmember("myset", Some(10)).unwrap();
+        assert_eq!(result.len(), 3);
+
+        // Negative count allows duplicates
+        let result = db.srandmember("myset", Some(-5)).unwrap();
+        assert_eq!(result.len(), 5);
+    }
+
+    #[test]
+    fn test_srandmember_empty() {
+        let db = Db::open_memory().unwrap();
+
+        let result = db.srandmember("nokey", None).unwrap();
+        assert!(result.is_empty());
+    }
+
+    #[test]
+    fn test_sdiff() {
+        let db = Db::open_memory().unwrap();
+
+        db.sadd("set1", &[b"a", b"b", b"c"]).unwrap();
+        db.sadd("set2", &[b"b", b"c", b"d"]).unwrap();
+        db.sadd("set3", &[b"c", b"e"]).unwrap();
+
+        // Diff of set1 - set2
+        let diff = db.sdiff(&["set1", "set2"]).unwrap();
+        assert_eq!(diff.len(), 1);
+        assert!(diff.contains(&b"a".to_vec()));
+
+        // Diff of set1 - set2 - set3
+        let diff = db.sdiff(&["set1", "set2", "set3"]).unwrap();
+        assert_eq!(diff.len(), 1);
+        assert!(diff.contains(&b"a".to_vec()));
+
+        // Diff with nonexistent key
+        let diff = db.sdiff(&["set1", "nokey"]).unwrap();
+        assert_eq!(diff.len(), 3);
+    }
+
+    #[test]
+    fn test_sinter() {
+        let db = Db::open_memory().unwrap();
+
+        db.sadd("set1", &[b"a", b"b", b"c"]).unwrap();
+        db.sadd("set2", &[b"b", b"c", b"d"]).unwrap();
+        db.sadd("set3", &[b"c", b"e"]).unwrap();
+
+        // Intersection of set1 and set2
+        let inter = db.sinter(&["set1", "set2"]).unwrap();
+        assert_eq!(inter.len(), 2);
+        assert!(inter.contains(&b"b".to_vec()));
+        assert!(inter.contains(&b"c".to_vec()));
+
+        // Intersection of all three
+        let inter = db.sinter(&["set1", "set2", "set3"]).unwrap();
+        assert_eq!(inter.len(), 1);
+        assert!(inter.contains(&b"c".to_vec()));
+
+        // Intersection with nonexistent key returns empty
+        let inter = db.sinter(&["set1", "nokey"]).unwrap();
+        assert!(inter.is_empty());
+    }
+
+    #[test]
+    fn test_sunion() {
+        let db = Db::open_memory().unwrap();
+
+        db.sadd("set1", &[b"a", b"b"]).unwrap();
+        db.sadd("set2", &[b"b", b"c"]).unwrap();
+
+        let union = db.sunion(&["set1", "set2"]).unwrap();
+        assert_eq!(union.len(), 3);
+        assert!(union.contains(&b"a".to_vec()));
+        assert!(union.contains(&b"b".to_vec()));
+        assert!(union.contains(&b"c".to_vec()));
+
+        // Union with nonexistent key
+        let union = db.sunion(&["set1", "nokey"]).unwrap();
+        assert_eq!(union.len(), 2);
+    }
+
+    #[test]
+    fn test_set_type() {
+        let db = Db::open_memory().unwrap();
+
+        db.sadd("myset", &[b"value"]).unwrap();
+        assert_eq!(db.key_type("myset").unwrap(), Some(KeyType::Set));
+    }
+
+    #[test]
+    fn test_set_wrong_type() {
+        let db = Db::open_memory().unwrap();
+
+        // Create a string key
+        db.set("mystring", b"value", None).unwrap();
+
+        // Set operations on string should fail with WrongType
+        assert!(matches!(
+            db.sadd("mystring", &[b"a"]),
+            Err(KvError::WrongType)
+        ));
+        assert!(matches!(db.smembers("mystring"), Err(KvError::WrongType)));
+        assert!(matches!(
+            db.sismember("mystring", b"a"),
+            Err(KvError::WrongType)
+        ));
+        assert!(matches!(db.scard("mystring"), Err(KvError::WrongType)));
+        assert!(matches!(db.spop("mystring", None), Err(KvError::WrongType)));
+        assert!(matches!(
+            db.srandmember("mystring", None),
+            Err(KvError::WrongType)
+        ));
+    }
+
+    #[test]
+    fn test_set_binary_data() {
+        let db = Db::open_memory().unwrap();
+
+        let binary = vec![0u8, 1, 2, 255, 254, 253];
+        db.sadd("myset", &[&binary]).unwrap();
+
+        let members = db.smembers("myset").unwrap();
+        assert_eq!(members.len(), 1);
+        assert_eq!(members[0], binary);
+    }
+
+    // --- Session 8: Disk tests for set operations ---
+
+    #[test]
+    fn test_disk_sadd_smembers() {
+        let path = temp_db_path();
+        let db = Db::open(&path).unwrap();
+
+        db.sadd("myset", &[b"a", b"b", b"c"]).unwrap();
+        let members = db.smembers("myset").unwrap();
+        assert_eq!(members.len(), 3);
+
+        cleanup_db(&path);
+    }
+
+    #[test]
+    fn test_disk_srem_scard() {
+        let path = temp_db_path();
+        let db = Db::open(&path).unwrap();
+
+        db.sadd("myset", &[b"a", b"b", b"c"]).unwrap();
+        assert_eq!(db.scard("myset").unwrap(), 3);
+
+        db.srem("myset", &[b"a"]).unwrap();
+        assert_eq!(db.scard("myset").unwrap(), 2);
+
+        cleanup_db(&path);
+    }
+
+    #[test]
+    fn test_disk_sismember() {
+        let path = temp_db_path();
+        let db = Db::open(&path).unwrap();
+
+        db.sadd("myset", &[b"member"]).unwrap();
+        assert!(db.sismember("myset", b"member").unwrap());
+        assert!(!db.sismember("myset", b"other").unwrap());
+
+        cleanup_db(&path);
+    }
+
+    #[test]
+    fn test_disk_spop() {
+        let path = temp_db_path();
+        let db = Db::open(&path).unwrap();
+
+        db.sadd("myset", &[b"a", b"b", b"c"]).unwrap();
+        let popped = db.spop("myset", Some(2)).unwrap();
+        assert_eq!(popped.len(), 2);
+        assert_eq!(db.scard("myset").unwrap(), 1);
+
+        cleanup_db(&path);
+    }
+
+    #[test]
+    fn test_disk_srandmember() {
+        let path = temp_db_path();
+        let db = Db::open(&path).unwrap();
+
+        db.sadd("myset", &[b"a", b"b", b"c"]).unwrap();
+        let result = db.srandmember("myset", Some(2)).unwrap();
+        assert_eq!(result.len(), 2);
+        // Verify set unchanged
+        assert_eq!(db.scard("myset").unwrap(), 3);
+
+        cleanup_db(&path);
+    }
+
+    #[test]
+    fn test_disk_sdiff_sinter_sunion() {
+        let path = temp_db_path();
+        let db = Db::open(&path).unwrap();
+
+        db.sadd("set1", &[b"a", b"b", b"c"]).unwrap();
+        db.sadd("set2", &[b"b", b"c", b"d"]).unwrap();
+
+        let diff = db.sdiff(&["set1", "set2"]).unwrap();
+        assert_eq!(diff.len(), 1);
+        assert!(diff.contains(&b"a".to_vec()));
+
+        let inter = db.sinter(&["set1", "set2"]).unwrap();
+        assert_eq!(inter.len(), 2);
+
+        let union = db.sunion(&["set1", "set2"]).unwrap();
+        assert_eq!(union.len(), 4);
+
+        cleanup_db(&path);
+    }
+
+    #[test]
+    fn test_disk_set_persistence() {
+        let path = temp_db_path();
+
+        // Create set and close
+        {
+            let db = Db::open(&path).unwrap();
+            db.sadd("myset", &[b"persisted"]).unwrap();
+        }
+
+        // Reopen and verify
+        {
+            let db = Db::open(&path).unwrap();
+            let members = db.smembers("myset").unwrap();
+            assert_eq!(members, vec![b"persisted".to_vec()]);
+        }
+
+        cleanup_db(&path);
+    }
+
+    // --- Session 9: Sorted Set operation tests (memory mode) ---
+
+    #[test]
+    fn test_zadd_zcard() {
+        let db = Db::open_memory().unwrap();
+
+        // ZADD returns count of new members
+        assert_eq!(
+            db.zadd(
+                "myzset",
+                &[
+                    ZMember::new(1.0, "a"),
+                    ZMember::new(2.0, "b"),
+                    ZMember::new(3.0, "c"),
+                ]
+            )
+            .unwrap(),
+            3
+        );
+
+        // ZCARD returns count
+        assert_eq!(db.zcard("myzset").unwrap(), 3);
+
+        // Adding duplicate members (updates score) should not increase count
+        assert_eq!(
+            db.zadd("myzset", &[ZMember::new(1.5, "a"), ZMember::new(4.0, "d"),]).unwrap(),
+            1
+        );
+        assert_eq!(db.zcard("myzset").unwrap(), 4);
+    }
+
+    #[test]
+    fn test_zadd_creates_zset() {
+        let db = Db::open_memory().unwrap();
+
+        db.zadd("myzset", &[ZMember::new(1.0, "member")]).unwrap();
+        assert_eq!(db.key_type("myzset").unwrap(), Some(KeyType::ZSet));
+    }
+
+    #[test]
+    fn test_zrem() {
+        let db = Db::open_memory().unwrap();
+
+        db.zadd(
+            "myzset",
+            &[
+                ZMember::new(1.0, "a"),
+                ZMember::new(2.0, "b"),
+                ZMember::new(3.0, "c"),
+            ],
+        )
+        .unwrap();
+
+        // Remove one member
+        assert_eq!(db.zrem("myzset", &[b"a"]).unwrap(), 1);
+        assert_eq!(db.zcard("myzset").unwrap(), 2);
+
+        // Remove multiple members (one exists, one doesn't)
+        assert_eq!(db.zrem("myzset", &[b"b", b"nonexistent"]).unwrap(), 1);
+        assert_eq!(db.zcard("myzset").unwrap(), 1);
+
+        // Remove from nonexistent key
+        assert_eq!(db.zrem("nokey", &[b"x"]).unwrap(), 0);
+    }
+
+    #[test]
+    fn test_zrem_deletes_empty_zset() {
+        let db = Db::open_memory().unwrap();
+
+        db.zadd("myzset", &[ZMember::new(1.0, "only")]).unwrap();
+        db.zrem("myzset", &[b"only"]).unwrap();
+
+        // Key should be deleted
+        assert_eq!(db.key_type("myzset").unwrap(), None);
+    }
+
+    #[test]
+    fn test_zscore() {
+        let db = Db::open_memory().unwrap();
+
+        db.zadd(
+            "myzset",
+            &[ZMember::new(1.5, "a"), ZMember::new(2.5, "b")],
+        )
+        .unwrap();
+
+        assert_eq!(db.zscore("myzset", b"a").unwrap(), Some(1.5));
+        assert_eq!(db.zscore("myzset", b"b").unwrap(), Some(2.5));
+        assert_eq!(db.zscore("myzset", b"c").unwrap(), None);
+
+        // Nonexistent key
+        assert_eq!(db.zscore("nokey", b"x").unwrap(), None);
+    }
+
+    #[test]
+    fn test_zrank_zrevrank() {
+        let db = Db::open_memory().unwrap();
+
+        db.zadd(
+            "myzset",
+            &[
+                ZMember::new(1.0, "a"),
+                ZMember::new(2.0, "b"),
+                ZMember::new(3.0, "c"),
+            ],
+        )
+        .unwrap();
+
+        // ZRANK (ascending)
+        assert_eq!(db.zrank("myzset", b"a").unwrap(), Some(0));
+        assert_eq!(db.zrank("myzset", b"b").unwrap(), Some(1));
+        assert_eq!(db.zrank("myzset", b"c").unwrap(), Some(2));
+        assert_eq!(db.zrank("myzset", b"nonexistent").unwrap(), None);
+
+        // ZREVRANK (descending)
+        assert_eq!(db.zrevrank("myzset", b"a").unwrap(), Some(2));
+        assert_eq!(db.zrevrank("myzset", b"b").unwrap(), Some(1));
+        assert_eq!(db.zrevrank("myzset", b"c").unwrap(), Some(0));
+        assert_eq!(db.zrevrank("myzset", b"nonexistent").unwrap(), None);
+
+        // Nonexistent key
+        assert_eq!(db.zrank("nokey", b"x").unwrap(), None);
+        assert_eq!(db.zrevrank("nokey", b"x").unwrap(), None);
+    }
+
+    #[test]
+    fn test_zrange() {
+        let db = Db::open_memory().unwrap();
+
+        db.zadd(
+            "myzset",
+            &[
+                ZMember::new(1.0, "a"),
+                ZMember::new(2.0, "b"),
+                ZMember::new(3.0, "c"),
+            ],
+        )
+        .unwrap();
+
+        // Get all
+        let members = db.zrange("myzset", 0, -1, false).unwrap();
+        assert_eq!(members.len(), 3);
+        assert_eq!(members[0].member, b"a");
+        assert_eq!(members[1].member, b"b");
+        assert_eq!(members[2].member, b"c");
+
+        // Subset
+        let members = db.zrange("myzset", 0, 1, false).unwrap();
+        assert_eq!(members.len(), 2);
+        assert_eq!(members[0].member, b"a");
+        assert_eq!(members[1].member, b"b");
+
+        // Negative indices
+        let members = db.zrange("myzset", -2, -1, false).unwrap();
+        assert_eq!(members.len(), 2);
+        assert_eq!(members[0].member, b"b");
+        assert_eq!(members[1].member, b"c");
+
+        // With scores
+        let members = db.zrange("myzset", 0, -1, true).unwrap();
+        assert_eq!(members[0].score, 1.0);
+        assert_eq!(members[1].score, 2.0);
+        assert_eq!(members[2].score, 3.0);
+
+        // Empty/nonexistent key
+        let members = db.zrange("nokey", 0, -1, false).unwrap();
+        assert!(members.is_empty());
+    }
+
+    #[test]
+    fn test_zrevrange() {
+        let db = Db::open_memory().unwrap();
+
+        db.zadd(
+            "myzset",
+            &[
+                ZMember::new(1.0, "a"),
+                ZMember::new(2.0, "b"),
+                ZMember::new(3.0, "c"),
+            ],
+        )
+        .unwrap();
+
+        // Get all in reverse
+        let members = db.zrevrange("myzset", 0, -1, false).unwrap();
+        assert_eq!(members.len(), 3);
+        assert_eq!(members[0].member, b"c");
+        assert_eq!(members[1].member, b"b");
+        assert_eq!(members[2].member, b"a");
+
+        // With scores
+        let members = db.zrevrange("myzset", 0, 1, true).unwrap();
+        assert_eq!(members.len(), 2);
+        assert_eq!(members[0].member, b"c");
+        assert_eq!(members[0].score, 3.0);
+    }
+
+    #[test]
+    fn test_zrangebyscore() {
+        let db = Db::open_memory().unwrap();
+
+        db.zadd(
+            "myzset",
+            &[
+                ZMember::new(1.0, "a"),
+                ZMember::new(2.0, "b"),
+                ZMember::new(3.0, "c"),
+                ZMember::new(4.0, "d"),
+            ],
+        )
+        .unwrap();
+
+        // Score range
+        let members = db.zrangebyscore("myzset", 2.0, 3.0, None, None).unwrap();
+        assert_eq!(members.len(), 2);
+        assert_eq!(members[0].member, b"b");
+        assert_eq!(members[1].member, b"c");
+
+        // With LIMIT
+        let members = db.zrangebyscore("myzset", 1.0, 4.0, Some(1), Some(2)).unwrap();
+        assert_eq!(members.len(), 2);
+        assert_eq!(members[0].member, b"b");
+        assert_eq!(members[1].member, b"c");
+
+        // Empty range
+        let members = db.zrangebyscore("myzset", 10.0, 20.0, None, None).unwrap();
+        assert!(members.is_empty());
+    }
+
+    #[test]
+    fn test_zcount() {
+        let db = Db::open_memory().unwrap();
+
+        db.zadd(
+            "myzset",
+            &[
+                ZMember::new(1.0, "a"),
+                ZMember::new(2.0, "b"),
+                ZMember::new(3.0, "c"),
+            ],
+        )
+        .unwrap();
+
+        assert_eq!(db.zcount("myzset", 1.0, 3.0).unwrap(), 3);
+        assert_eq!(db.zcount("myzset", 1.5, 2.5).unwrap(), 1);
+        assert_eq!(db.zcount("myzset", 10.0, 20.0).unwrap(), 0);
+
+        // Nonexistent key
+        assert_eq!(db.zcount("nokey", 0.0, 100.0).unwrap(), 0);
+    }
+
+    #[test]
+    fn test_zincrby() {
+        let db = Db::open_memory().unwrap();
+
+        // Create new member
+        let score = db.zincrby("myzset", 5.0, b"a").unwrap();
+        assert_eq!(score, 5.0);
+        assert_eq!(db.zscore("myzset", b"a").unwrap(), Some(5.0));
+
+        // Increment existing
+        let score = db.zincrby("myzset", 3.5, b"a").unwrap();
+        assert_eq!(score, 8.5);
+
+        // Negative increment
+        let score = db.zincrby("myzset", -2.0, b"a").unwrap();
+        assert_eq!(score, 6.5);
+    }
+
+    #[test]
+    fn test_zremrangebyrank() {
+        let db = Db::open_memory().unwrap();
+
+        db.zadd(
+            "myzset",
+            &[
+                ZMember::new(1.0, "a"),
+                ZMember::new(2.0, "b"),
+                ZMember::new(3.0, "c"),
+                ZMember::new(4.0, "d"),
+            ],
+        )
+        .unwrap();
+
+        // Remove first two
+        assert_eq!(db.zremrangebyrank("myzset", 0, 1).unwrap(), 2);
+        assert_eq!(db.zcard("myzset").unwrap(), 2);
+
+        let members = db.zrange("myzset", 0, -1, false).unwrap();
+        assert_eq!(members[0].member, b"c");
+        assert_eq!(members[1].member, b"d");
+
+        // Nonexistent key
+        assert_eq!(db.zremrangebyrank("nokey", 0, 10).unwrap(), 0);
+    }
+
+    #[test]
+    fn test_zremrangebyscore() {
+        let db = Db::open_memory().unwrap();
+
+        db.zadd(
+            "myzset",
+            &[
+                ZMember::new(1.0, "a"),
+                ZMember::new(2.0, "b"),
+                ZMember::new(3.0, "c"),
+                ZMember::new(4.0, "d"),
+            ],
+        )
+        .unwrap();
+
+        // Remove middle scores
+        assert_eq!(db.zremrangebyscore("myzset", 2.0, 3.0).unwrap(), 2);
+        assert_eq!(db.zcard("myzset").unwrap(), 2);
+
+        let members = db.zrange("myzset", 0, -1, false).unwrap();
+        assert_eq!(members[0].member, b"a");
+        assert_eq!(members[1].member, b"d");
+
+        // Nonexistent key
+        assert_eq!(db.zremrangebyscore("nokey", 0.0, 100.0).unwrap(), 0);
+    }
+
+    #[test]
+    fn test_zset_type() {
+        let db = Db::open_memory().unwrap();
+
+        db.zadd("myzset", &[ZMember::new(1.0, "value")]).unwrap();
+        assert_eq!(db.key_type("myzset").unwrap(), Some(KeyType::ZSet));
+    }
+
+    #[test]
+    fn test_zset_wrong_type() {
+        let db = Db::open_memory().unwrap();
+
+        // Create a string key
+        db.set("mystring", b"value", None).unwrap();
+
+        // Sorted set operations on string should fail with WrongType
+        assert!(matches!(
+            db.zadd("mystring", &[ZMember::new(1.0, "a")]),
+            Err(KvError::WrongType)
+        ));
+        assert!(matches!(db.zcard("mystring"), Err(KvError::WrongType)));
+        assert!(matches!(db.zscore("mystring", b"a"), Err(KvError::WrongType)));
+        assert!(matches!(db.zrank("mystring", b"a"), Err(KvError::WrongType)));
+        assert!(matches!(db.zrevrank("mystring", b"a"), Err(KvError::WrongType)));
+        assert!(matches!(
+            db.zrange("mystring", 0, -1, false),
+            Err(KvError::WrongType)
+        ));
+        assert!(matches!(
+            db.zrevrange("mystring", 0, -1, false),
+            Err(KvError::WrongType)
+        ));
+        assert!(matches!(
+            db.zrangebyscore("mystring", 0.0, 10.0, None, None),
+            Err(KvError::WrongType)
+        ));
+        assert!(matches!(
+            db.zcount("mystring", 0.0, 10.0),
+            Err(KvError::WrongType)
+        ));
+        assert!(matches!(
+            db.zincrby("mystring", 1.0, b"a"),
+            Err(KvError::WrongType)
+        ));
+        assert!(matches!(
+            db.zremrangebyrank("mystring", 0, -1),
+            Err(KvError::WrongType)
+        ));
+        assert!(matches!(
+            db.zremrangebyscore("mystring", 0.0, 10.0),
+            Err(KvError::WrongType)
+        ));
+    }
+
+    #[test]
+    fn test_zset_score_ties() {
+        let db = Db::open_memory().unwrap();
+
+        // Same score, different members - should be ordered lexicographically
+        db.zadd(
+            "myzset",
+            &[
+                ZMember::new(1.0, "c"),
+                ZMember::new(1.0, "a"),
+                ZMember::new(1.0, "b"),
+            ],
+        )
+        .unwrap();
+
+        let members = db.zrange("myzset", 0, -1, false).unwrap();
+        assert_eq!(members[0].member, b"a");
+        assert_eq!(members[1].member, b"b");
+        assert_eq!(members[2].member, b"c");
+    }
+
+    // --- Session 9: Disk tests for sorted set operations ---
+
+    #[test]
+    fn test_disk_zadd_zcard() {
+        let path = temp_db_path();
+        let db = Db::open(&path).unwrap();
+
+        db.zadd(
+            "myzset",
+            &[
+                ZMember::new(1.0, "a"),
+                ZMember::new(2.0, "b"),
+                ZMember::new(3.0, "c"),
+            ],
+        )
+        .unwrap();
+        assert_eq!(db.zcard("myzset").unwrap(), 3);
+
+        cleanup_db(&path);
+    }
+
+    #[test]
+    fn test_disk_zrem() {
+        let path = temp_db_path();
+        let db = Db::open(&path).unwrap();
+
+        db.zadd(
+            "myzset",
+            &[ZMember::new(1.0, "a"), ZMember::new(2.0, "b")],
+        )
+        .unwrap();
+        db.zrem("myzset", &[b"a"]).unwrap();
+        assert_eq!(db.zcard("myzset").unwrap(), 1);
+
+        cleanup_db(&path);
+    }
+
+    #[test]
+    fn test_disk_zscore_zrank() {
+        let path = temp_db_path();
+        let db = Db::open(&path).unwrap();
+
+        db.zadd(
+            "myzset",
+            &[
+                ZMember::new(1.0, "a"),
+                ZMember::new(2.0, "b"),
+                ZMember::new(3.0, "c"),
+            ],
+        )
+        .unwrap();
+
+        assert_eq!(db.zscore("myzset", b"b").unwrap(), Some(2.0));
+        assert_eq!(db.zrank("myzset", b"b").unwrap(), Some(1));
+        assert_eq!(db.zrevrank("myzset", b"b").unwrap(), Some(1));
+
+        cleanup_db(&path);
+    }
+
+    #[test]
+    fn test_disk_zrange_zrevrange() {
+        let path = temp_db_path();
+        let db = Db::open(&path).unwrap();
+
+        db.zadd(
+            "myzset",
+            &[
+                ZMember::new(1.0, "a"),
+                ZMember::new(2.0, "b"),
+                ZMember::new(3.0, "c"),
+            ],
+        )
+        .unwrap();
+
+        let members = db.zrange("myzset", 0, -1, false).unwrap();
+        assert_eq!(members.len(), 3);
+        assert_eq!(members[0].member, b"a");
+
+        let members = db.zrevrange("myzset", 0, 0, false).unwrap();
+        assert_eq!(members.len(), 1);
+        assert_eq!(members[0].member, b"c");
+
+        cleanup_db(&path);
+    }
+
+    #[test]
+    fn test_disk_zrangebyscore_zcount() {
+        let path = temp_db_path();
+        let db = Db::open(&path).unwrap();
+
+        db.zadd(
+            "myzset",
+            &[
+                ZMember::new(1.0, "a"),
+                ZMember::new(2.0, "b"),
+                ZMember::new(3.0, "c"),
+            ],
+        )
+        .unwrap();
+
+        let members = db.zrangebyscore("myzset", 1.5, 2.5, None, None).unwrap();
+        assert_eq!(members.len(), 1);
+
+        assert_eq!(db.zcount("myzset", 1.0, 3.0).unwrap(), 3);
+
+        cleanup_db(&path);
+    }
+
+    #[test]
+    fn test_disk_zincrby() {
+        let path = temp_db_path();
+        let db = Db::open(&path).unwrap();
+
+        db.zincrby("myzset", 5.0, b"a").unwrap();
+        db.zincrby("myzset", 3.0, b"a").unwrap();
+        assert_eq!(db.zscore("myzset", b"a").unwrap(), Some(8.0));
+
+        cleanup_db(&path);
+    }
+
+    #[test]
+    fn test_disk_zremrange() {
+        let path = temp_db_path();
+        let db = Db::open(&path).unwrap();
+
+        db.zadd(
+            "myzset",
+            &[
+                ZMember::new(1.0, "a"),
+                ZMember::new(2.0, "b"),
+                ZMember::new(3.0, "c"),
+            ],
+        )
+        .unwrap();
+
+        assert_eq!(db.zremrangebyrank("myzset", 0, 0).unwrap(), 1);
+        assert_eq!(db.zcard("myzset").unwrap(), 2);
+
+        assert_eq!(db.zremrangebyscore("myzset", 3.0, 3.0).unwrap(), 1);
+        assert_eq!(db.zcard("myzset").unwrap(), 1);
+
+        cleanup_db(&path);
+    }
+
+    #[test]
+    fn test_disk_zset_persistence() {
+        let path = temp_db_path();
+
+        // Create sorted set and close
+        {
+            let db = Db::open(&path).unwrap();
+            db.zadd(
+                "myzset",
+                &[
+                    ZMember::new(1.0, "a"),
+                    ZMember::new(2.0, "b"),
+                ],
+            )
+            .unwrap();
+        }
+
+        // Reopen and verify
+        {
+            let db = Db::open(&path).unwrap();
+            assert_eq!(db.zcard("myzset").unwrap(), 2);
+            let members = db.zrange("myzset", 0, -1, true).unwrap();
+            assert_eq!(members[0].member, b"a");
+            assert_eq!(members[0].score, 1.0);
+            assert_eq!(members[1].member, b"b");
+            assert_eq!(members[1].score, 2.0);
         }
 
         cleanup_db(&path);

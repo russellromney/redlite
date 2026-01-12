@@ -763,3 +763,416 @@ fn test_list_wrong_type() {
     let r2 = redis_cli(16432, &["LRANGE", "mystring", "0", "-1"]);
     assert!(r2.contains("WRONGTYPE"), "Expected WRONGTYPE, got: {}", r2);
 }
+
+// --- Session 8: Set operations integration tests ---
+
+#[test]
+fn test_sadd_smembers() {
+    let _server = start_server(16433);
+
+    // SADD returns count of new members added
+    let r1 = redis_cli(16433, &["SADD", "myset", "a", "b", "c"]);
+    assert!(check_int(&r1, 3), "Expected 3, got: {}", r1);
+
+    // Adding duplicate members
+    let r2 = redis_cli(16433, &["SADD", "myset", "a", "d"]);
+    assert!(check_int(&r2, 1), "Expected 1, got: {}", r2);
+
+    // SMEMBERS returns all members
+    let members = redis_cli(16433, &["SMEMBERS", "myset"]);
+    assert!(members.contains('a'), "Expected 'a' in members: {}", members);
+    assert!(members.contains('b'), "Expected 'b' in members: {}", members);
+    assert!(members.contains('c'), "Expected 'c' in members: {}", members);
+    assert!(members.contains('d'), "Expected 'd' in members: {}", members);
+}
+
+#[test]
+fn test_srem() {
+    let _server = start_server(16434);
+
+    redis_cli(16434, &["SADD", "myset", "a", "b", "c"]);
+
+    // Remove one member
+    let r1 = redis_cli(16434, &["SREM", "myset", "a"]);
+    assert!(check_int(&r1, 1), "Expected 1, got: {}", r1);
+
+    // Remove nonexistent member
+    let r2 = redis_cli(16434, &["SREM", "myset", "nonexistent"]);
+    assert!(check_int(&r2, 0), "Expected 0, got: {}", r2);
+
+    // Remove from nonexistent key
+    let r3 = redis_cli(16434, &["SREM", "nokey", "x"]);
+    assert!(check_int(&r3, 0), "Expected 0, got: {}", r3);
+}
+
+#[test]
+fn test_sismember() {
+    let _server = start_server(16435);
+
+    redis_cli(16435, &["SADD", "myset", "a", "b"]);
+
+    let r1 = redis_cli(16435, &["SISMEMBER", "myset", "a"]);
+    assert!(check_int(&r1, 1), "Expected 1, got: {}", r1);
+
+    let r2 = redis_cli(16435, &["SISMEMBER", "myset", "c"]);
+    assert!(check_int(&r2, 0), "Expected 0, got: {}", r2);
+
+    // Nonexistent key
+    let r3 = redis_cli(16435, &["SISMEMBER", "nokey", "x"]);
+    assert!(check_int(&r3, 0), "Expected 0, got: {}", r3);
+}
+
+#[test]
+fn test_scard() {
+    let _server = start_server(16436);
+
+    // Empty/nonexistent set
+    let r1 = redis_cli(16436, &["SCARD", "nokey"]);
+    assert!(check_int(&r1, 0), "Expected 0, got: {}", r1);
+
+    redis_cli(16436, &["SADD", "myset", "a", "b", "c"]);
+    let r2 = redis_cli(16436, &["SCARD", "myset"]);
+    assert!(check_int(&r2, 3), "Expected 3, got: {}", r2);
+}
+
+#[test]
+fn test_spop() {
+    let _server = start_server(16437);
+
+    redis_cli(16437, &["SADD", "myset", "a", "b", "c"]);
+
+    // Pop single element
+    let r1 = redis_cli(16437, &["SPOP", "myset"]);
+    assert!(!r1.is_empty() && r1 != "(nil)", "Expected a value, got: {}", r1);
+
+    let card = redis_cli(16437, &["SCARD", "myset"]);
+    assert!(check_int(&card, 2), "Expected 2, got: {}", card);
+
+    // Pop from empty/nonexistent
+    let r2 = redis_cli(16437, &["SPOP", "nokey"]);
+    assert!(r2.is_empty() || r2 == "(nil)", "Expected nil, got: {}", r2);
+}
+
+#[test]
+fn test_srandmember() {
+    let _server = start_server(16438);
+
+    redis_cli(16438, &["SADD", "myset", "a", "b", "c"]);
+
+    // Get random member without removing
+    let r1 = redis_cli(16438, &["SRANDMEMBER", "myset"]);
+    assert!(!r1.is_empty() && r1 != "(nil)", "Expected a value, got: {}", r1);
+
+    // Verify set unchanged
+    let card = redis_cli(16438, &["SCARD", "myset"]);
+    assert!(check_int(&card, 3), "Expected 3, got: {}", card);
+
+    // Get multiple random members
+    let r2 = redis_cli(16438, &["SRANDMEMBER", "myset", "2"]);
+    assert!(!r2.is_empty(), "Expected array, got: {}", r2);
+}
+
+#[test]
+fn test_sdiff() {
+    let _server = start_server(16439);
+
+    redis_cli(16439, &["SADD", "set1", "a", "b", "c"]);
+    redis_cli(16439, &["SADD", "set2", "b", "c", "d"]);
+
+    let diff = redis_cli(16439, &["SDIFF", "set1", "set2"]);
+    assert!(diff.contains('a'), "Expected 'a' in diff: {}", diff);
+    assert!(!diff.contains('b'), "Unexpected 'b' in diff: {}", diff);
+    assert!(!diff.contains('c'), "Unexpected 'c' in diff: {}", diff);
+}
+
+#[test]
+fn test_sinter() {
+    let _server = start_server(16440);
+
+    redis_cli(16440, &["SADD", "set1", "a", "b", "c"]);
+    redis_cli(16440, &["SADD", "set2", "b", "c", "d"]);
+
+    let inter = redis_cli(16440, &["SINTER", "set1", "set2"]);
+    assert!(inter.contains('b'), "Expected 'b' in inter: {}", inter);
+    assert!(inter.contains('c'), "Expected 'c' in inter: {}", inter);
+    assert!(!inter.contains('a'), "Unexpected 'a' in inter: {}", inter);
+    assert!(!inter.contains('d'), "Unexpected 'd' in inter: {}", inter);
+}
+
+#[test]
+fn test_sunion() {
+    let _server = start_server(16441);
+
+    redis_cli(16441, &["SADD", "set1", "a", "b"]);
+    redis_cli(16441, &["SADD", "set2", "b", "c"]);
+
+    let union_result = redis_cli(16441, &["SUNION", "set1", "set2"]);
+    assert!(union_result.contains('a'), "Expected 'a' in union: {}", union_result);
+    assert!(union_result.contains('b'), "Expected 'b' in union: {}", union_result);
+    assert!(union_result.contains('c'), "Expected 'c' in union: {}", union_result);
+}
+
+#[test]
+fn test_set_type() {
+    let _server = start_server(16442);
+
+    redis_cli(16442, &["SADD", "myset", "value"]);
+    assert_eq!(redis_cli(16442, &["TYPE", "myset"]), "set");
+}
+
+#[test]
+fn test_set_wrong_type() {
+    let _server = start_server(16443);
+
+    // Create a string key
+    redis_cli(16443, &["SET", "mystring", "value"]);
+
+    // Set operations on string should fail
+    let r1 = redis_cli(16443, &["SADD", "mystring", "a"]);
+    assert!(r1.contains("WRONGTYPE"), "Expected WRONGTYPE, got: {}", r1);
+
+    let r2 = redis_cli(16443, &["SMEMBERS", "mystring"]);
+    assert!(r2.contains("WRONGTYPE"), "Expected WRONGTYPE, got: {}", r2);
+}
+
+// --- Session 9: Sorted Set integration tests (ports 16444+) ---
+
+#[test]
+fn test_zadd_zcard() {
+    let _server = start_server(16444);
+
+    // ZADD returns count of new members added
+    let r1 = redis_cli(16444, &["ZADD", "myzset", "1", "a", "2", "b", "3", "c"]);
+    assert!(check_int(&r1, 3), "Expected 3, got: {}", r1);
+
+    // ZCARD returns count
+    let r2 = redis_cli(16444, &["ZCARD", "myzset"]);
+    assert!(check_int(&r2, 3), "Expected 3, got: {}", r2);
+
+    // Adding duplicate member (updates score) should return 0 for new members
+    let r3 = redis_cli(16444, &["ZADD", "myzset", "1.5", "a", "4", "d"]);
+    assert!(check_int(&r3, 1), "Expected 1, got: {}", r3);
+
+    let r4 = redis_cli(16444, &["ZCARD", "myzset"]);
+    assert!(check_int(&r4, 4), "Expected 4, got: {}", r4);
+}
+
+#[test]
+fn test_zrem() {
+    let _server = start_server(16445);
+
+    redis_cli(16445, &["ZADD", "myzset", "1", "a", "2", "b", "3", "c"]);
+
+    // Remove one member
+    let r1 = redis_cli(16445, &["ZREM", "myzset", "a"]);
+    assert!(check_int(&r1, 1), "Expected 1, got: {}", r1);
+
+    // Remove nonexistent member
+    let r2 = redis_cli(16445, &["ZREM", "myzset", "nonexistent"]);
+    assert!(check_int(&r2, 0), "Expected 0, got: {}", r2);
+
+    // Remove from nonexistent key
+    let r3 = redis_cli(16445, &["ZREM", "nokey", "x"]);
+    assert!(check_int(&r3, 0), "Expected 0, got: {}", r3);
+}
+
+#[test]
+fn test_zscore() {
+    let _server = start_server(16446);
+
+    redis_cli(16446, &["ZADD", "myzset", "1.5", "a", "2.5", "b"]);
+
+    let r1 = redis_cli(16446, &["ZSCORE", "myzset", "a"]);
+    assert!(r1.contains("1.5"), "Expected 1.5, got: {}", r1);
+
+    let r2 = redis_cli(16446, &["ZSCORE", "myzset", "b"]);
+    assert!(r2.contains("2.5"), "Expected 2.5, got: {}", r2);
+
+    // Nonexistent member
+    let r3 = redis_cli(16446, &["ZSCORE", "myzset", "nonexistent"]);
+    assert!(r3.is_empty() || r3 == "(nil)", "Expected nil, got: {}", r3);
+
+    // Nonexistent key
+    let r4 = redis_cli(16446, &["ZSCORE", "nokey", "x"]);
+    assert!(r4.is_empty() || r4 == "(nil)", "Expected nil, got: {}", r4);
+}
+
+#[test]
+fn test_zrank_zrevrank() {
+    let _server = start_server(16447);
+
+    redis_cli(16447, &["ZADD", "myzset", "1", "a", "2", "b", "3", "c"]);
+
+    // ZRANK (ascending)
+    let r1 = redis_cli(16447, &["ZRANK", "myzset", "a"]);
+    assert!(check_int(&r1, 0), "Expected 0, got: {}", r1);
+
+    let r2 = redis_cli(16447, &["ZRANK", "myzset", "c"]);
+    assert!(check_int(&r2, 2), "Expected 2, got: {}", r2);
+
+    // ZREVRANK (descending)
+    let r3 = redis_cli(16447, &["ZREVRANK", "myzset", "a"]);
+    assert!(check_int(&r3, 2), "Expected 2, got: {}", r3);
+
+    let r4 = redis_cli(16447, &["ZREVRANK", "myzset", "c"]);
+    assert!(check_int(&r4, 0), "Expected 0, got: {}", r4);
+
+    // Nonexistent member
+    let r5 = redis_cli(16447, &["ZRANK", "myzset", "nonexistent"]);
+    assert!(r5.is_empty() || r5 == "(nil)", "Expected nil, got: {}", r5);
+}
+
+#[test]
+fn test_zrange() {
+    let _server = start_server(16448);
+
+    redis_cli(16448, &["ZADD", "myzset", "1", "a", "2", "b", "3", "c"]);
+
+    // Get all members
+    let r1 = redis_cli(16448, &["ZRANGE", "myzset", "0", "-1"]);
+    assert!(r1.contains('a') && r1.contains('b') && r1.contains('c'),
+            "Expected a, b, c in result: {}", r1);
+
+    // Subset
+    let r2 = redis_cli(16448, &["ZRANGE", "myzset", "0", "1"]);
+    assert!(r2.contains('a') && r2.contains('b'), "Expected a, b in result: {}", r2);
+
+    // With WITHSCORES
+    let r3 = redis_cli(16448, &["ZRANGE", "myzset", "0", "-1", "WITHSCORES"]);
+    assert!(r3.contains('a') && r3.contains('1'), "Expected member and score: {}", r3);
+}
+
+#[test]
+fn test_zrevrange() {
+    let _server = start_server(16449);
+
+    redis_cli(16449, &["ZADD", "myzset", "1", "a", "2", "b", "3", "c"]);
+
+    // Get all in reverse
+    let r1 = redis_cli(16449, &["ZREVRANGE", "myzset", "0", "-1"]);
+    // First element should be c (highest score)
+    let lines: Vec<&str> = r1.lines().collect();
+    assert!(!lines.is_empty(), "Expected results, got empty");
+    // The first result should contain 'c'
+    assert!(lines[0].contains('c') || lines[1].contains('c'),
+            "Expected c first in reverse: {}", r1);
+}
+
+#[test]
+fn test_zrangebyscore() {
+    let _server = start_server(16450);
+
+    redis_cli(16450, &["ZADD", "myzset", "1", "a", "2", "b", "3", "c", "4", "d"]);
+
+    // Score range
+    let r1 = redis_cli(16450, &["ZRANGEBYSCORE", "myzset", "2", "3"]);
+    assert!(r1.contains('b') && r1.contains('c'), "Expected b, c in result: {}", r1);
+    assert!(!r1.contains('a') && !r1.contains('d'), "Unexpected a or d in result: {}", r1);
+
+    // With LIMIT
+    let r2 = redis_cli(16450, &["ZRANGEBYSCORE", "myzset", "1", "4", "LIMIT", "1", "2"]);
+    assert!(r2.contains('b') && r2.contains('c'), "Expected b, c with LIMIT: {}", r2);
+
+    // -inf and +inf
+    let r3 = redis_cli(16450, &["ZRANGEBYSCORE", "myzset", "-inf", "+inf"]);
+    assert!(r3.contains('a') && r3.contains('d'), "Expected all with -inf/+inf: {}", r3);
+}
+
+#[test]
+fn test_zcount() {
+    let _server = start_server(16451);
+
+    redis_cli(16451, &["ZADD", "myzset", "1", "a", "2", "b", "3", "c"]);
+
+    let r1 = redis_cli(16451, &["ZCOUNT", "myzset", "1", "3"]);
+    assert!(check_int(&r1, 3), "Expected 3, got: {}", r1);
+
+    let r2 = redis_cli(16451, &["ZCOUNT", "myzset", "1.5", "2.5"]);
+    assert!(check_int(&r2, 1), "Expected 1, got: {}", r2);
+
+    let r3 = redis_cli(16451, &["ZCOUNT", "myzset", "-inf", "+inf"]);
+    assert!(check_int(&r3, 3), "Expected 3, got: {}", r3);
+
+    // Nonexistent key
+    let r4 = redis_cli(16451, &["ZCOUNT", "nokey", "0", "100"]);
+    assert!(check_int(&r4, 0), "Expected 0, got: {}", r4);
+}
+
+#[test]
+fn test_zincrby() {
+    let _server = start_server(16452);
+
+    // Create new member
+    let r1 = redis_cli(16452, &["ZINCRBY", "myzset", "5", "a"]);
+    assert!(r1.contains('5'), "Expected 5, got: {}", r1);
+
+    // Increment existing
+    let r2 = redis_cli(16452, &["ZINCRBY", "myzset", "3", "a"]);
+    assert!(r2.contains('8'), "Expected 8, got: {}", r2);
+
+    // Verify with ZSCORE
+    let r3 = redis_cli(16452, &["ZSCORE", "myzset", "a"]);
+    assert!(r3.contains('8'), "Expected score 8, got: {}", r3);
+}
+
+#[test]
+fn test_zremrangebyrank() {
+    let _server = start_server(16453);
+
+    redis_cli(16453, &["ZADD", "myzset", "1", "a", "2", "b", "3", "c", "4", "d"]);
+
+    // Remove first two
+    let r1 = redis_cli(16453, &["ZREMRANGEBYRANK", "myzset", "0", "1"]);
+    assert!(check_int(&r1, 2), "Expected 2 removed, got: {}", r1);
+
+    let r2 = redis_cli(16453, &["ZCARD", "myzset"]);
+    assert!(check_int(&r2, 2), "Expected 2 remaining, got: {}", r2);
+
+    // Verify remaining members
+    let r3 = redis_cli(16453, &["ZRANGE", "myzset", "0", "-1"]);
+    assert!(r3.contains('c') && r3.contains('d'), "Expected c, d remaining: {}", r3);
+}
+
+#[test]
+fn test_zremrangebyscore() {
+    let _server = start_server(16454);
+
+    redis_cli(16454, &["ZADD", "myzset", "1", "a", "2", "b", "3", "c", "4", "d"]);
+
+    // Remove middle scores
+    let r1 = redis_cli(16454, &["ZREMRANGEBYSCORE", "myzset", "2", "3"]);
+    assert!(check_int(&r1, 2), "Expected 2 removed, got: {}", r1);
+
+    let r2 = redis_cli(16454, &["ZCARD", "myzset"]);
+    assert!(check_int(&r2, 2), "Expected 2 remaining, got: {}", r2);
+
+    // Verify remaining members
+    let r3 = redis_cli(16454, &["ZRANGE", "myzset", "0", "-1"]);
+    assert!(r3.contains('a') && r3.contains('d'), "Expected a, d remaining: {}", r3);
+}
+
+#[test]
+fn test_zset_type() {
+    let _server = start_server(16455);
+
+    redis_cli(16455, &["ZADD", "myzset", "1", "value"]);
+    assert_eq!(redis_cli(16455, &["TYPE", "myzset"]), "zset");
+}
+
+#[test]
+fn test_zset_wrong_type() {
+    let _server = start_server(16456);
+
+    // Create a string key
+    redis_cli(16456, &["SET", "mystring", "value"]);
+
+    // Sorted set operations on string should fail
+    let r1 = redis_cli(16456, &["ZADD", "mystring", "1", "a"]);
+    assert!(r1.contains("WRONGTYPE"), "Expected WRONGTYPE, got: {}", r1);
+
+    let r2 = redis_cli(16456, &["ZCARD", "mystring"]);
+    assert!(r2.contains("WRONGTYPE"), "Expected WRONGTYPE, got: {}", r2);
+
+    let r3 = redis_cli(16456, &["ZRANGE", "mystring", "0", "-1"]);
+    assert!(r3.contains("WRONGTYPE"), "Expected WRONGTYPE, got: {}", r3);
+}
