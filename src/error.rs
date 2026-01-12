@@ -20,6 +20,9 @@ pub enum KvError {
     #[error("index out of range")]
     OutOfRange,
 
+    #[error("no such key")]
+    NoSuchKey,
+
     #[error("invalid cursor")]
     InvalidCursor,
 

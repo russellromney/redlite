@@ -595,3 +595,171 @@ fn test_hash_type() {
     redis_cli(16421, &["HSET", "myhash", "field", "value"]);
     assert_eq!(redis_cli(16421, &["TYPE", "myhash"]), "hash");
 }
+
+// --- Session 7: List operation integration tests ---
+
+#[test]
+fn test_lpush_rpush() {
+    let _server = start_server(16422);
+
+    // LPUSH creates list and prepends
+    let r1 = redis_cli(16422, &["LPUSH", "mylist", "a"]);
+    assert!(check_int(&r1, 1), "Expected 1, got: {}", r1);
+
+    let r2 = redis_cli(16422, &["LPUSH", "mylist", "b", "c"]);
+    assert!(check_int(&r2, 3), "Expected 3, got: {}", r2);
+
+    // RPUSH appends to end
+    let r3 = redis_cli(16422, &["RPUSH", "mylist", "d"]);
+    assert!(check_int(&r3, 4), "Expected 4, got: {}", r3);
+
+    // Check order: c, b, a, d
+    let range = redis_cli(16422, &["LRANGE", "mylist", "0", "-1"]);
+    assert!(range.contains('c') && range.contains('d'), "Unexpected range: {}", range);
+}
+
+#[test]
+fn test_lpop_rpop() {
+    let _server = start_server(16423);
+
+    redis_cli(16423, &["RPUSH", "mylist", "a", "b", "c", "d"]);
+
+    // LPOP single element
+    let r1 = redis_cli(16423, &["LPOP", "mylist"]);
+    assert_eq!(r1, "a", "Expected 'a', got: {}", r1);
+
+    // RPOP single element
+    let r2 = redis_cli(16423, &["RPOP", "mylist"]);
+    assert_eq!(r2, "d", "Expected 'd', got: {}", r2);
+
+    // LPOP with count
+    let r3 = redis_cli(16423, &["LPOP", "mylist", "2"]);
+    assert!(r3.contains('b') && r3.contains('c'), "Expected 'b' and 'c', got: {}", r3);
+
+    // List should be empty now
+    let len = redis_cli(16423, &["LLEN", "mylist"]);
+    assert!(check_int(&len, 0), "Expected 0, got: {}", len);
+}
+
+#[test]
+fn test_lpop_empty() {
+    let _server = start_server(16424);
+
+    // LPOP on non-existent key returns nil
+    let result = redis_cli(16424, &["LPOP", "nonexistent"]);
+    assert!(result.is_empty() || result == "(nil)", "Expected nil, got: {}", result);
+}
+
+#[test]
+fn test_llen() {
+    let _server = start_server(16425);
+
+    // Non-existent key
+    let r1 = redis_cli(16425, &["LLEN", "nonexistent"]);
+    assert!(check_int(&r1, 0), "Expected 0, got: {}", r1);
+
+    redis_cli(16425, &["RPUSH", "mylist", "a", "b", "c"]);
+
+    let r2 = redis_cli(16425, &["LLEN", "mylist"]);
+    assert!(check_int(&r2, 3), "Expected 3, got: {}", r2);
+}
+
+#[test]
+fn test_lrange() {
+    let _server = start_server(16426);
+
+    redis_cli(16426, &["RPUSH", "mylist", "a", "b", "c", "d", "e"]);
+
+    // Full range
+    let r1 = redis_cli(16426, &["LRANGE", "mylist", "0", "-1"]);
+    assert!(r1.contains('a') && r1.contains('e'), "Expected full list, got: {}", r1);
+
+    // Partial range
+    let r2 = redis_cli(16426, &["LRANGE", "mylist", "1", "3"]);
+    assert!(r2.contains('b') && r2.contains('d'), "Expected b-d, got: {}", r2);
+
+    // Negative indices
+    let r3 = redis_cli(16426, &["LRANGE", "mylist", "-2", "-1"]);
+    assert!(r3.contains('d') && r3.contains('e'), "Expected d-e, got: {}", r3);
+}
+
+#[test]
+fn test_lindex() {
+    let _server = start_server(16427);
+
+    redis_cli(16427, &["RPUSH", "mylist", "a", "b", "c"]);
+
+    assert_eq!(redis_cli(16427, &["LINDEX", "mylist", "0"]), "a");
+    assert_eq!(redis_cli(16427, &["LINDEX", "mylist", "2"]), "c");
+    assert_eq!(redis_cli(16427, &["LINDEX", "mylist", "-1"]), "c");
+
+    // Out of bounds
+    let r = redis_cli(16427, &["LINDEX", "mylist", "10"]);
+    assert!(r.is_empty() || r == "(nil)", "Expected nil, got: {}", r);
+}
+
+#[test]
+fn test_lset() {
+    let _server = start_server(16428);
+
+    redis_cli(16428, &["RPUSH", "mylist", "a", "b", "c"]);
+
+    let result = redis_cli(16428, &["LSET", "mylist", "1", "B"]);
+    assert_eq!(result, "OK", "Expected OK, got: {}", result);
+
+    assert_eq!(redis_cli(16428, &["LINDEX", "mylist", "1"]), "B");
+}
+
+#[test]
+fn test_lset_errors() {
+    let _server = start_server(16429);
+
+    // LSET on non-existent key
+    let r1 = redis_cli(16429, &["LSET", "nonexistent", "0", "value"]);
+    assert!(r1.contains("no such key") || r1.contains("ERR"), "Expected error, got: {}", r1);
+
+    redis_cli(16429, &["RPUSH", "mylist", "a"]);
+
+    // LSET out of range
+    let r2 = redis_cli(16429, &["LSET", "mylist", "10", "value"]);
+    assert!(r2.contains("out of range") || r2.contains("ERR"), "Expected error, got: {}", r2);
+}
+
+#[test]
+fn test_ltrim() {
+    let _server = start_server(16430);
+
+    redis_cli(16430, &["RPUSH", "mylist", "a", "b", "c", "d", "e"]);
+
+    let result = redis_cli(16430, &["LTRIM", "mylist", "1", "3"]);
+    assert_eq!(result, "OK", "Expected OK, got: {}", result);
+
+    let len = redis_cli(16430, &["LLEN", "mylist"]);
+    assert!(check_int(&len, 3), "Expected 3, got: {}", len);
+
+    let range = redis_cli(16430, &["LRANGE", "mylist", "0", "-1"]);
+    assert!(range.contains('b') && range.contains('d'), "Expected b-d, got: {}", range);
+}
+
+#[test]
+fn test_list_type() {
+    let _server = start_server(16431);
+
+    redis_cli(16431, &["RPUSH", "mylist", "value"]);
+    assert_eq!(redis_cli(16431, &["TYPE", "mylist"]), "list");
+}
+
+#[test]
+fn test_list_wrong_type() {
+    let _server = start_server(16432);
+
+    // Create a string key
+    redis_cli(16432, &["SET", "mystring", "value"]);
+
+    // List operations on string should fail
+    let r1 = redis_cli(16432, &["LPUSH", "mystring", "a"]);
+    assert!(r1.contains("WRONGTYPE"), "Expected WRONGTYPE, got: {}", r1);
+
+    let r2 = redis_cli(16432, &["LRANGE", "mystring", "0", "-1"]);
+    assert!(r2.contains("WRONGTYPE"), "Expected WRONGTYPE, got: {}", r2);
+}

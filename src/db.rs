@@ -39,7 +39,7 @@ impl Db {
 
     /// Run schema migrations
     fn migrate(&self) -> Result<()> {
-        let conn = self.conn.lock().unwrap();
+        let conn = self.conn.lock().unwrap_or_else(|e| e.into_inner());
         conn.execute_batch(include_str!("schema.sql"))?;
         Ok(())
     }
@@ -49,13 +49,13 @@ impl Db {
         if !(0..=15).contains(&db) {
             return Err(KvError::SyntaxError);
         }
-        *self.current_db.lock().unwrap() = db;
+        *self.current_db.lock().unwrap_or_else(|e| e.into_inner()) = db;
         Ok(())
     }
 
     /// Get current database number
     pub fn current_db(&self) -> i32 {
-        *self.current_db.lock().unwrap()
+        *self.current_db.lock().unwrap_or_else(|e| e.into_inner())
     }
 
     /// Current time in milliseconds since epoch
@@ -68,7 +68,7 @@ impl Db {
 
     /// GET key
     pub fn get(&self, key: &str) -> Result<Option<Vec<u8>>> {
-        let conn = self.conn.lock().unwrap();
+        let conn = self.conn.lock().unwrap_or_else(|e| e.into_inner());
         let db = self.current_db();
         let now = Self::now_ms();
 
@@ -114,7 +114,7 @@ impl Db {
 
     /// SET with options, returns whether the key was set
     pub fn set_opts(&self, key: &str, value: &[u8], opts: SetOptions) -> Result<bool> {
-        let conn = self.conn.lock().unwrap();
+        let conn = self.conn.lock().unwrap_or_else(|e| e.into_inner());
         let db = self.current_db();
         let now = Self::now_ms();
 
@@ -171,7 +171,7 @@ impl Db {
             return Ok(0);
         }
 
-        let conn = self.conn.lock().unwrap();
+        let conn = self.conn.lock().unwrap_or_else(|e| e.into_inner());
         let db = self.current_db();
 
         let placeholders: String = (0..keys.len())
@@ -197,7 +197,7 @@ impl Db {
 
     /// TYPE key - returns key type or None if not found
     pub fn key_type(&self, key: &str) -> Result<Option<KeyType>> {
-        let conn = self.conn.lock().unwrap();
+        let conn = self.conn.lock().unwrap_or_else(|e| e.into_inner());
         let db = self.current_db();
         let now = Self::now_ms();
 
@@ -218,7 +218,7 @@ impl Db {
 
     /// TTL key - returns remaining TTL in seconds (-2 if no key, -1 if no expiry)
     pub fn ttl(&self, key: &str) -> Result<i64> {
-        let conn = self.conn.lock().unwrap();
+        let conn = self.conn.lock().unwrap_or_else(|e| e.into_inner());
         let db = self.current_db();
         let now = Self::now_ms();
 
@@ -240,7 +240,7 @@ impl Db {
 
     /// PTTL key - returns remaining TTL in milliseconds (-2 if no key, -1 if no expiry)
     pub fn pttl(&self, key: &str) -> Result<i64> {
-        let conn = self.conn.lock().unwrap();
+        let conn = self.conn.lock().unwrap_or_else(|e| e.into_inner());
         let db = self.current_db();
         let now = Self::now_ms();
 
@@ -266,7 +266,7 @@ impl Db {
             return Ok(0);
         }
 
-        let conn = self.conn.lock().unwrap();
+        let conn = self.conn.lock().unwrap_or_else(|e| e.into_inner());
         let db = self.current_db();
         let now = Self::now_ms();
 
@@ -292,7 +292,7 @@ impl Db {
 
     /// EXPIRE key seconds - set TTL on key
     pub fn expire(&self, key: &str, seconds: i64) -> Result<bool> {
-        let conn = self.conn.lock().unwrap();
+        let conn = self.conn.lock().unwrap_or_else(|e| e.into_inner());
         let db = self.current_db();
         let now = Self::now_ms();
         let expire_at = now + (seconds * 1000);
@@ -310,7 +310,7 @@ impl Db {
 
     /// KEYS pattern - return all keys matching glob pattern
     pub fn keys(&self, pattern: &str) -> Result<Vec<String>> {
-        let conn = self.conn.lock().unwrap();
+        let conn = self.conn.lock().unwrap_or_else(|e| e.into_inner());
         let db = self.current_db();
         let now = Self::now_ms();
 
@@ -338,7 +338,7 @@ impl Db {
         pattern: Option<&str>,
         count: usize,
     ) -> Result<(u64, Vec<String>)> {
-        let conn = self.conn.lock().unwrap();
+        let conn = self.conn.lock().unwrap_or_else(|e| e.into_inner());
         let db = self.current_db();
         let now = Self::now_ms();
 
@@ -403,11 +403,11 @@ impl Db {
 
     /// INCRBY key increment - increment by integer amount
     pub fn incrby(&self, key: &str, increment: i64) -> Result<i64> {
-        let conn = self.conn.lock().unwrap();
+        let conn = self.conn.lock().unwrap_or_else(|e| e.into_inner());
         let db = self.current_db();
         let now = Self::now_ms();
 
-        // Get current value
+        // Get current value and TTL
         let result: std::result::Result<(Vec<u8>, Option<i64>), _> = conn.query_row(
             "SELECT s.value, k.expire_at
              FROM keys k
@@ -417,38 +417,39 @@ impl Db {
             |row| Ok((row.get(0)?, row.get(1)?)),
         );
 
-        let current_val: i64 = match result {
+        let (current_val, preserve_ttl): (i64, Option<i64>) = match result {
             Ok((value, expire_at)) => {
                 // Check expiration
                 if let Some(exp) = expire_at {
                     if exp <= now {
-                        0 // Expired, treat as non-existent
+                        (0, None) // Expired, treat as non-existent
                     } else {
-                        // Parse as integer
+                        // Parse as integer, preserve TTL
                         let s = std::str::from_utf8(&value).map_err(|_| KvError::NotInteger)?;
-                        s.parse().map_err(|_| KvError::NotInteger)?
+                        let val = s.parse().map_err(|_| KvError::NotInteger)?;
+                        (val, Some(exp))
                     }
                 } else {
                     let s = std::str::from_utf8(&value).map_err(|_| KvError::NotInteger)?;
-                    s.parse().map_err(|_| KvError::NotInteger)?
+                    let val = s.parse().map_err(|_| KvError::NotInteger)?;
+                    (val, None) // No TTL to preserve
                 }
             }
-            Err(rusqlite::Error::QueryReturnedNoRows) => 0,
+            Err(rusqlite::Error::QueryReturnedNoRows) => (0, None),
             Err(e) => return Err(e.into()),
         };
 
         let new_val = current_val + increment;
         let new_val_bytes = new_val.to_string().into_bytes();
 
-        // Upsert key
+        // Upsert key (preserve existing TTL if key existed)
         conn.execute(
             "INSERT INTO keys (db, key, type, expire_at, updated_at)
-             VALUES (?1, ?2, ?3, NULL, ?4)
+             VALUES (?1, ?2, ?3, ?4, ?5)
              ON CONFLICT(db, key) DO UPDATE SET
                  type = excluded.type,
-                 expire_at = NULL,
                  updated_at = excluded.updated_at",
-            params![db, key, KeyType::String as i32, now],
+            params![db, key, KeyType::String as i32, preserve_ttl, now],
         )?;
 
         // Get key_id
@@ -475,11 +476,11 @@ impl Db {
 
     /// INCRBYFLOAT key increment - increment by float amount
     pub fn incrbyfloat(&self, key: &str, increment: f64) -> Result<String> {
-        let conn = self.conn.lock().unwrap();
+        let conn = self.conn.lock().unwrap_or_else(|e| e.into_inner());
         let db = self.current_db();
         let now = Self::now_ms();
 
-        // Get current value
+        // Get current value and TTL
         let result: std::result::Result<(Vec<u8>, Option<i64>), _> = conn.query_row(
             "SELECT s.value, k.expire_at
              FROM keys k
@@ -489,22 +490,24 @@ impl Db {
             |row| Ok((row.get(0)?, row.get(1)?)),
         );
 
-        let current_val: f64 = match result {
+        let (current_val, preserve_ttl): (f64, Option<i64>) = match result {
             Ok((value, expire_at)) => {
                 // Check expiration
                 if let Some(exp) = expire_at {
                     if exp <= now {
-                        0.0 // Expired, treat as non-existent
+                        (0.0, None) // Expired, treat as non-existent
                     } else {
                         let s = std::str::from_utf8(&value).map_err(|_| KvError::NotFloat)?;
-                        s.parse().map_err(|_| KvError::NotFloat)?
+                        let val = s.parse().map_err(|_| KvError::NotFloat)?;
+                        (val, Some(exp))
                     }
                 } else {
                     let s = std::str::from_utf8(&value).map_err(|_| KvError::NotFloat)?;
-                    s.parse().map_err(|_| KvError::NotFloat)?
+                    let val = s.parse().map_err(|_| KvError::NotFloat)?;
+                    (val, None)
                 }
             }
-            Err(rusqlite::Error::QueryReturnedNoRows) => 0.0,
+            Err(rusqlite::Error::QueryReturnedNoRows) => (0.0, None),
             Err(e) => return Err(e.into()),
         };
 
@@ -521,15 +524,14 @@ impl Db {
 
         let new_val_bytes = formatted.as_bytes();
 
-        // Upsert key
+        // Upsert key (preserve existing TTL if key existed)
         conn.execute(
             "INSERT INTO keys (db, key, type, expire_at, updated_at)
-             VALUES (?1, ?2, ?3, NULL, ?4)
+             VALUES (?1, ?2, ?3, ?4, ?5)
              ON CONFLICT(db, key) DO UPDATE SET
                  type = excluded.type,
-                 expire_at = NULL,
                  updated_at = excluded.updated_at",
-            params![db, key, KeyType::String as i32, now],
+            params![db, key, KeyType::String as i32, preserve_ttl, now],
         )?;
 
         // Get key_id
@@ -558,15 +560,62 @@ impl Db {
 
     /// MSET key value [key value ...] - set multiple key-value pairs atomically
     pub fn mset(&self, pairs: &[(&str, &[u8])]) -> Result<()> {
-        for (key, value) in pairs {
-            self.set(key, value, None)?;
+        if pairs.is_empty() {
+            return Ok(());
         }
-        Ok(())
+
+        let conn = self.conn.lock().unwrap_or_else(|e| e.into_inner());
+        let db = self.current_db();
+        let now = Self::now_ms();
+
+        // Use a transaction for atomicity
+        conn.execute("BEGIN IMMEDIATE", [])?;
+
+        let result = (|| -> Result<()> {
+            for (key, value) in pairs {
+                // Upsert key
+                conn.execute(
+                    "INSERT INTO keys (db, key, type, expire_at, updated_at)
+                     VALUES (?1, ?2, ?3, NULL, ?4)
+                     ON CONFLICT(db, key) DO UPDATE SET
+                         type = excluded.type,
+                         expire_at = excluded.expire_at,
+                         updated_at = excluded.updated_at",
+                    params![db, key, KeyType::String as i32, now],
+                )?;
+
+                // Get key_id
+                let key_id: i64 = conn.query_row(
+                    "SELECT id FROM keys WHERE db = ?1 AND key = ?2",
+                    params![db, key],
+                    |row| row.get(0),
+                )?;
+
+                // Upsert value
+                conn.execute(
+                    "INSERT INTO strings (key_id, value) VALUES (?1, ?2)
+                     ON CONFLICT(key_id) DO UPDATE SET value = excluded.value",
+                    params![key_id, *value],
+                )?;
+            }
+            Ok(())
+        })();
+
+        match result {
+            Ok(()) => {
+                conn.execute("COMMIT", [])?;
+                Ok(())
+            }
+            Err(e) => {
+                let _ = conn.execute("ROLLBACK", []);
+                Err(e)
+            }
+        }
     }
 
     /// APPEND key value - append to string, create if not exists
     pub fn append(&self, key: &str, value: &[u8]) -> Result<i64> {
-        let conn = self.conn.lock().unwrap();
+        let conn = self.conn.lock().unwrap_or_else(|e| e.into_inner());
         let db = self.current_db();
         let now = Self::now_ms();
 
@@ -597,15 +646,15 @@ impl Db {
                 new_value.extend_from_slice(value);
                 let new_len = new_value.len() as i64;
 
-                // Update value
+                // Update value (preserve existing TTL - Redis behavior)
                 conn.execute(
                     "UPDATE strings SET value = ?1 WHERE key_id = ?2",
                     params![new_value, key_id],
                 )?;
 
-                // Clear expiration (Redis does this on APPEND)
+                // Update timestamp but preserve expiration
                 conn.execute(
-                    "UPDATE keys SET expire_at = NULL, updated_at = ?1 WHERE id = ?2",
+                    "UPDATE keys SET updated_at = ?1 WHERE id = ?2",
                     params![now, key_id],
                 )?;
 
@@ -778,7 +827,7 @@ impl Db {
             return Ok(0);
         }
 
-        let conn = self.conn.lock().unwrap();
+        let conn = self.conn.lock().unwrap_or_else(|e| e.into_inner());
         let key_id = self.get_or_create_hash_key(&conn, key)?;
 
         let mut new_fields = 0i64;
@@ -816,7 +865,7 @@ impl Db {
 
     /// HGET key field - get hash field value
     pub fn hget(&self, key: &str, field: &str) -> Result<Option<Vec<u8>>> {
-        let conn = self.conn.lock().unwrap();
+        let conn = self.conn.lock().unwrap_or_else(|e| e.into_inner());
 
         let key_id = match self.get_hash_key_id(&conn, key)? {
             Some(id) => id,
@@ -838,7 +887,7 @@ impl Db {
 
     /// HMGET key field [field ...] - get multiple hash field values
     pub fn hmget(&self, key: &str, fields: &[&str]) -> Result<Vec<Option<Vec<u8>>>> {
-        let conn = self.conn.lock().unwrap();
+        let conn = self.conn.lock().unwrap_or_else(|e| e.into_inner());
 
         let key_id = match self.get_hash_key_id(&conn, key)? {
             Some(id) => id,
@@ -865,7 +914,7 @@ impl Db {
 
     /// HGETALL key - get all field-value pairs
     pub fn hgetall(&self, key: &str) -> Result<Vec<(String, Vec<u8>)>> {
-        let conn = self.conn.lock().unwrap();
+        let conn = self.conn.lock().unwrap_or_else(|e| e.into_inner());
 
         let key_id = match self.get_hash_key_id(&conn, key)? {
             Some(id) => id,
@@ -891,7 +940,7 @@ impl Db {
             return Ok(0);
         }
 
-        let conn = self.conn.lock().unwrap();
+        let conn = self.conn.lock().unwrap_or_else(|e| e.into_inner());
 
         let key_id = match self.get_hash_key_id(&conn, key)? {
             Some(id) => id,
@@ -932,7 +981,7 @@ impl Db {
 
     /// HEXISTS key field - check if field exists in hash
     pub fn hexists(&self, key: &str, field: &str) -> Result<bool> {
-        let conn = self.conn.lock().unwrap();
+        let conn = self.conn.lock().unwrap_or_else(|e| e.into_inner());
 
         let key_id = match self.get_hash_key_id(&conn, key)? {
             Some(id) => id,
@@ -952,7 +1001,7 @@ impl Db {
 
     /// HKEYS key - get all field names
     pub fn hkeys(&self, key: &str) -> Result<Vec<String>> {
-        let conn = self.conn.lock().unwrap();
+        let conn = self.conn.lock().unwrap_or_else(|e| e.into_inner());
 
         let key_id = match self.get_hash_key_id(&conn, key)? {
             Some(id) => id,
@@ -972,7 +1021,7 @@ impl Db {
 
     /// HVALS key - get all values
     pub fn hvals(&self, key: &str) -> Result<Vec<Vec<u8>>> {
-        let conn = self.conn.lock().unwrap();
+        let conn = self.conn.lock().unwrap_or_else(|e| e.into_inner());
 
         let key_id = match self.get_hash_key_id(&conn, key)? {
             Some(id) => id,
@@ -992,7 +1041,7 @@ impl Db {
 
     /// HLEN key - get number of fields in hash
     pub fn hlen(&self, key: &str) -> Result<i64> {
-        let conn = self.conn.lock().unwrap();
+        let conn = self.conn.lock().unwrap_or_else(|e| e.into_inner());
 
         let key_id = match self.get_hash_key_id(&conn, key)? {
             Some(id) => id,
@@ -1010,7 +1059,7 @@ impl Db {
 
     /// HINCRBY key field increment - increment hash field by integer
     pub fn hincrby(&self, key: &str, field: &str, increment: i64) -> Result<i64> {
-        let conn = self.conn.lock().unwrap();
+        let conn = self.conn.lock().unwrap_or_else(|e| e.into_inner());
         let key_id = self.get_or_create_hash_key(&conn, key)?;
 
         // Get current value
@@ -1051,7 +1100,7 @@ impl Db {
 
     /// HINCRBYFLOAT key field increment - increment hash field by float
     pub fn hincrbyfloat(&self, key: &str, field: &str, increment: f64) -> Result<String> {
-        let conn = self.conn.lock().unwrap();
+        let conn = self.conn.lock().unwrap_or_else(|e| e.into_inner());
         let key_id = self.get_or_create_hash_key(&conn, key)?;
 
         // Get current value
@@ -1101,7 +1150,7 @@ impl Db {
 
     /// HSETNX key field value - set field only if it doesn't exist
     pub fn hsetnx(&self, key: &str, field: &str, value: &[u8]) -> Result<bool> {
-        let conn = self.conn.lock().unwrap();
+        let conn = self.conn.lock().unwrap_or_else(|e| e.into_inner());
         let key_id = self.get_or_create_hash_key(&conn, key)?;
 
         // Check if field exists
@@ -1131,6 +1180,535 @@ impl Db {
         )?;
 
         Ok(true)
+    }
+
+    // --- Session 7: List Operations ---
+
+    /// Gap size for list positioning (allows efficient inserts without reindexing)
+    const LIST_GAP: i64 = 1_000_000;
+
+    /// Helper to get or create a list key, returns key_id
+    fn get_or_create_list_key(&self, conn: &Connection, key: &str) -> Result<i64> {
+        let db = self.current_db();
+        let now = Self::now_ms();
+
+        let existing: std::result::Result<(i64, i32, Option<i64>), _> = conn.query_row(
+            "SELECT id, type, expire_at FROM keys WHERE db = ?1 AND key = ?2",
+            params![db, key],
+            |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+        );
+
+        match existing {
+            Ok((key_id, key_type, expire_at)) => {
+                // Check expiration
+                if let Some(exp) = expire_at {
+                    if exp <= now {
+                        // Expired - delete and create new
+                        conn.execute("DELETE FROM keys WHERE id = ?1", params![key_id])?;
+                        return self.create_list_key(conn, key);
+                    }
+                }
+                // Check type
+                if key_type != KeyType::List as i32 {
+                    return Err(KvError::WrongType);
+                }
+                Ok(key_id)
+            }
+            Err(rusqlite::Error::QueryReturnedNoRows) => self.create_list_key(conn, key),
+            Err(e) => Err(e.into()),
+        }
+    }
+
+    fn create_list_key(&self, conn: &Connection, key: &str) -> Result<i64> {
+        let db = self.current_db();
+        let now = Self::now_ms();
+
+        conn.execute(
+            "INSERT INTO keys (db, key, type, updated_at) VALUES (?1, ?2, ?3, ?4)",
+            params![db, key, KeyType::List as i32, now],
+        )?;
+
+        Ok(conn.last_insert_rowid())
+    }
+
+    /// Helper to get list key_id if it exists and is not expired
+    fn get_list_key_id(&self, conn: &Connection, key: &str) -> Result<Option<i64>> {
+        let db = self.current_db();
+        let now = Self::now_ms();
+
+        let result: std::result::Result<(i64, i32, Option<i64>), _> = conn.query_row(
+            "SELECT id, type, expire_at FROM keys WHERE db = ?1 AND key = ?2",
+            params![db, key],
+            |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+        );
+
+        match result {
+            Ok((key_id, key_type, expire_at)) => {
+                // Check expiration
+                if let Some(exp) = expire_at {
+                    if exp <= now {
+                        return Ok(None);
+                    }
+                }
+                // Check type
+                if key_type != KeyType::List as i32 {
+                    return Err(KvError::WrongType);
+                }
+                Ok(Some(key_id))
+            }
+            Err(rusqlite::Error::QueryReturnedNoRows) => Ok(None),
+            Err(e) => Err(e.into()),
+        }
+    }
+
+    /// LPUSH key element [element ...] - prepend elements to list, returns length
+    pub fn lpush(&self, key: &str, values: &[&[u8]]) -> Result<i64> {
+        if values.is_empty() {
+            return Ok(0);
+        }
+
+        let conn = self.conn.lock().unwrap_or_else(|e| e.into_inner());
+        let key_id = self.get_or_create_list_key(&conn, key)?;
+
+        // Get current min position (or start at 0 if empty)
+        let min_pos: i64 = conn
+            .query_row(
+                "SELECT MIN(pos) FROM lists WHERE key_id = ?1",
+                params![key_id],
+                |row| row.get::<_, Option<i64>>(0),
+            )
+            .unwrap_or(None)
+            .unwrap_or(Self::LIST_GAP);
+
+        // Insert values in reverse order (so first value ends up at head)
+        for (i, value) in values.iter().enumerate() {
+            let pos = min_pos - ((i as i64 + 1) * Self::LIST_GAP);
+            conn.execute(
+                "INSERT INTO lists (key_id, pos, value) VALUES (?1, ?2, ?3)",
+                params![key_id, pos, value],
+            )?;
+        }
+
+        // Get and return new length
+        let length: i64 = conn.query_row(
+            "SELECT COUNT(*) FROM lists WHERE key_id = ?1",
+            params![key_id],
+            |row| row.get(0),
+        )?;
+
+        // Update key timestamp
+        let now = Self::now_ms();
+        conn.execute(
+            "UPDATE keys SET updated_at = ?1 WHERE id = ?2",
+            params![now, key_id],
+        )?;
+
+        Ok(length)
+    }
+
+    /// RPUSH key element [element ...] - append elements to list, returns length
+    pub fn rpush(&self, key: &str, values: &[&[u8]]) -> Result<i64> {
+        if values.is_empty() {
+            return Ok(0);
+        }
+
+        let conn = self.conn.lock().unwrap_or_else(|e| e.into_inner());
+        let key_id = self.get_or_create_list_key(&conn, key)?;
+
+        // Get current max position (or start at 0 if empty)
+        let max_pos: i64 = conn
+            .query_row(
+                "SELECT MAX(pos) FROM lists WHERE key_id = ?1",
+                params![key_id],
+                |row| row.get::<_, Option<i64>>(0),
+            )
+            .unwrap_or(None)
+            .unwrap_or(0);
+
+        // Insert values in order
+        for (i, value) in values.iter().enumerate() {
+            let pos = max_pos + ((i as i64 + 1) * Self::LIST_GAP);
+            conn.execute(
+                "INSERT INTO lists (key_id, pos, value) VALUES (?1, ?2, ?3)",
+                params![key_id, pos, value],
+            )?;
+        }
+
+        // Get and return new length
+        let length: i64 = conn.query_row(
+            "SELECT COUNT(*) FROM lists WHERE key_id = ?1",
+            params![key_id],
+            |row| row.get(0),
+        )?;
+
+        // Update key timestamp
+        let now = Self::now_ms();
+        conn.execute(
+            "UPDATE keys SET updated_at = ?1 WHERE id = ?2",
+            params![now, key_id],
+        )?;
+
+        Ok(length)
+    }
+
+    /// LPOP key [count] - remove and return elements from head
+    pub fn lpop(&self, key: &str, count: Option<usize>) -> Result<Vec<Vec<u8>>> {
+        let conn = self.conn.lock().unwrap_or_else(|e| e.into_inner());
+
+        let key_id = match self.get_list_key_id(&conn, key)? {
+            Some(id) => id,
+            None => return Ok(vec![]),
+        };
+
+        let count = count.unwrap_or(1);
+
+        // Get elements from head (lowest positions)
+        let mut stmt = conn.prepare(
+            "SELECT pos, value FROM lists WHERE key_id = ?1 ORDER BY pos ASC LIMIT ?2",
+        )?;
+        let rows = stmt.query_map(params![key_id, count as i64], |row| {
+            Ok((row.get::<_, i64>(0)?, row.get::<_, Vec<u8>>(1)?))
+        })?;
+
+        let mut results = Vec::new();
+        let mut positions = Vec::new();
+        for row in rows {
+            let (pos, value) = row?;
+            positions.push(pos);
+            results.push(value);
+        }
+
+        // Delete popped elements
+        for pos in &positions {
+            conn.execute(
+                "DELETE FROM lists WHERE key_id = ?1 AND pos = ?2",
+                params![key_id, pos],
+            )?;
+        }
+
+        // Clean up empty list
+        let remaining: i64 = conn.query_row(
+            "SELECT COUNT(*) FROM lists WHERE key_id = ?1",
+            params![key_id],
+            |row| row.get(0),
+        )?;
+
+        if remaining == 0 {
+            conn.execute("DELETE FROM keys WHERE id = ?1", params![key_id])?;
+        } else {
+            // Update timestamp
+            let now = Self::now_ms();
+            conn.execute(
+                "UPDATE keys SET updated_at = ?1 WHERE id = ?2",
+                params![now, key_id],
+            )?;
+        }
+
+        Ok(results)
+    }
+
+    /// RPOP key [count] - remove and return elements from tail
+    pub fn rpop(&self, key: &str, count: Option<usize>) -> Result<Vec<Vec<u8>>> {
+        let conn = self.conn.lock().unwrap_or_else(|e| e.into_inner());
+
+        let key_id = match self.get_list_key_id(&conn, key)? {
+            Some(id) => id,
+            None => return Ok(vec![]),
+        };
+
+        let count = count.unwrap_or(1);
+
+        // Get elements from tail (highest positions)
+        let mut stmt = conn.prepare(
+            "SELECT pos, value FROM lists WHERE key_id = ?1 ORDER BY pos DESC LIMIT ?2",
+        )?;
+        let rows = stmt.query_map(params![key_id, count as i64], |row| {
+            Ok((row.get::<_, i64>(0)?, row.get::<_, Vec<u8>>(1)?))
+        })?;
+
+        let mut results = Vec::new();
+        let mut positions = Vec::new();
+        for row in rows {
+            let (pos, value) = row?;
+            positions.push(pos);
+            results.push(value);
+        }
+
+        // Delete popped elements
+        for pos in &positions {
+            conn.execute(
+                "DELETE FROM lists WHERE key_id = ?1 AND pos = ?2",
+                params![key_id, pos],
+            )?;
+        }
+
+        // Clean up empty list
+        let remaining: i64 = conn.query_row(
+            "SELECT COUNT(*) FROM lists WHERE key_id = ?1",
+            params![key_id],
+            |row| row.get(0),
+        )?;
+
+        if remaining == 0 {
+            conn.execute("DELETE FROM keys WHERE id = ?1", params![key_id])?;
+        } else {
+            // Update timestamp
+            let now = Self::now_ms();
+            conn.execute(
+                "UPDATE keys SET updated_at = ?1 WHERE id = ?2",
+                params![now, key_id],
+            )?;
+        }
+
+        Ok(results)
+    }
+
+    /// LLEN key - get list length
+    pub fn llen(&self, key: &str) -> Result<i64> {
+        let conn = self.conn.lock().unwrap_or_else(|e| e.into_inner());
+
+        let key_id = match self.get_list_key_id(&conn, key)? {
+            Some(id) => id,
+            None => return Ok(0),
+        };
+
+        let count: i64 = conn.query_row(
+            "SELECT COUNT(*) FROM lists WHERE key_id = ?1",
+            params![key_id],
+            |row| row.get(0),
+        )?;
+
+        Ok(count)
+    }
+
+    /// LRANGE key start stop - get range of elements
+    pub fn lrange(&self, key: &str, start: i64, stop: i64) -> Result<Vec<Vec<u8>>> {
+        let conn = self.conn.lock().unwrap_or_else(|e| e.into_inner());
+
+        let key_id = match self.get_list_key_id(&conn, key)? {
+            Some(id) => id,
+            None => return Ok(vec![]),
+        };
+
+        // Get list length
+        let len: i64 = conn.query_row(
+            "SELECT COUNT(*) FROM lists WHERE key_id = ?1",
+            params![key_id],
+            |row| row.get(0),
+        )?;
+
+        if len == 0 {
+            return Ok(vec![]);
+        }
+
+        // Convert negative indices to positive
+        let start = if start < 0 {
+            (len + start).max(0)
+        } else {
+            start.min(len - 1)
+        };
+
+        let stop = if stop < 0 {
+            (len + stop).max(0)
+        } else {
+            stop.min(len - 1)
+        };
+
+        if start > stop {
+            return Ok(vec![]);
+        }
+
+        let count = stop - start + 1;
+
+        // Get elements by logical index (ordered by position)
+        let mut stmt = conn.prepare(
+            "SELECT value FROM lists WHERE key_id = ?1 ORDER BY pos ASC LIMIT ?2 OFFSET ?3",
+        )?;
+        let rows = stmt.query_map(params![key_id, count, start], |row| row.get::<_, Vec<u8>>(0))?;
+
+        let mut results = Vec::new();
+        for row in rows {
+            results.push(row?);
+        }
+
+        Ok(results)
+    }
+
+    /// LINDEX key index - get element by index
+    pub fn lindex(&self, key: &str, index: i64) -> Result<Option<Vec<u8>>> {
+        let conn = self.conn.lock().unwrap_or_else(|e| e.into_inner());
+
+        let key_id = match self.get_list_key_id(&conn, key)? {
+            Some(id) => id,
+            None => return Ok(None),
+        };
+
+        // Get list length
+        let len: i64 = conn.query_row(
+            "SELECT COUNT(*) FROM lists WHERE key_id = ?1",
+            params![key_id],
+            |row| row.get(0),
+        )?;
+
+        if len == 0 {
+            return Ok(None);
+        }
+
+        // Convert negative index
+        let index = if index < 0 { len + index } else { index };
+
+        if index < 0 || index >= len {
+            return Ok(None);
+        }
+
+        // Get element at logical index
+        let result: std::result::Result<Vec<u8>, _> = conn.query_row(
+            "SELECT value FROM lists WHERE key_id = ?1 ORDER BY pos ASC LIMIT 1 OFFSET ?2",
+            params![key_id, index],
+            |row| row.get(0),
+        );
+
+        match result {
+            Ok(value) => Ok(Some(value)),
+            Err(rusqlite::Error::QueryReturnedNoRows) => Ok(None),
+            Err(e) => Err(e.into()),
+        }
+    }
+
+    /// LSET key index element - set element at index
+    pub fn lset(&self, key: &str, index: i64, value: &[u8]) -> Result<()> {
+        let conn = self.conn.lock().unwrap_or_else(|e| e.into_inner());
+
+        let key_id = match self.get_list_key_id(&conn, key)? {
+            Some(id) => id,
+            None => return Err(KvError::NoSuchKey),
+        };
+
+        // Get list length
+        let len: i64 = conn.query_row(
+            "SELECT COUNT(*) FROM lists WHERE key_id = ?1",
+            params![key_id],
+            |row| row.get(0),
+        )?;
+
+        if len == 0 {
+            return Err(KvError::OutOfRange);
+        }
+
+        // Convert negative index
+        let index = if index < 0 { len + index } else { index };
+
+        if index < 0 || index >= len {
+            return Err(KvError::OutOfRange);
+        }
+
+        // Get position at logical index
+        let pos: i64 = conn.query_row(
+            "SELECT pos FROM lists WHERE key_id = ?1 ORDER BY pos ASC LIMIT 1 OFFSET ?2",
+            params![key_id, index],
+            |row| row.get(0),
+        )?;
+
+        // Update value
+        conn.execute(
+            "UPDATE lists SET value = ?1 WHERE key_id = ?2 AND pos = ?3",
+            params![value, key_id, pos],
+        )?;
+
+        // Update key timestamp
+        let now = Self::now_ms();
+        conn.execute(
+            "UPDATE keys SET updated_at = ?1 WHERE id = ?2",
+            params![now, key_id],
+        )?;
+
+        Ok(())
+    }
+
+    /// LTRIM key start stop - trim list to specified range
+    pub fn ltrim(&self, key: &str, start: i64, stop: i64) -> Result<()> {
+        let conn = self.conn.lock().unwrap_or_else(|e| e.into_inner());
+
+        let key_id = match self.get_list_key_id(&conn, key)? {
+            Some(id) => id,
+            None => return Ok(()), // Non-existent key is OK for LTRIM
+        };
+
+        // Get list length
+        let len: i64 = conn.query_row(
+            "SELECT COUNT(*) FROM lists WHERE key_id = ?1",
+            params![key_id],
+            |row| row.get(0),
+        )?;
+
+        if len == 0 {
+            return Ok(());
+        }
+
+        // Convert negative indices
+        let start = if start < 0 {
+            (len + start).max(0)
+        } else {
+            start
+        };
+
+        let stop = if stop < 0 {
+            len + stop
+        } else {
+            stop.min(len - 1)
+        };
+
+        // If range is invalid or empty, delete all elements
+        if start > stop || start >= len {
+            conn.execute("DELETE FROM lists WHERE key_id = ?1", params![key_id])?;
+            conn.execute("DELETE FROM keys WHERE id = ?1", params![key_id])?;
+            return Ok(());
+        }
+
+        // Get positions to keep
+        let mut stmt = conn.prepare(
+            "SELECT pos FROM lists WHERE key_id = ?1 ORDER BY pos ASC",
+        )?;
+        let rows = stmt.query_map(params![key_id], |row| row.get::<_, i64>(0))?;
+
+        let positions: Vec<i64> = rows.filter_map(|r| r.ok()).collect();
+
+        // Collect positions to delete (outside the keep range)
+        let mut to_delete = Vec::new();
+        for (i, &pos) in positions.iter().enumerate() {
+            let idx = i as i64;
+            if idx < start || idx > stop {
+                to_delete.push(pos);
+            }
+        }
+
+        // Delete positions outside range
+        for pos in &to_delete {
+            conn.execute(
+                "DELETE FROM lists WHERE key_id = ?1 AND pos = ?2",
+                params![key_id, pos],
+            )?;
+        }
+
+        // Check if list is now empty
+        let remaining: i64 = conn.query_row(
+            "SELECT COUNT(*) FROM lists WHERE key_id = ?1",
+            params![key_id],
+            |row| row.get(0),
+        )?;
+
+        if remaining == 0 {
+            conn.execute("DELETE FROM keys WHERE id = ?1", params![key_id])?;
+        } else {
+            // Update timestamp
+            let now = Self::now_ms();
+            conn.execute(
+                "UPDATE keys SET updated_at = ?1 WHERE id = ?2",
+                params![now, key_id],
+            )?;
+        }
+
+        Ok(())
     }
 }
 
@@ -2280,6 +2858,349 @@ mod tests {
         assert!(db.hsetnx("myhash", "field", b"value1").unwrap());
         assert!(!db.hsetnx("myhash", "field", b"value2").unwrap());
         assert_eq!(db.hget("myhash", "field").unwrap(), Some(b"value1".to_vec()));
+
+        cleanup_db(&path);
+    }
+
+    // --- Session 7: List operation tests (memory mode) ---
+
+    #[test]
+    fn test_lpush_rpush() {
+        let db = Db::open_memory().unwrap();
+
+        // LPUSH creates new list
+        assert_eq!(db.lpush("mylist", &[b"a"]).unwrap(), 1);
+        assert_eq!(db.lpush("mylist", &[b"b"]).unwrap(), 2);
+        assert_eq!(db.lpush("mylist", &[b"c", b"d"]).unwrap(), 4);
+
+        // List should be: d, c, b, a
+        let items = db.lrange("mylist", 0, -1).unwrap();
+        assert_eq!(items, vec![b"d".to_vec(), b"c".to_vec(), b"b".to_vec(), b"a".to_vec()]);
+
+        // RPUSH appends to end
+        assert_eq!(db.rpush("mylist", &[b"e", b"f"]).unwrap(), 6);
+
+        // List should be: d, c, b, a, e, f
+        let items = db.lrange("mylist", 0, -1).unwrap();
+        assert_eq!(items.len(), 6);
+        assert_eq!(items[0], b"d".to_vec());
+        assert_eq!(items[5], b"f".to_vec());
+    }
+
+    #[test]
+    fn test_lpush_creates_list() {
+        let db = Db::open_memory().unwrap();
+
+        // RPUSH on non-existent key creates new list
+        assert_eq!(db.rpush("newlist", &[b"first", b"second"]).unwrap(), 2);
+        assert_eq!(db.llen("newlist").unwrap(), 2);
+    }
+
+    #[test]
+    fn test_lpop_rpop() {
+        let db = Db::open_memory().unwrap();
+
+        db.rpush("mylist", &[b"a", b"b", b"c", b"d"]).unwrap();
+
+        // LPOP single element
+        let popped = db.lpop("mylist", None).unwrap();
+        assert_eq!(popped, vec![b"a".to_vec()]);
+        assert_eq!(db.llen("mylist").unwrap(), 3);
+
+        // RPOP single element
+        let popped = db.rpop("mylist", None).unwrap();
+        assert_eq!(popped, vec![b"d".to_vec()]);
+        assert_eq!(db.llen("mylist").unwrap(), 2);
+
+        // LPOP with count
+        let popped = db.lpop("mylist", Some(2)).unwrap();
+        assert_eq!(popped, vec![b"b".to_vec(), b"c".to_vec()]);
+        assert_eq!(db.llen("mylist").unwrap(), 0);
+    }
+
+    #[test]
+    fn test_pop_empty_list() {
+        let db = Db::open_memory().unwrap();
+
+        // Pop from non-existent list
+        let popped = db.lpop("nonexistent", None).unwrap();
+        assert!(popped.is_empty());
+
+        let popped = db.rpop("nonexistent", None).unwrap();
+        assert!(popped.is_empty());
+    }
+
+    #[test]
+    fn test_pop_deletes_empty_list() {
+        let db = Db::open_memory().unwrap();
+
+        db.rpush("mylist", &[b"only"]).unwrap();
+        db.lpop("mylist", None).unwrap();
+
+        // Key should be deleted
+        assert_eq!(db.llen("mylist").unwrap(), 0);
+        assert!(db.lindex("mylist", 0).unwrap().is_none());
+    }
+
+    #[test]
+    fn test_llen() {
+        let db = Db::open_memory().unwrap();
+
+        // Non-existent list
+        assert_eq!(db.llen("nonexistent").unwrap(), 0);
+
+        db.rpush("mylist", &[b"a", b"b", b"c"]).unwrap();
+        assert_eq!(db.llen("mylist").unwrap(), 3);
+    }
+
+    #[test]
+    fn test_lrange() {
+        let db = Db::open_memory().unwrap();
+
+        db.rpush("mylist", &[b"a", b"b", b"c", b"d", b"e"]).unwrap();
+
+        // Full range
+        let items = db.lrange("mylist", 0, -1).unwrap();
+        assert_eq!(items.len(), 5);
+
+        // Partial range
+        let items = db.lrange("mylist", 1, 3).unwrap();
+        assert_eq!(items, vec![b"b".to_vec(), b"c".to_vec(), b"d".to_vec()]);
+
+        // Negative indices
+        let items = db.lrange("mylist", -3, -1).unwrap();
+        assert_eq!(items, vec![b"c".to_vec(), b"d".to_vec(), b"e".to_vec()]);
+
+        // Out of bounds clamped
+        let items = db.lrange("mylist", 0, 100).unwrap();
+        assert_eq!(items.len(), 5);
+
+        // Invalid range returns empty
+        let items = db.lrange("mylist", 3, 1).unwrap();
+        assert!(items.is_empty());
+    }
+
+    #[test]
+    fn test_lindex() {
+        let db = Db::open_memory().unwrap();
+
+        db.rpush("mylist", &[b"a", b"b", b"c"]).unwrap();
+
+        // Positive indices
+        assert_eq!(db.lindex("mylist", 0).unwrap(), Some(b"a".to_vec()));
+        assert_eq!(db.lindex("mylist", 1).unwrap(), Some(b"b".to_vec()));
+        assert_eq!(db.lindex("mylist", 2).unwrap(), Some(b"c".to_vec()));
+
+        // Negative indices
+        assert_eq!(db.lindex("mylist", -1).unwrap(), Some(b"c".to_vec()));
+        assert_eq!(db.lindex("mylist", -3).unwrap(), Some(b"a".to_vec()));
+
+        // Out of bounds
+        assert_eq!(db.lindex("mylist", 5).unwrap(), None);
+        assert_eq!(db.lindex("mylist", -10).unwrap(), None);
+
+        // Non-existent key
+        assert_eq!(db.lindex("nonexistent", 0).unwrap(), None);
+    }
+
+    #[test]
+    fn test_lset() {
+        let db = Db::open_memory().unwrap();
+
+        db.rpush("mylist", &[b"a", b"b", b"c"]).unwrap();
+
+        // Set middle element
+        db.lset("mylist", 1, b"B").unwrap();
+        assert_eq!(db.lindex("mylist", 1).unwrap(), Some(b"B".to_vec()));
+
+        // Set with negative index
+        db.lset("mylist", -1, b"C").unwrap();
+        assert_eq!(db.lindex("mylist", 2).unwrap(), Some(b"C".to_vec()));
+    }
+
+    #[test]
+    fn test_lset_errors() {
+        let db = Db::open_memory().unwrap();
+
+        // LSET on non-existent key
+        let result = db.lset("nonexistent", 0, b"value");
+        assert!(matches!(result, Err(KvError::NoSuchKey)));
+
+        db.rpush("mylist", &[b"a"]).unwrap();
+
+        // LSET out of range
+        let result = db.lset("mylist", 5, b"value");
+        assert!(matches!(result, Err(KvError::OutOfRange)));
+    }
+
+    #[test]
+    fn test_ltrim() {
+        let db = Db::open_memory().unwrap();
+
+        db.rpush("mylist", &[b"a", b"b", b"c", b"d", b"e"]).unwrap();
+
+        // Trim to middle
+        db.ltrim("mylist", 1, 3).unwrap();
+        let items = db.lrange("mylist", 0, -1).unwrap();
+        assert_eq!(items, vec![b"b".to_vec(), b"c".to_vec(), b"d".to_vec()]);
+    }
+
+    #[test]
+    fn test_ltrim_negative_indices() {
+        let db = Db::open_memory().unwrap();
+
+        db.rpush("mylist", &[b"a", b"b", b"c", b"d", b"e"]).unwrap();
+
+        // Trim using negative indices
+        db.ltrim("mylist", 0, -2).unwrap();
+        let items = db.lrange("mylist", 0, -1).unwrap();
+        assert_eq!(items, vec![b"a".to_vec(), b"b".to_vec(), b"c".to_vec(), b"d".to_vec()]);
+    }
+
+    #[test]
+    fn test_ltrim_deletes_key() {
+        let db = Db::open_memory().unwrap();
+
+        db.rpush("mylist", &[b"a", b"b", b"c"]).unwrap();
+
+        // Trim to empty (invalid range)
+        db.ltrim("mylist", 10, 20).unwrap();
+        assert_eq!(db.llen("mylist").unwrap(), 0);
+    }
+
+    #[test]
+    fn test_ltrim_nonexistent() {
+        let db = Db::open_memory().unwrap();
+
+        // LTRIM on non-existent key is OK
+        db.ltrim("nonexistent", 0, 1).unwrap();
+    }
+
+    #[test]
+    fn test_list_wrong_type() {
+        let db = Db::open_memory().unwrap();
+
+        // Create a string key
+        db.set("mystring", b"value", None).unwrap();
+
+        // Try list operations on string key - should fail
+        assert!(matches!(db.lpush("mystring", &[b"a"]), Err(KvError::WrongType)));
+        assert!(matches!(db.rpush("mystring", &[b"a"]), Err(KvError::WrongType)));
+        assert!(matches!(db.lpop("mystring", None), Err(KvError::WrongType)));
+        assert!(matches!(db.rpop("mystring", None), Err(KvError::WrongType)));
+        assert!(matches!(db.llen("mystring"), Err(KvError::WrongType)));
+        assert!(matches!(db.lrange("mystring", 0, -1), Err(KvError::WrongType)));
+        assert!(matches!(db.lindex("mystring", 0), Err(KvError::WrongType)));
+        assert!(matches!(db.lset("mystring", 0, b"a"), Err(KvError::WrongType)));
+        assert!(matches!(db.ltrim("mystring", 0, 1), Err(KvError::WrongType)));
+    }
+
+    #[test]
+    fn test_list_binary_data() {
+        let db = Db::open_memory().unwrap();
+
+        let binary = vec![0u8, 1, 2, 255, 254];
+        db.rpush("mylist", &[&binary[..]]).unwrap();
+
+        let items = db.lrange("mylist", 0, -1).unwrap();
+        assert_eq!(items[0], binary);
+    }
+
+    // --- Session 7: Disk tests for list operations ---
+
+    #[test]
+    fn test_disk_lpush_rpush() {
+        let path = temp_db_path();
+        let db = Db::open(&path).unwrap();
+
+        db.lpush("mylist", &[b"c", b"b", b"a"]).unwrap();
+        db.rpush("mylist", &[b"d", b"e"]).unwrap();
+
+        let items = db.lrange("mylist", 0, -1).unwrap();
+        assert_eq!(items.len(), 5);
+        assert_eq!(items[0], b"a".to_vec());
+        assert_eq!(items[4], b"e".to_vec());
+
+        cleanup_db(&path);
+    }
+
+    #[test]
+    fn test_disk_lpop_rpop() {
+        let path = temp_db_path();
+        let db = Db::open(&path).unwrap();
+
+        db.rpush("mylist", &[b"a", b"b", b"c", b"d"]).unwrap();
+
+        let l = db.lpop("mylist", Some(2)).unwrap();
+        assert_eq!(l, vec![b"a".to_vec(), b"b".to_vec()]);
+
+        let r = db.rpop("mylist", Some(1)).unwrap();
+        assert_eq!(r, vec![b"d".to_vec()]);
+
+        assert_eq!(db.llen("mylist").unwrap(), 1);
+
+        cleanup_db(&path);
+    }
+
+    #[test]
+    fn test_disk_lrange_lindex() {
+        let path = temp_db_path();
+        let db = Db::open(&path).unwrap();
+
+        db.rpush("mylist", &[b"a", b"b", b"c", b"d", b"e"]).unwrap();
+
+        let range = db.lrange("mylist", 1, 3).unwrap();
+        assert_eq!(range, vec![b"b".to_vec(), b"c".to_vec(), b"d".to_vec()]);
+
+        assert_eq!(db.lindex("mylist", 2).unwrap(), Some(b"c".to_vec()));
+        assert_eq!(db.lindex("mylist", -1).unwrap(), Some(b"e".to_vec()));
+
+        cleanup_db(&path);
+    }
+
+    #[test]
+    fn test_disk_lset() {
+        let path = temp_db_path();
+        let db = Db::open(&path).unwrap();
+
+        db.rpush("mylist", &[b"a", b"b", b"c"]).unwrap();
+        db.lset("mylist", 1, b"B").unwrap();
+
+        assert_eq!(db.lindex("mylist", 1).unwrap(), Some(b"B".to_vec()));
+
+        cleanup_db(&path);
+    }
+
+    #[test]
+    fn test_disk_ltrim() {
+        let path = temp_db_path();
+        let db = Db::open(&path).unwrap();
+
+        db.rpush("mylist", &[b"a", b"b", b"c", b"d", b"e"]).unwrap();
+        db.ltrim("mylist", 1, -2).unwrap();
+
+        let items = db.lrange("mylist", 0, -1).unwrap();
+        assert_eq!(items, vec![b"b".to_vec(), b"c".to_vec(), b"d".to_vec()]);
+
+        cleanup_db(&path);
+    }
+
+    #[test]
+    fn test_disk_list_persistence() {
+        let path = temp_db_path();
+
+        // Create list and close
+        {
+            let db = Db::open(&path).unwrap();
+            db.rpush("mylist", &[b"persisted"]).unwrap();
+        }
+
+        // Reopen and verify
+        {
+            let db = Db::open(&path).unwrap();
+            let items = db.lrange("mylist", 0, -1).unwrap();
+            assert_eq!(items, vec![b"persisted".to_vec()]);
+        }
 
         cleanup_db(&path);
     }

@@ -108,6 +108,16 @@ fn execute_command(db: &Db, args: &[Vec<u8>]) -> RespValue {
         "HINCRBY" => cmd_hincrby(db, cmd_args),
         "HINCRBYFLOAT" => cmd_hincrbyfloat(db, cmd_args),
         "HSETNX" => cmd_hsetnx(db, cmd_args),
+        // List operations
+        "LPUSH" => cmd_lpush(db, cmd_args),
+        "RPUSH" => cmd_rpush(db, cmd_args),
+        "LPOP" => cmd_lpop(db, cmd_args),
+        "RPOP" => cmd_rpop(db, cmd_args),
+        "LLEN" => cmd_llen(db, cmd_args),
+        "LRANGE" => cmd_lrange(db, cmd_args),
+        "LINDEX" => cmd_lindex(db, cmd_args),
+        "LSET" => cmd_lset(db, cmd_args),
+        "LTRIM" => cmd_ltrim(db, cmd_args),
         _ => RespValue::error(format!("unknown command '{}'", cmd)),
     }
 }
@@ -958,6 +968,286 @@ fn cmd_hsetnx(db: &Db, args: &[Vec<u8>]) -> RespValue {
     match db.hsetnx(key, field, &args[2]) {
         Ok(true) => RespValue::Integer(1),
         Ok(false) => RespValue::Integer(0),
+        Err(KvError::WrongType) => RespValue::wrong_type(),
+        Err(e) => RespValue::error(e.to_string()),
+    }
+}
+
+// --- List operations ---
+
+fn cmd_lpush(db: &Db, args: &[Vec<u8>]) -> RespValue {
+    if args.len() < 2 {
+        return RespValue::error("wrong number of arguments for 'lpush' command");
+    }
+
+    let key = match std::str::from_utf8(&args[0]) {
+        Ok(k) => k,
+        Err(_) => return RespValue::error("invalid key"),
+    };
+
+    let values: Vec<&[u8]> = args[1..].iter().map(|v| v.as_slice()).collect();
+
+    match db.lpush(key, &values) {
+        Ok(len) => RespValue::Integer(len),
+        Err(KvError::WrongType) => RespValue::wrong_type(),
+        Err(e) => RespValue::error(e.to_string()),
+    }
+}
+
+fn cmd_rpush(db: &Db, args: &[Vec<u8>]) -> RespValue {
+    if args.len() < 2 {
+        return RespValue::error("wrong number of arguments for 'rpush' command");
+    }
+
+    let key = match std::str::from_utf8(&args[0]) {
+        Ok(k) => k,
+        Err(_) => return RespValue::error("invalid key"),
+    };
+
+    let values: Vec<&[u8]> = args[1..].iter().map(|v| v.as_slice()).collect();
+
+    match db.rpush(key, &values) {
+        Ok(len) => RespValue::Integer(len),
+        Err(KvError::WrongType) => RespValue::wrong_type(),
+        Err(e) => RespValue::error(e.to_string()),
+    }
+}
+
+fn cmd_lpop(db: &Db, args: &[Vec<u8>]) -> RespValue {
+    if args.is_empty() || args.len() > 2 {
+        return RespValue::error("wrong number of arguments for 'lpop' command");
+    }
+
+    let key = match std::str::from_utf8(&args[0]) {
+        Ok(k) => k,
+        Err(_) => return RespValue::error("invalid key"),
+    };
+
+    let count: Option<usize> = if args.len() == 2 {
+        match std::str::from_utf8(&args[1])
+            .ok()
+            .and_then(|s| s.parse().ok())
+        {
+            Some(c) => Some(c),
+            None => return RespValue::error("value is not an integer or out of range"),
+        }
+    } else {
+        None
+    };
+
+    match db.lpop(key, count) {
+        Ok(values) => {
+            if args.len() == 1 {
+                // Single pop - return single value or nil
+                if values.is_empty() {
+                    RespValue::null()
+                } else {
+                    RespValue::BulkString(Some(values.into_iter().next().unwrap()))
+                }
+            } else {
+                // Count specified - return array
+                if values.is_empty() {
+                    RespValue::null()
+                } else {
+                    RespValue::Array(Some(
+                        values
+                            .into_iter()
+                            .map(|v| RespValue::BulkString(Some(v)))
+                            .collect(),
+                    ))
+                }
+            }
+        }
+        Err(KvError::WrongType) => RespValue::wrong_type(),
+        Err(e) => RespValue::error(e.to_string()),
+    }
+}
+
+fn cmd_rpop(db: &Db, args: &[Vec<u8>]) -> RespValue {
+    if args.is_empty() || args.len() > 2 {
+        return RespValue::error("wrong number of arguments for 'rpop' command");
+    }
+
+    let key = match std::str::from_utf8(&args[0]) {
+        Ok(k) => k,
+        Err(_) => return RespValue::error("invalid key"),
+    };
+
+    let count: Option<usize> = if args.len() == 2 {
+        match std::str::from_utf8(&args[1])
+            .ok()
+            .and_then(|s| s.parse().ok())
+        {
+            Some(c) => Some(c),
+            None => return RespValue::error("value is not an integer or out of range"),
+        }
+    } else {
+        None
+    };
+
+    match db.rpop(key, count) {
+        Ok(values) => {
+            if args.len() == 1 {
+                // Single pop - return single value or nil
+                if values.is_empty() {
+                    RespValue::null()
+                } else {
+                    RespValue::BulkString(Some(values.into_iter().next().unwrap()))
+                }
+            } else {
+                // Count specified - return array
+                if values.is_empty() {
+                    RespValue::null()
+                } else {
+                    RespValue::Array(Some(
+                        values
+                            .into_iter()
+                            .map(|v| RespValue::BulkString(Some(v)))
+                            .collect(),
+                    ))
+                }
+            }
+        }
+        Err(KvError::WrongType) => RespValue::wrong_type(),
+        Err(e) => RespValue::error(e.to_string()),
+    }
+}
+
+fn cmd_llen(db: &Db, args: &[Vec<u8>]) -> RespValue {
+    if args.len() != 1 {
+        return RespValue::error("wrong number of arguments for 'llen' command");
+    }
+
+    let key = match std::str::from_utf8(&args[0]) {
+        Ok(k) => k,
+        Err(_) => return RespValue::error("invalid key"),
+    };
+
+    match db.llen(key) {
+        Ok(len) => RespValue::Integer(len),
+        Err(KvError::WrongType) => RespValue::wrong_type(),
+        Err(e) => RespValue::error(e.to_string()),
+    }
+}
+
+fn cmd_lrange(db: &Db, args: &[Vec<u8>]) -> RespValue {
+    if args.len() != 3 {
+        return RespValue::error("wrong number of arguments for 'lrange' command");
+    }
+
+    let key = match std::str::from_utf8(&args[0]) {
+        Ok(k) => k,
+        Err(_) => return RespValue::error("invalid key"),
+    };
+
+    let start: i64 = match std::str::from_utf8(&args[1])
+        .ok()
+        .and_then(|s| s.parse().ok())
+    {
+        Some(i) => i,
+        None => return RespValue::error("value is not an integer or out of range"),
+    };
+
+    let stop: i64 = match std::str::from_utf8(&args[2])
+        .ok()
+        .and_then(|s| s.parse().ok())
+    {
+        Some(i) => i,
+        None => return RespValue::error("value is not an integer or out of range"),
+    };
+
+    match db.lrange(key, start, stop) {
+        Ok(values) => RespValue::Array(Some(
+            values
+                .into_iter()
+                .map(|v| RespValue::BulkString(Some(v)))
+                .collect(),
+        )),
+        Err(KvError::WrongType) => RespValue::wrong_type(),
+        Err(e) => RespValue::error(e.to_string()),
+    }
+}
+
+fn cmd_lindex(db: &Db, args: &[Vec<u8>]) -> RespValue {
+    if args.len() != 2 {
+        return RespValue::error("wrong number of arguments for 'lindex' command");
+    }
+
+    let key = match std::str::from_utf8(&args[0]) {
+        Ok(k) => k,
+        Err(_) => return RespValue::error("invalid key"),
+    };
+
+    let index: i64 = match std::str::from_utf8(&args[1])
+        .ok()
+        .and_then(|s| s.parse().ok())
+    {
+        Some(i) => i,
+        None => return RespValue::error("value is not an integer or out of range"),
+    };
+
+    match db.lindex(key, index) {
+        Ok(value) => value.into(),
+        Err(KvError::WrongType) => RespValue::wrong_type(),
+        Err(e) => RespValue::error(e.to_string()),
+    }
+}
+
+fn cmd_lset(db: &Db, args: &[Vec<u8>]) -> RespValue {
+    if args.len() != 3 {
+        return RespValue::error("wrong number of arguments for 'lset' command");
+    }
+
+    let key = match std::str::from_utf8(&args[0]) {
+        Ok(k) => k,
+        Err(_) => return RespValue::error("invalid key"),
+    };
+
+    let index: i64 = match std::str::from_utf8(&args[1])
+        .ok()
+        .and_then(|s| s.parse().ok())
+    {
+        Some(i) => i,
+        None => return RespValue::error("value is not an integer or out of range"),
+    };
+
+    match db.lset(key, index, &args[2]) {
+        Ok(()) => RespValue::ok(),
+        Err(KvError::WrongType) => RespValue::wrong_type(),
+        Err(KvError::NoSuchKey) => RespValue::error("no such key"),
+        Err(KvError::OutOfRange) => RespValue::error("index out of range"),
+        Err(e) => RespValue::error(e.to_string()),
+    }
+}
+
+fn cmd_ltrim(db: &Db, args: &[Vec<u8>]) -> RespValue {
+    if args.len() != 3 {
+        return RespValue::error("wrong number of arguments for 'ltrim' command");
+    }
+
+    let key = match std::str::from_utf8(&args[0]) {
+        Ok(k) => k,
+        Err(_) => return RespValue::error("invalid key"),
+    };
+
+    let start: i64 = match std::str::from_utf8(&args[1])
+        .ok()
+        .and_then(|s| s.parse().ok())
+    {
+        Some(i) => i,
+        None => return RespValue::error("value is not an integer or out of range"),
+    };
+
+    let stop: i64 = match std::str::from_utf8(&args[2])
+        .ok()
+        .and_then(|s| s.parse().ok())
+    {
+        Some(i) => i,
+        None => return RespValue::error("value is not an integer or out of range"),
+    };
+
+    match db.ltrim(key, start, stop) {
+        Ok(()) => RespValue::ok(),
         Err(KvError::WrongType) => RespValue::wrong_type(),
         Err(e) => RespValue::error(e.to_string()),
     }

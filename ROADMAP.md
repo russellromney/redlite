@@ -13,6 +13,7 @@ Incremental implementation plan. Each session = one commit = one testable featur
 3. **SQLite is the foundation** — Leverage its strengths (ACID, durability)
 4. **Redis-compatible** — Existing clients should just work
 5. **Extend thoughtfully** — Add features Redis doesn't have (KEYINFO, history, FTS)
+6. **Blocking = Server mode** — BLOCK, Pub/Sub require server mode (cross-process coordination)
 
 
 ### Session 1: Foundation ✅
@@ -112,6 +113,51 @@ Incremental implementation plan. Each session = one commit = one testable featur
 - [ ] `cargo publish` ready
 - [ ] **Test:** Full compatibility test suite
 
+### Session 13: Streams (Basic)
+- [ ] Schema: `streams` table (key_id, id INTEGER PRIMARY KEY, data BLOB, created_at)
+- [ ] KeyType::Stream (type = 6)
+- [ ] XADD key [NOMKSTREAM] [MAXLEN|MINID [=|~] threshold] *|id field value [field value ...]
+- [ ] XLEN key
+- [ ] XRANGE key start end [COUNT count]
+- [ ] XREVRANGE key end start [COUNT count]
+- [ ] XREAD [COUNT count] STREAMS key [key ...] id [id ...]
+- [ ] XTRIM key MAXLEN|MINID [=|~] threshold
+- [ ] XDEL key id [id ...]
+- [ ] XINFO STREAM key
+- [ ] Entry ID format: use SQLite ROWID, expose as `{timestamp}-{seq}` for Redis compat
+- [ ] Store fields as MessagePack blob (single row per entry)
+- [ ] Unit tests + integration tests
+- [ ] **Test:** redis-cli stream operations (non-blocking)
+
+### Session 14: Streams (Consumer Groups)
+- [ ] Schema: `stream_groups` (key_id, name, last_id), `stream_pending` (key_id, group, entry_id, consumer, delivered_at, delivery_count)
+- [ ] XGROUP CREATE key groupname id|$ [MKSTREAM]
+- [ ] XGROUP DESTROY key groupname
+- [ ] XGROUP SETID key groupname id|$
+- [ ] XGROUP CREATECONSUMER key groupname consumername
+- [ ] XGROUP DELCONSUMER key groupname consumername
+- [ ] XREADGROUP GROUP group consumer [COUNT count] [NOACK] STREAMS key [key ...] id [id ...]
+- [ ] XACK key group id [id ...]
+- [ ] XPENDING key group [[IDLE min-idle-time] start end count [consumer]]
+- [ ] XCLAIM key group consumer min-idle-time id [id ...] [IDLE ms] [TIME ms] [RETRYCOUNT count] [FORCE] [JUSTID]
+- [ ] XINFO GROUPS key
+- [ ] XINFO CONSUMERS key groupname
+- [ ] Unit tests + integration tests
+- [ ] **Test:** redis-cli consumer group operations
+
+### Session 15: Blocking Reads (Server Mode Only)
+- [ ] Server: Add `notify: Arc<RwLock<HashMap<String, broadcast::Sender<()>>>>` for key notifications
+- [ ] XADD/LPUSH/RPUSH broadcast to channel after insert
+- [ ] XREAD BLOCK milliseconds STREAMS key [key ...] id [id ...]
+- [ ] XREADGROUP ... BLOCK milliseconds ...
+- [ ] BLPOP key [key ...] timeout
+- [ ] BRPOP key [key ...] timeout
+- [ ] `tokio::select!` for multi-key blocking
+- [ ] Timeout handling (return nil on timeout)
+- [ ] Embedded mode: BLOCK/BLPOP/BRPOP returns error ("blocking not supported in embedded mode")
+- [ ] Unit tests + integration tests
+- [ ] **Test:** Concurrent producers/consumers (server mode)
+
 ---
 
 ## V1 — Core Redis Compatibility
@@ -127,6 +173,10 @@ Incremental implementation plan. Each session = one commit = one testable featur
 - **Sets:** SADD, SREM, SMEMBERS, SISMEMBER, SCARD, SPOP, SRANDMEMBER, SDIFF, SINTER, SUNION
 - **Sorted Sets:** ZADD, ZREM, ZSCORE, ZRANK, ZREVRANK, ZRANGE, ZREVRANGE, ZRANGEBYSCORE, ZCOUNT, ZCARD, ZINCRBY, ZREMRANGEBYRANK, ZREMRANGEBYSCORE
 - **Server:** PING, ECHO, SELECT, INFO, QUIT
+- **Streams:** XADD, XREAD, XRANGE, XREVRANGE, XLEN, XTRIM, XDEL, XINFO STREAM, XGROUP CREATE/DESTROY/SETID/CREATECONSUMER/DELCONSUMER, XREADGROUP, XACK, XPENDING, XCLAIM, XINFO GROUPS/CONSUMERS
+- **Blocking (Server Mode Only):** BLPOP, BRPOP, XREAD BLOCK, XREADGROUP BLOCK, SUBSCRIBE, PUBLISH
+
+_Blocking commands require server mode. Embedded mode returns error._
 
 ### Custom Commands
 
@@ -165,29 +215,26 @@ Incremental implementation plan. Each session = one commit = one testable featur
 - **Sorted Sets:** ZINTERSTORE, ZUNIONSTORE
 - **Iteration:** HSCAN, SSCAN, ZSCAN
 
-### Pub/Sub (Embedded)
+### Pub/Sub (Server Mode Only)
 
-Fire-and-forget messaging via channels:
+Fire-and-forget messaging via channels. **Server mode required** — notifications need a central coordinator.
 
-```rust
-// Subscriber
-let sub = db.subscribe("events");
-std::thread::spawn(move || {
-    while let Some(msg) = sub.recv() {
-        println!("Got: {:?}", msg);
-    }
-});
+```bash
+# Terminal 1: Subscriber
+redis-cli -p 6767 SUBSCRIBE events
 
-// Publisher
-db.publish("events", b"hello")?;  // Returns immediately
+# Terminal 2: Publisher
+redis-cli -p 6767 PUBLISH events "hello"
 ```
 
-- Channel-based delivery (like Go channels)
+- Channel-based delivery (tokio broadcast channels in server)
 - At-most-once semantics (matches Redis)
 - No persistence (messages lost if no subscribers)
-- Potential improvement: delivery tracking, receipt confirmation
+- RESP3 push notifications to subscribers
 
 Commands: SUBSCRIBE, UNSUBSCRIBE, PUBLISH, PSUBSCRIBE, PUNSUBSCRIBE
+
+**Note:** Embedded mode can use streams (XADD/XREAD) for durable messaging within a single process.
 
 ### History Tracking (Opt-in)
 
@@ -287,17 +334,9 @@ let db = Db::open_memory_with_wal("backup.db")?;
 - Periodic WAL sync to disk
 - Configurable sync interval
 
-### Server-Mode Pub/Sub
-
-Full Redis pub/sub for multi-client scenarios:
-
-- Persistent TCP connections
-- Server pushes to subscribers
-- RESP3 push notifications
-
 ### Maybe (If Requested)
 
 - WATCH/UNWATCH (optimistic locking)
-- Streams (append-only logs with consumer groups)
 - Lua scripting (probably not)
+- XAUTOCLAIM (auto-reassign stuck messages)
 
