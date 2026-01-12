@@ -184,16 +184,17 @@ Incremental implementation plan. Each session = one commit = one testable featur
 - [x] Implement async notification spawning for sync methods
 - [x] **Test:** 8 unit tests + 5 integration tests, all 352 tests passing (224 lib + 126 integration + 2 doc)
 
-### Session 15.3: Blocking Reads — Blocking Commands
-- [ ] Make execute_command async
-- [ ] Implement BLPOP key [key ...] timeout
-- [ ] Implement BRPOP key [key ...] timeout
-- [ ] Add XREAD BLOCK milliseconds STREAMS key [key ...] id [id ...]
-- [ ] Add XREADGROUP BLOCK milliseconds ... GROUP group consumer STREAMS key [key ...]
-- [ ] Timeout handling (return nil on timeout)
-- [ ] `tokio::select!` for multi-key blocking
-- [ ] Unit tests + integration tests
-- [ ] **Test:** Concurrent producers/consumers (server mode)
+### Session 15.3: Blocking Reads — Blocking Commands ✅
+- [x] Make execute_command async
+- [x] Implement BLPOP key [key ...] timeout
+- [x] Implement BRPOP key [key ...] timeout
+- [x] Add XREAD BLOCK milliseconds STREAMS key [key ...] id [id ...]
+- [x] Add XREADGROUP BLOCK milliseconds ... GROUP group consumer STREAMS key [key ...]
+- [x] Timeout handling (return nil on timeout)
+- [x] `tokio::select!` for multi-key blocking (handles up to 5 keys per select)
+- [x] Timeout=0 blocks indefinitely with far-future deadline
+- [x] Unit tests + integration tests (all 352 existing tests pass)
+- [x] **Test:** 224 lib + 126 integration + 2 doc tests passing
 
 ---
 

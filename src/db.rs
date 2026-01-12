@@ -4460,6 +4460,425 @@ impl Db {
     ) {
         *self.core.notifier.write().unwrap() = Some(notifier);
     }
+
+    /// BLPOP key [key ...] timeout
+    /// Block and pop from the left (head) of lists
+    pub async fn blpop(&self, keys: &[&str], timeout: f64) -> Result<Option<(String, Vec<u8>)>> {
+        let deadline = if timeout == 0.0 {
+            // 0 means block indefinitely (very far in future)
+            tokio::time::Instant::now() + Duration::from_secs(u64::MAX / 2)
+        } else {
+            tokio::time::Instant::now() + Duration::from_secs_f64(timeout)
+        };
+
+        loop {
+            // Try immediate pop on all keys (in order)
+            for key in keys {
+                if let Ok(values) = self.lpop(key, Some(1)) {
+                    if !values.is_empty() {
+                        return Ok(Some(((*key).to_string(), values[0].clone())));
+                    }
+                }
+            }
+
+            // Check timeout
+            if tokio::time::Instant::now() >= deadline {
+                return Ok(None);
+            }
+
+            // Subscribe to all keys and wait for any notification with short timeout
+            let mut receivers = Vec::new();
+            for key in keys {
+                receivers.push(self.subscribe_key(key).await);
+            }
+
+            // Wait for the first notification or a short sleep (100ms)
+            let remaining = deadline - tokio::time::Instant::now();
+            let wait_duration = std::cmp::min(remaining, Duration::from_millis(100));
+
+            // Set up the first few select branches (up to 5 keys)
+            let mut rx_iter = receivers.iter_mut();
+
+            if let Some(rx0) = rx_iter.next() {
+                match rx_iter.next() {
+                    Some(rx1) => {
+                        match rx_iter.next() {
+                            Some(rx2) => {
+                                match rx_iter.next() {
+                                    Some(rx3) => {
+                                        match rx_iter.next() {
+                                            Some(rx4) => {
+                                                tokio::select! {
+                                                    _ = rx0.recv() => {},
+                                                    _ = rx1.recv() => {},
+                                                    _ = rx2.recv() => {},
+                                                    _ = rx3.recv() => {},
+                                                    _ = rx4.recv() => {},
+                                                    _ = tokio::time::sleep(wait_duration) => {},
+                                                }
+                                            }
+                                            None => {
+                                                tokio::select! {
+                                                    _ = rx0.recv() => {},
+                                                    _ = rx1.recv() => {},
+                                                    _ = rx2.recv() => {},
+                                                    _ = rx3.recv() => {},
+                                                    _ = tokio::time::sleep(wait_duration) => {},
+                                                }
+                                            }
+                                        }
+                                    }
+                                    None => {
+                                        tokio::select! {
+                                            _ = rx0.recv() => {},
+                                            _ = rx1.recv() => {},
+                                            _ = rx2.recv() => {},
+                                            _ = tokio::time::sleep(wait_duration) => {},
+                                        }
+                                    }
+                                }
+                            }
+                            None => {
+                                tokio::select! {
+                                    _ = rx0.recv() => {},
+                                    _ = rx1.recv() => {},
+                                    _ = tokio::time::sleep(wait_duration) => {},
+                                }
+                            }
+                        }
+                    }
+                    None => {
+                        tokio::select! {
+                            _ = rx0.recv() => {},
+                            _ = tokio::time::sleep(wait_duration) => {},
+                        }
+                    }
+                }
+            } else {
+                // No keys provided (shouldn't happen, but handle it)
+                tokio::time::sleep(wait_duration).await;
+            }
+
+            // Loop continues and retries
+        }
+    }
+
+    /// BRPOP key [key ...] timeout
+    /// Block and pop from the right (tail) of lists
+    pub async fn brpop(&self, keys: &[&str], timeout: f64) -> Result<Option<(String, Vec<u8>)>> {
+        let deadline = if timeout == 0.0 {
+            // 0 means block indefinitely (very far in future)
+            tokio::time::Instant::now() + Duration::from_secs(u64::MAX / 2)
+        } else {
+            tokio::time::Instant::now() + Duration::from_secs_f64(timeout)
+        };
+
+        loop {
+            // Try immediate pop on all keys (in order)
+            for key in keys {
+                if let Ok(values) = self.rpop(key, Some(1)) {
+                    if !values.is_empty() {
+                        return Ok(Some(((*key).to_string(), values[0].clone())));
+                    }
+                }
+            }
+
+            // Check timeout
+            if tokio::time::Instant::now() >= deadline {
+                return Ok(None);
+            }
+
+            // Subscribe to all keys and wait for any notification with short timeout
+            let mut receivers = Vec::new();
+            for key in keys {
+                receivers.push(self.subscribe_key(key).await);
+            }
+
+            // Wait for the first notification or a short sleep (100ms)
+            let remaining = deadline - tokio::time::Instant::now();
+            let wait_duration = std::cmp::min(remaining, Duration::from_millis(100));
+
+            // Set up the first few select branches (up to 5 keys)
+            let mut rx_iter = receivers.iter_mut();
+
+            if let Some(rx0) = rx_iter.next() {
+                match rx_iter.next() {
+                    Some(rx1) => {
+                        match rx_iter.next() {
+                            Some(rx2) => {
+                                match rx_iter.next() {
+                                    Some(rx3) => {
+                                        match rx_iter.next() {
+                                            Some(rx4) => {
+                                                tokio::select! {
+                                                    _ = rx0.recv() => {},
+                                                    _ = rx1.recv() => {},
+                                                    _ = rx2.recv() => {},
+                                                    _ = rx3.recv() => {},
+                                                    _ = rx4.recv() => {},
+                                                    _ = tokio::time::sleep(wait_duration) => {},
+                                                }
+                                            }
+                                            None => {
+                                                tokio::select! {
+                                                    _ = rx0.recv() => {},
+                                                    _ = rx1.recv() => {},
+                                                    _ = rx2.recv() => {},
+                                                    _ = rx3.recv() => {},
+                                                    _ = tokio::time::sleep(wait_duration) => {},
+                                                }
+                                            }
+                                        }
+                                    }
+                                    None => {
+                                        tokio::select! {
+                                            _ = rx0.recv() => {},
+                                            _ = rx1.recv() => {},
+                                            _ = rx2.recv() => {},
+                                            _ = tokio::time::sleep(wait_duration) => {},
+                                        }
+                                    }
+                                }
+                            }
+                            None => {
+                                tokio::select! {
+                                    _ = rx0.recv() => {},
+                                    _ = rx1.recv() => {},
+                                    _ = tokio::time::sleep(wait_duration) => {},
+                                }
+                            }
+                        }
+                    }
+                    None => {
+                        tokio::select! {
+                            _ = rx0.recv() => {},
+                            _ = tokio::time::sleep(wait_duration) => {},
+                        }
+                    }
+                }
+            } else {
+                // No keys provided (shouldn't happen, but handle it)
+                tokio::time::sleep(wait_duration).await;
+            }
+
+            // Loop continues and retries
+        }
+    }
+
+    /// XREAD BLOCK timeout [COUNT count] STREAMS key [key ...] id [id ...]
+    /// Block and read from streams
+    pub async fn xread_block(
+        &self,
+        keys: &[&str],
+        ids: &[StreamId],
+        count: Option<i64>,
+        timeout_ms: i64,
+    ) -> Result<Vec<(String, Vec<StreamEntry>)>> {
+        let deadline = if timeout_ms == 0 {
+            // 0 means block indefinitely (very far in future)
+            tokio::time::Instant::now() + Duration::from_secs(u64::MAX / 2)
+        } else {
+            tokio::time::Instant::now() + Duration::from_millis(timeout_ms as u64)
+        };
+
+        loop {
+            // Try immediate read
+            if let Ok(results) = self.xread(keys, ids, count) {
+                if !results.is_empty() {
+                    return Ok(results);
+                }
+            }
+
+            // Check timeout
+            if tokio::time::Instant::now() >= deadline {
+                return Ok(vec![]);
+            }
+
+            // Subscribe to all keys and wait for any notification with short timeout
+            let mut receivers = Vec::new();
+            for key in keys {
+                receivers.push(self.subscribe_key(key).await);
+            }
+
+            // Wait for the first notification or a short sleep (100ms)
+            let remaining = deadline - tokio::time::Instant::now();
+            let wait_duration = std::cmp::min(remaining, Duration::from_millis(100));
+
+            // Set up the first few select branches (up to 5 keys)
+            let mut rx_iter = receivers.iter_mut();
+
+            if let Some(rx0) = rx_iter.next() {
+                match rx_iter.next() {
+                    Some(rx1) => {
+                        match rx_iter.next() {
+                            Some(rx2) => {
+                                match rx_iter.next() {
+                                    Some(rx3) => {
+                                        match rx_iter.next() {
+                                            Some(rx4) => {
+                                                tokio::select! {
+                                                    _ = rx0.recv() => {},
+                                                    _ = rx1.recv() => {},
+                                                    _ = rx2.recv() => {},
+                                                    _ = rx3.recv() => {},
+                                                    _ = rx4.recv() => {},
+                                                    _ = tokio::time::sleep(wait_duration) => {},
+                                                }
+                                            }
+                                            None => {
+                                                tokio::select! {
+                                                    _ = rx0.recv() => {},
+                                                    _ = rx1.recv() => {},
+                                                    _ = rx2.recv() => {},
+                                                    _ = rx3.recv() => {},
+                                                    _ = tokio::time::sleep(wait_duration) => {},
+                                                }
+                                            }
+                                        }
+                                    }
+                                    None => {
+                                        tokio::select! {
+                                            _ = rx0.recv() => {},
+                                            _ = rx1.recv() => {},
+                                            _ = rx2.recv() => {},
+                                            _ = tokio::time::sleep(wait_duration) => {},
+                                        }
+                                    }
+                                }
+                            }
+                            None => {
+                                tokio::select! {
+                                    _ = rx0.recv() => {},
+                                    _ = rx1.recv() => {},
+                                    _ = tokio::time::sleep(wait_duration) => {},
+                                }
+                            }
+                        }
+                    }
+                    None => {
+                        tokio::select! {
+                            _ = rx0.recv() => {},
+                            _ = tokio::time::sleep(wait_duration) => {},
+                        }
+                    }
+                }
+            } else {
+                // No keys provided (shouldn't happen, but handle it)
+                tokio::time::sleep(wait_duration).await;
+            }
+
+            // Loop continues and retries
+        }
+    }
+
+    /// XREADGROUP BLOCK timeout GROUP group consumer STREAMS key [key ...] id [id ...]
+    /// Block and read from streams with consumer groups
+    pub async fn xreadgroup_block(
+        &self,
+        group: &str,
+        consumer: &str,
+        keys: &[&str],
+        ids: &[&str],
+        count: Option<i64>,
+        noack: bool,
+        timeout_ms: i64,
+    ) -> Result<Vec<(String, Vec<StreamEntry>)>> {
+        let deadline = if timeout_ms == 0 {
+            // 0 means block indefinitely (very far in future)
+            tokio::time::Instant::now() + Duration::from_secs(u64::MAX / 2)
+        } else {
+            tokio::time::Instant::now() + Duration::from_millis(timeout_ms as u64)
+        };
+
+        loop {
+            // Try immediate read
+            if let Ok(results) = self.xreadgroup(group, consumer, keys, ids, count, noack) {
+                if !results.is_empty() {
+                    return Ok(results);
+                }
+            }
+
+            // Check timeout
+            if tokio::time::Instant::now() >= deadline {
+                return Ok(vec![]);
+            }
+
+            // Subscribe to all keys and wait for any notification with short timeout
+            let mut receivers = Vec::new();
+            for key in keys {
+                receivers.push(self.subscribe_key(key).await);
+            }
+
+            // Wait for the first notification or a short sleep (100ms)
+            let remaining = deadline - tokio::time::Instant::now();
+            let wait_duration = std::cmp::min(remaining, Duration::from_millis(100));
+
+            // Set up the first few select branches (up to 5 keys)
+            let mut rx_iter = receivers.iter_mut();
+
+            if let Some(rx0) = rx_iter.next() {
+                match rx_iter.next() {
+                    Some(rx1) => {
+                        match rx_iter.next() {
+                            Some(rx2) => {
+                                match rx_iter.next() {
+                                    Some(rx3) => {
+                                        match rx_iter.next() {
+                                            Some(rx4) => {
+                                                tokio::select! {
+                                                    _ = rx0.recv() => {},
+                                                    _ = rx1.recv() => {},
+                                                    _ = rx2.recv() => {},
+                                                    _ = rx3.recv() => {},
+                                                    _ = rx4.recv() => {},
+                                                    _ = tokio::time::sleep(wait_duration) => {},
+                                                }
+                                            }
+                                            None => {
+                                                tokio::select! {
+                                                    _ = rx0.recv() => {},
+                                                    _ = rx1.recv() => {},
+                                                    _ = rx2.recv() => {},
+                                                    _ = rx3.recv() => {},
+                                                    _ = tokio::time::sleep(wait_duration) => {},
+                                                }
+                                            }
+                                        }
+                                    }
+                                    None => {
+                                        tokio::select! {
+                                            _ = rx0.recv() => {},
+                                            _ = rx1.recv() => {},
+                                            _ = rx2.recv() => {},
+                                            _ = tokio::time::sleep(wait_duration) => {},
+                                        }
+                                    }
+                                }
+                            }
+                            None => {
+                                tokio::select! {
+                                    _ = rx0.recv() => {},
+                                    _ = rx1.recv() => {},
+                                    _ = tokio::time::sleep(wait_duration) => {},
+                                }
+                            }
+                        }
+                    }
+                    None => {
+                        tokio::select! {
+                            _ = rx0.recv() => {},
+                            _ = tokio::time::sleep(wait_duration) => {},
+                        }
+                    }
+                }
+            } else {
+                // No keys provided (shouldn't happen, but handle it)
+                tokio::time::sleep(wait_duration).await;
+            }
+
+            // Loop continues and retries
+        }
+    }
 }
 
 #[cfg(test)]

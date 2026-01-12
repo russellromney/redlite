@@ -160,12 +160,12 @@ redis-cli -p 6767 GET foo
 - `XPENDING` (summary and range forms, with IDLE filter)
 - `XCLAIM` (with IDLE, TIME, RETRYCOUNT, FORCE, JUSTID)
 
-### Blocking Reads (Server Mode Only, Session 15+, commands in 15.2-15.3)
-**Status**: Infrastructure complete (Session 15.1 ✅), blocking commands coming next
-- `BLPOP key [key ...] timeout` (blocking list pop) — *planned*
-- `BRPOP key [key ...] timeout` (blocking list pop from right) — *planned*
-- `XREAD BLOCK milliseconds ...` (blocking stream read) — *planned*
-- `XREADGROUP BLOCK milliseconds ...` (blocking stream read with consumer groups) — *planned*
+### Blocking Reads (Server Mode Only, Session 15+) ✅
+**Status**: Complete (Session 15.1-15.3 ✅)
+- `BLPOP key [key ...] timeout` (blocking list pop) ✅
+- `BRPOP key [key ...] timeout` (blocking list pop from right) ✅
+- `XREAD BLOCK milliseconds ...` (blocking stream read) ✅
+- `XREADGROUP BLOCK milliseconds ...` (blocking stream read with consumer groups) ✅
 
 ### Server
 - `PING`, `ECHO`, `QUIT`, `COMMAND`

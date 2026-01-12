@@ -59,7 +59,7 @@ async fn handle_connection(
     loop {
         match reader.read_command().await? {
             Some(args) => {
-                let response = execute_command(&mut db, &args);
+                let response = execute_command(&mut db, &args).await;
                 writer.write_all(&response.encode()).await?;
                 writer.flush().await?;
 
@@ -78,7 +78,7 @@ async fn handle_connection(
     Ok(())
 }
 
-fn execute_command(db: &mut Db, args: &[Vec<u8>]) -> RespValue {
+async fn execute_command(db: &mut Db, args: &[Vec<u8>]) -> RespValue {
     if args.is_empty() {
         return RespValue::error("empty command");
     }
@@ -137,6 +137,8 @@ fn execute_command(db: &mut Db, args: &[Vec<u8>]) -> RespValue {
         "RPUSH" => cmd_rpush(db, cmd_args),
         "LPOP" => cmd_lpop(db, cmd_args),
         "RPOP" => cmd_rpop(db, cmd_args),
+        "BLPOP" => cmd_blpop(db, cmd_args).await,
+        "BRPOP" => cmd_brpop(db, cmd_args).await,
         "LLEN" => cmd_llen(db, cmd_args),
         "LRANGE" => cmd_lrange(db, cmd_args),
         "LINDEX" => cmd_lindex(db, cmd_args),
@@ -176,13 +178,13 @@ fn execute_command(db: &mut Db, args: &[Vec<u8>]) -> RespValue {
         "XLEN" => cmd_xlen(db, cmd_args),
         "XRANGE" => cmd_xrange(db, cmd_args),
         "XREVRANGE" => cmd_xrevrange(db, cmd_args),
-        "XREAD" => cmd_xread(db, cmd_args),
+        "XREAD" => cmd_xread(db, cmd_args).await,
         "XTRIM" => cmd_xtrim(db, cmd_args),
         "XDEL" => cmd_xdel(db, cmd_args),
         "XINFO" => cmd_xinfo(db, cmd_args),
         // Stream consumer group commands (Session 14)
         "XGROUP" => cmd_xgroup(db, cmd_args),
-        "XREADGROUP" => cmd_xreadgroup(db, cmd_args),
+        "XREADGROUP" => cmd_xreadgroup(db, cmd_args).await,
         "XACK" => cmd_xack(db, cmd_args),
         "XPENDING" => cmd_xpending(db, cmd_args),
         "XCLAIM" => cmd_xclaim(db, cmd_args),
@@ -1241,6 +1243,84 @@ fn cmd_rpop(db: &Db, args: &[Vec<u8>]) -> RespValue {
                 }
             }
         }
+        Err(KvError::WrongType) => RespValue::wrong_type(),
+        Err(e) => RespValue::error(e.to_string()),
+    }
+}
+
+async fn cmd_blpop(db: &Db, args: &[Vec<u8>]) -> RespValue {
+    // BLPOP key [key ...] timeout
+    if args.len() < 2 {
+        return RespValue::error("wrong number of arguments for 'blpop' command");
+    }
+
+    let timeout_arg = &args[args.len() - 1];
+    let keys = &args[..args.len() - 1];
+
+    let timeout: f64 = match std::str::from_utf8(timeout_arg)
+        .ok()
+        .and_then(|s| s.parse().ok())
+    {
+        Some(t) => t,
+        None => return RespValue::error("timeout is not a float or out of range"),
+    };
+
+    let key_strs: Vec<&str> = match keys
+        .iter()
+        .map(|k| std::str::from_utf8(k))
+        .collect::<std::result::Result<Vec<_>, _>>()
+    {
+        Ok(k) => k,
+        Err(_) => return RespValue::error("invalid key"),
+    };
+
+    match db.blpop(&key_strs, timeout).await {
+        Ok(Some((key, value))) => {
+            RespValue::Array(Some(vec![
+                RespValue::BulkString(Some(key.into_bytes())),
+                RespValue::BulkString(Some(value)),
+            ]))
+        }
+        Ok(None) => RespValue::null(),
+        Err(KvError::WrongType) => RespValue::wrong_type(),
+        Err(e) => RespValue::error(e.to_string()),
+    }
+}
+
+async fn cmd_brpop(db: &Db, args: &[Vec<u8>]) -> RespValue {
+    // BRPOP key [key ...] timeout
+    if args.len() < 2 {
+        return RespValue::error("wrong number of arguments for 'brpop' command");
+    }
+
+    let timeout_arg = &args[args.len() - 1];
+    let keys = &args[..args.len() - 1];
+
+    let timeout: f64 = match std::str::from_utf8(timeout_arg)
+        .ok()
+        .and_then(|s| s.parse().ok())
+    {
+        Some(t) => t,
+        None => return RespValue::error("timeout is not a float or out of range"),
+    };
+
+    let key_strs: Vec<&str> = match keys
+        .iter()
+        .map(|k| std::str::from_utf8(k))
+        .collect::<std::result::Result<Vec<_>, _>>()
+    {
+        Ok(k) => k,
+        Err(_) => return RespValue::error("invalid key"),
+    };
+
+    match db.brpop(&key_strs, timeout).await {
+        Ok(Some((key, value))) => {
+            RespValue::Array(Some(vec![
+                RespValue::BulkString(Some(key.into_bytes())),
+                RespValue::BulkString(Some(value)),
+            ]))
+        }
+        Ok(None) => RespValue::null(),
         Err(KvError::WrongType) => RespValue::wrong_type(),
         Err(e) => RespValue::error(e.to_string()),
     }
@@ -2428,15 +2508,16 @@ fn cmd_xrevrange(db: &Db, args: &[Vec<u8>]) -> RespValue {
     }
 }
 
-fn cmd_xread(db: &Db, args: &[Vec<u8>]) -> RespValue {
+async fn cmd_xread(db: &Db, args: &[Vec<u8>]) -> RespValue {
     if args.len() < 3 {
         return RespValue::error("wrong number of arguments for 'xread' command");
     }
 
     let mut i = 0;
     let mut count: Option<i64> = None;
+    let mut block_timeout_ms: Option<i64> = None;
 
-    // Parse optional COUNT
+    // Parse optional COUNT, BLOCK
     while i < args.len() {
         let arg = match std::str::from_utf8(&args[i]) {
             Ok(s) => s.to_uppercase(),
@@ -2456,8 +2537,15 @@ fn cmd_xread(db: &Db, args: &[Vec<u8>]) -> RespValue {
                 i += 1;
             }
             "BLOCK" => {
-                // Blocking not implemented yet (Session 15)
-                return RespValue::error("BLOCK not supported in this version");
+                i += 1;
+                if i >= args.len() {
+                    return RespValue::error("syntax error");
+                }
+                block_timeout_ms = match std::str::from_utf8(&args[i]).ok().and_then(|s| s.parse().ok()) {
+                    Some(t) => Some(t),
+                    None => return RespValue::error("value is not an integer or out of range"),
+                };
+                i += 1;
             }
             "STREAMS" => {
                 i += 1;
@@ -2501,22 +2589,44 @@ fn cmd_xread(db: &Db, args: &[Vec<u8>]) -> RespValue {
         None => return RespValue::error("invalid stream ID"),
     };
 
-    match db.xread(&keys, &ids, count) {
-        Ok(results) => {
-            if results.is_empty() {
-                return RespValue::null();
+    // Handle blocking variant
+    if let Some(timeout_ms) = block_timeout_ms {
+        match db.xread_block(&keys, &ids, count, timeout_ms).await {
+            Ok(results) => {
+                if results.is_empty() {
+                    return RespValue::null();
+                }
+                let mut arr = Vec::new();
+                for (key, entries) in results {
+                    arr.push(RespValue::Array(Some(vec![
+                        RespValue::BulkString(Some(key.into_bytes())),
+                        format_stream_entries(&entries),
+                    ])));
+                }
+                RespValue::Array(Some(arr))
             }
-            let mut arr = Vec::new();
-            for (key, entries) in results {
-                arr.push(RespValue::Array(Some(vec![
-                    RespValue::BulkString(Some(key.into_bytes())),
-                    format_stream_entries(&entries),
-                ])));
-            }
-            RespValue::Array(Some(arr))
+            Err(KvError::WrongType) => RespValue::wrong_type(),
+            Err(e) => RespValue::error(e.to_string()),
         }
-        Err(KvError::WrongType) => RespValue::wrong_type(),
-        Err(e) => RespValue::error(e.to_string()),
+    } else {
+        // Non-blocking variant
+        match db.xread(&keys, &ids, count) {
+            Ok(results) => {
+                if results.is_empty() {
+                    return RespValue::null();
+                }
+                let mut arr = Vec::new();
+                for (key, entries) in results {
+                    arr.push(RespValue::Array(Some(vec![
+                        RespValue::BulkString(Some(key.into_bytes())),
+                        format_stream_entries(&entries),
+                    ])));
+                }
+                RespValue::Array(Some(arr))
+            }
+            Err(KvError::WrongType) => RespValue::wrong_type(),
+            Err(e) => RespValue::error(e.to_string()),
+        }
     }
 }
 
@@ -2924,8 +3034,8 @@ fn cmd_xgroup(db: &Db, args: &[Vec<u8>]) -> RespValue {
     }
 }
 
-fn cmd_xreadgroup(db: &Db, args: &[Vec<u8>]) -> RespValue {
-    // XREADGROUP GROUP group consumer [COUNT count] [NOACK] STREAMS key [key ...] id [id ...]
+async fn cmd_xreadgroup(db: &Db, args: &[Vec<u8>]) -> RespValue {
+    // XREADGROUP GROUP group consumer [COUNT count] [NOACK] [BLOCK timeout] STREAMS key [key ...] id [id ...]
     if args.len() < 6 {
         return RespValue::error("wrong number of arguments for 'xreadgroup' command");
     }
@@ -2950,6 +3060,7 @@ fn cmd_xreadgroup(db: &Db, args: &[Vec<u8>]) -> RespValue {
     let mut i = 3;
     let mut count: Option<i64> = None;
     let mut noack = false;
+    let mut block_timeout_ms: Option<i64> = None;
 
     while i < args.len() {
         let arg = std::str::from_utf8(&args[i]).unwrap_or("").to_uppercase();
@@ -2965,6 +3076,16 @@ fn cmd_xreadgroup(db: &Db, args: &[Vec<u8>]) -> RespValue {
             i += 1;
         } else if arg == "NOACK" {
             noack = true;
+            i += 1;
+        } else if arg == "BLOCK" {
+            i += 1;
+            if i >= args.len() {
+                return RespValue::error("syntax error");
+            }
+            block_timeout_ms = std::str::from_utf8(&args[i]).ok().and_then(|s| s.parse().ok());
+            if block_timeout_ms.is_none() {
+                return RespValue::error("value is not an integer or out of range");
+            }
             i += 1;
         } else if arg == "STREAMS" {
             i += 1;
@@ -2991,26 +3112,52 @@ fn cmd_xreadgroup(db: &Db, args: &[Vec<u8>]) -> RespValue {
         Err(_) => return RespValue::error("invalid ID"),
     };
 
-    match db.xreadgroup(group, consumer, &keys, &ids, count, noack) {
-        Ok(results) => {
-            if results.is_empty() {
-                return RespValue::null();
+    // Handle blocking variant
+    if let Some(timeout_ms) = block_timeout_ms {
+        match db.xreadgroup_block(group, consumer, &keys, &ids, count, noack, timeout_ms).await {
+            Ok(results) => {
+                if results.is_empty() {
+                    return RespValue::null();
+                }
+                let arr: Vec<RespValue> = results
+                    .iter()
+                    .map(|(key, entries)| {
+                        RespValue::Array(Some(vec![
+                            RespValue::BulkString(Some(key.as_bytes().to_vec())),
+                            format_stream_entries(entries),
+                        ]))
+                    })
+                    .collect();
+                RespValue::Array(Some(arr))
             }
-            let arr: Vec<RespValue> = results
-                .iter()
-                .map(|(key, entries)| {
-                    RespValue::Array(Some(vec![
-                        RespValue::BulkString(Some(key.as_bytes().to_vec())),
-                        format_stream_entries(entries),
-                    ]))
-                })
-                .collect();
-            RespValue::Array(Some(arr))
+            Err(KvError::NoGroup) => RespValue::error("NOGROUP No such consumer group"),
+            Err(KvError::WrongType) => RespValue::wrong_type(),
+            Err(KvError::SyntaxError) => RespValue::error("syntax error"),
+            Err(e) => RespValue::error(e.to_string()),
         }
-        Err(KvError::NoGroup) => RespValue::error("NOGROUP No such consumer group"),
-        Err(KvError::WrongType) => RespValue::wrong_type(),
-        Err(KvError::SyntaxError) => RespValue::error("syntax error"),
-        Err(e) => RespValue::error(e.to_string()),
+    } else {
+        // Non-blocking variant
+        match db.xreadgroup(group, consumer, &keys, &ids, count, noack) {
+            Ok(results) => {
+                if results.is_empty() {
+                    return RespValue::null();
+                }
+                let arr: Vec<RespValue> = results
+                    .iter()
+                    .map(|(key, entries)| {
+                        RespValue::Array(Some(vec![
+                            RespValue::BulkString(Some(key.as_bytes().to_vec())),
+                            format_stream_entries(entries),
+                        ]))
+                    })
+                    .collect();
+                RespValue::Array(Some(arr))
+            }
+            Err(KvError::NoGroup) => RespValue::error("NOGROUP No such consumer group"),
+            Err(KvError::WrongType) => RespValue::wrong_type(),
+            Err(KvError::SyntaxError) => RespValue::error("syntax error"),
+            Err(e) => RespValue::error(e.to_string()),
+        }
     }
 }
 

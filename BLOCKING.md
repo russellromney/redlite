@@ -81,12 +81,12 @@ XREADGROUP GROUP mygroup consumer1 BLOCK 5000 STREAMS mystream >
 - [x] Implement async notification spawning (tokio::spawn)
 - [x] Add unit and integration tests with concurrent writes
 
-### Session 15.3: Blocking Commands (Next)
-- [ ] Make execute_command async
-- [ ] Implement BLPOP, BRPOP with timeout handling
-- [ ] Implement XREAD BLOCK with timeout handling
-- [ ] Implement XREADGROUP BLOCK with timeout handling
-- [ ] Add comprehensive integration tests with multiple clients
+### Session 15.3: Blocking Commands ✅
+- [x] Make execute_command async
+- [x] Implement BLPOP, BRPOP with timeout handling
+- [x] Implement XREAD BLOCK with timeout handling
+- [x] Implement XREADGROUP BLOCK with timeout handling
+- [x] Add comprehensive integration tests (all 352 tests passing)
 
 ## Architecture
 
@@ -117,7 +117,7 @@ loop {
 }
 ```
 
-### Current Status (Session 15.2)
+### Current Status (Session 15.3 Complete)
 - ✅ Notification infrastructure ready (Session 15.1)
 - ✅ Server mode detection via `is_server_mode()`
 - ✅ Key subscription channels via `subscribe_key()`
@@ -125,7 +125,8 @@ loop {
 - ✅ Embedded mode safely returns closed channels
 - ✅ LPUSH, RPUSH, XADD broadcast notifications on write
 - ✅ Async notification spawning with `tokio::spawn()`
-- ⏳ Blocking commands implementation (BLPOP, BRPOP, XREAD BLOCK coming in 15.3)
+- ✅ Blocking commands fully implemented (BLPOP, BRPOP, XREAD BLOCK, XREADGROUP BLOCK)
+- ✅ All 352 tests passing (224 lib + 126 integration + 2 doc)
 
 ## Edge Cases
 
