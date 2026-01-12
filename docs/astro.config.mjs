@@ -49,6 +49,7 @@ export default defineConfig({
 					items: [
 						{ label: 'Configuration', slug: 'reference/configuration' },
 						{ label: 'Schema', slug: 'reference/schema' },
+						{ label: 'History Tracking', slug: 'reference/history' },
 					],
 				},
 			],

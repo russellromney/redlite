@@ -99,7 +99,7 @@ println!("Type: {:?}, TTL: {:?}", info.key_type, info.ttl);
 
 ### HISTORY
 
-Track and query historical data (Session 17):
+Track and query historical data with time-travel queries:
 
 ```bash
 # Enable history tracking

@@ -158,10 +158,15 @@ redis-cli -p 6767 GET foo
 
 See [ROADMAP.md](./ROADMAP.md) for detailed plans.
 
-**Sessions 18-20: Language Bindings** (Next)
+**Session 18: Performance Testing & Benchmarking** (Next)
+- Establish baseline QPS metrics in embedded mode
+- Profile and optimize hot paths (SQLite, RESP parsing, expiration)
+- Target: 10,000+ QPS
+
+**Sessions 19-21: Language Bindings** (After S18)
 - **Python** (`redlite-py`) - PyO3 bindings via PyPI
 - **Node.js/Bun** (`redlite-js`) - NAPI-RS bindings via npm
-- **Go** (`redlite-go`) - C FFI + cgo via Go modules
+- **C FFI + Go** - C bindings via cbindgen + Go cgo wrapper
 
 **V3+ Features:**
 - Full-text search (SQLite FTS5)

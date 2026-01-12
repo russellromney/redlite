@@ -33,7 +33,7 @@ Redlite may not be the best choice for:
 
 ## Feature Status
 
-**Current Status:** Sessions 1-16 complete (388+ tests passing)
+**Current Status:** Sessions 1-17 complete (400+ tests passing)
 
 | Feature | Status |
 |---------|--------|
@@ -47,7 +47,7 @@ Redlite may not be the best choice for:
 | Transactions (MULTI/EXEC/DISCARD) | ✅ Complete |
 | Pub/Sub (Server Mode Only) | ✅ Complete |
 | Blocking Reads (Server Mode Only) | ✅ Complete |
-| History Tracking & Time-Travel | 🔜 Session 17 |
+| History Tracking & Time-Travel | ✅ Complete |
 | Python/Node.js/Go Bindings | 🔜 Sessions 18-20 |
 | Full-Text Search | 🔜 V3+ |
 | Replication (walsync) | 🔜 V3+ |

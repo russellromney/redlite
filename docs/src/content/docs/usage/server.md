@@ -179,6 +179,14 @@ docker build -t redlite .
 docker run -p 6767:6767 -v redlite-data:/data redlite
 ```
 
+## Custom Commands
+
+Redlite adds these commands on top of Redis:
+
+- **HISTORY** - Track and query historical data with time-travel queries. See [History Tracking](/reference/history) for full documentation.
+- **KEYINFO** - Get detailed key metadata (type, TTL, created/updated timestamps)
+- **VACUUM** - Delete expired keys and reclaim disk space
+
 ## Differences from Redis
 
 When using server mode, be aware of these differences:
@@ -187,4 +195,4 @@ When using server mode, be aware of these differences:
 2. **Memory** - Not bounded by RAM; uses disk storage
 3. **Commands** - Only subset of Redis commands supported (see [Commands](/commands/strings))
 4. **Clustering** - No cluster mode; single-node only
-5. **Pub/Sub** - Not yet implemented
+5. **Pub/Sub** - Supported (server mode only)
