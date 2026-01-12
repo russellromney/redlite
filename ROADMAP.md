@@ -136,21 +136,21 @@ Incremental implementation plan. Each session = one commit = one testable featur
 - [x] `cargo publish` ready (keywords, categories, docs, license fixed)
 - [x] **Test:** 178 unit tests + 88 integration tests passing
 
-### Session 13: Streams (Basic)
-- [ ] Schema: `streams` table (key_id, id INTEGER PRIMARY KEY, data BLOB, created_at)
-- [ ] KeyType::Stream (type = 6)
-- [ ] XADD key [NOMKSTREAM] [MAXLEN|MINID [=|~] threshold] *|id field value [field value ...]
-- [ ] XLEN key
-- [ ] XRANGE key start end [COUNT count]
-- [ ] XREVRANGE key end start [COUNT count]
-- [ ] XREAD [COUNT count] STREAMS key [key ...] id [id ...]
-- [ ] XTRIM key MAXLEN|MINID [=|~] threshold
-- [ ] XDEL key id [id ...]
-- [ ] XINFO STREAM key
-- [ ] Entry ID format: use SQLite ROWID, expose as `{timestamp}-{seq}` for Redis compat
-- [ ] Store fields as MessagePack blob (single row per entry)
-- [ ] Unit tests + integration tests
-- [ ] **Test:** redis-cli stream operations (non-blocking)
+### Session 13: Streams (Basic) ✅
+- [x] Schema: `streams` table (key_id, entry_ms, entry_seq, data BLOB, created_at)
+- [x] KeyType::Stream (type = 6)
+- [x] XADD key [NOMKSTREAM] [MAXLEN|MINID [=|~] threshold] *|id field value [field value ...]
+- [x] XLEN key
+- [x] XRANGE key start end [COUNT count]
+- [x] XREVRANGE key end start [COUNT count]
+- [x] XREAD [COUNT count] STREAMS key [key ...] id [id ...]
+- [x] XTRIM key MAXLEN|MINID [=|~] threshold
+- [x] XDEL key id [id ...]
+- [x] XINFO STREAM key
+- [x] Entry ID format: `{timestamp}-{seq}` for Redis compat
+- [x] Store fields as MessagePack blob (rmp-serde)
+- [x] Unit tests (17 new tests) + integration tests (13 new tests)
+- [x] **Test:** 195 unit tests + 101 integration tests passing
 
 ### Session 14: Streams (Consumer Groups)
 - [ ] Schema: `stream_groups` (key_id, name, last_id), `stream_pending` (key_id, group, entry_id, consumer, delivered_at, delivery_count)

@@ -1452,3 +1452,220 @@ fn test_keyinfo_zset() {
     let r = redis_cli(16474, &["KEYINFO", "myzset"]);
     assert!(r.contains("type") && r.contains("zset"), "Expected type=zset, got: {}", r);
 }
+
+// --- Session 13: Stream Integration Tests ---
+
+#[test]
+fn test_xadd_xlen() {
+    let _server = start_server(16476);
+
+    // XADD with * auto-generates ID
+    let r1 = redis_cli(16476, &["XADD", "mystream", "*", "field1", "value1"]);
+    assert!(r1.contains('-'), "Expected stream ID, got: {}", r1);
+
+    // XLEN should return 1
+    let r2 = redis_cli(16476, &["XLEN", "mystream"]);
+    assert!(check_int(&r2, 1), "Expected 1, got: {}", r2);
+
+    // Add more entries
+    redis_cli(16476, &["XADD", "mystream", "*", "field2", "value2"]);
+    redis_cli(16476, &["XADD", "mystream", "*", "field3", "value3"]);
+
+    let r3 = redis_cli(16476, &["XLEN", "mystream"]);
+    assert!(check_int(&r3, 3), "Expected 3, got: {}", r3);
+}
+
+#[test]
+fn test_xadd_explicit_id() {
+    let _server = start_server(16477);
+
+    // XADD with explicit ID
+    let r1 = redis_cli(16477, &["XADD", "mystream", "1000-0", "field1", "value1"]);
+    assert!(r1.contains("1000-0"), "Expected 1000-0, got: {}", r1);
+
+    let r2 = redis_cli(16477, &["XADD", "mystream", "2000-5", "field2", "value2"]);
+    assert!(r2.contains("2000-5"), "Expected 2000-5, got: {}", r2);
+}
+
+#[test]
+fn test_xrange() {
+    let _server = start_server(16478);
+
+    redis_cli(16478, &["XADD", "mystream", "1000-0", "a", "1"]);
+    redis_cli(16478, &["XADD", "mystream", "2000-0", "b", "2"]);
+    redis_cli(16478, &["XADD", "mystream", "3000-0", "c", "3"]);
+
+    // Get all entries with - and +
+    let r1 = redis_cli(16478, &["XRANGE", "mystream", "-", "+"]);
+    assert!(r1.contains("1000-0"), "Expected 1000-0 in result: {}", r1);
+    assert!(r1.contains("3000-0"), "Expected 3000-0 in result: {}", r1);
+
+    // Get range
+    let r2 = redis_cli(16478, &["XRANGE", "mystream", "1500", "2500"]);
+    assert!(r2.contains("2000-0"), "Expected 2000-0 in result: {}", r2);
+    assert!(!r2.contains("1000-0"), "Unexpected 1000-0 in result: {}", r2);
+    assert!(!r2.contains("3000-0"), "Unexpected 3000-0 in result: {}", r2);
+
+    // With COUNT
+    let r3 = redis_cli(16478, &["XRANGE", "mystream", "-", "+", "COUNT", "2"]);
+    assert!(r3.contains("1000-0"), "Expected 1000-0: {}", r3);
+    assert!(r3.contains("2000-0"), "Expected 2000-0: {}", r3);
+}
+
+#[test]
+fn test_xrevrange() {
+    let _server = start_server(16479);
+
+    redis_cli(16479, &["XADD", "mystream", "1000-0", "a", "1"]);
+    redis_cli(16479, &["XADD", "mystream", "2000-0", "b", "2"]);
+    redis_cli(16479, &["XADD", "mystream", "3000-0", "c", "3"]);
+
+    // Get all in reverse (end before start)
+    let r1 = redis_cli(16479, &["XREVRANGE", "mystream", "+", "-"]);
+    assert!(r1.contains("3000-0"), "Expected 3000-0: {}", r1);
+    assert!(r1.contains("1000-0"), "Expected 1000-0: {}", r1);
+}
+
+#[test]
+fn test_xread() {
+    let _server = start_server(16480);
+
+    redis_cli(16480, &["XADD", "stream1", "1000-0", "a", "1"]);
+    redis_cli(16480, &["XADD", "stream1", "2000-0", "b", "2"]);
+
+    // Read from beginning
+    let r1 = redis_cli(16480, &["XREAD", "STREAMS", "stream1", "0"]);
+    assert!(r1.contains("stream1"), "Expected stream1: {}", r1);
+    assert!(r1.contains("1000-0"), "Expected 1000-0: {}", r1);
+    assert!(r1.contains("2000-0"), "Expected 2000-0: {}", r1);
+
+    // Read after first entry
+    let r2 = redis_cli(16480, &["XREAD", "STREAMS", "stream1", "1000-0"]);
+    assert!(r2.contains("2000-0"), "Expected 2000-0: {}", r2);
+    assert!(!r2.contains("1000-0"), "Unexpected 1000-0: {}", r2);
+
+    // Read with COUNT
+    let r3 = redis_cli(16480, &["XREAD", "COUNT", "1", "STREAMS", "stream1", "0"]);
+    assert!(r3.contains("1000-0"), "Expected 1000-0: {}", r3);
+}
+
+#[test]
+fn test_xtrim_maxlen() {
+    let _server = start_server(16481);
+
+    for i in 1..=5 {
+        redis_cli(16481, &["XADD", "mystream", &format!("{}-0", i * 1000), "f", "v"]);
+    }
+
+    let r1 = redis_cli(16481, &["XLEN", "mystream"]);
+    assert!(check_int(&r1, 5), "Expected 5, got: {}", r1);
+
+    // Trim to 3
+    let r2 = redis_cli(16481, &["XTRIM", "mystream", "MAXLEN", "3"]);
+    assert!(check_int(&r2, 2), "Expected 2 deleted, got: {}", r2);
+
+    let r3 = redis_cli(16481, &["XLEN", "mystream"]);
+    assert!(check_int(&r3, 3), "Expected 3, got: {}", r3);
+}
+
+#[test]
+fn test_xtrim_minid() {
+    let _server = start_server(16482);
+
+    for i in 1..=5 {
+        redis_cli(16482, &["XADD", "mystream", &format!("{}-0", i * 1000), "f", "v"]);
+    }
+
+    // Trim entries before 3000-0
+    let r1 = redis_cli(16482, &["XTRIM", "mystream", "MINID", "3000-0"]);
+    assert!(check_int(&r1, 2), "Expected 2 deleted, got: {}", r1);
+
+    let r2 = redis_cli(16482, &["XLEN", "mystream"]);
+    assert!(check_int(&r2, 3), "Expected 3, got: {}", r2);
+}
+
+#[test]
+fn test_xdel() {
+    let _server = start_server(16483);
+
+    redis_cli(16483, &["XADD", "mystream", "1000-0", "a", "1"]);
+    redis_cli(16483, &["XADD", "mystream", "2000-0", "b", "2"]);
+    redis_cli(16483, &["XADD", "mystream", "3000-0", "c", "3"]);
+
+    // Delete middle entry
+    let r1 = redis_cli(16483, &["XDEL", "mystream", "2000-0"]);
+    assert!(check_int(&r1, 1), "Expected 1, got: {}", r1);
+
+    let r2 = redis_cli(16483, &["XLEN", "mystream"]);
+    assert!(check_int(&r2, 2), "Expected 2, got: {}", r2);
+
+    // Delete non-existent entry
+    let r3 = redis_cli(16483, &["XDEL", "mystream", "2000-0"]);
+    assert!(check_int(&r3, 0), "Expected 0, got: {}", r3);
+}
+
+#[test]
+fn test_xinfo_stream() {
+    let _server = start_server(16484);
+
+    redis_cli(16484, &["XADD", "mystream", "1000-0", "a", "1"]);
+    redis_cli(16484, &["XADD", "mystream", "2000-0", "b", "2"]);
+
+    let r = redis_cli(16484, &["XINFO", "STREAM", "mystream"]);
+    assert!(r.contains("length"), "Expected length: {}", r);
+    assert!(r.contains("last-generated-id"), "Expected last-generated-id: {}", r);
+    assert!(r.contains("2000-0"), "Expected 2000-0 as last ID: {}", r);
+}
+
+#[test]
+fn test_stream_type() {
+    let _server = start_server(16485);
+
+    redis_cli(16485, &["XADD", "mystream", "*", "field", "value"]);
+    let r = redis_cli(16485, &["TYPE", "mystream"]);
+    assert_eq!(r, "stream", "Expected type=stream, got: {}", r);
+}
+
+#[test]
+fn test_stream_wrong_type() {
+    let _server = start_server(16486);
+
+    // Create a string key
+    redis_cli(16486, &["SET", "mystring", "value"]);
+
+    // Stream operations on string should fail
+    let r1 = redis_cli(16486, &["XADD", "mystring", "*", "f", "v"]);
+    assert!(r1.contains("WRONGTYPE"), "Expected WRONGTYPE, got: {}", r1);
+
+    let r2 = redis_cli(16486, &["XLEN", "mystring"]);
+    assert!(r2.contains("WRONGTYPE"), "Expected WRONGTYPE, got: {}", r2);
+}
+
+#[test]
+fn test_xadd_nomkstream() {
+    let _server = start_server(16487);
+
+    // NOMKSTREAM on non-existent stream should return nil
+    let r1 = redis_cli(16487, &["XADD", "mystream", "NOMKSTREAM", "*", "f", "v"]);
+    assert!(r1.is_empty() || r1.contains("nil"), "Expected nil for NOMKSTREAM: {}", r1);
+
+    // Create the stream
+    redis_cli(16487, &["XADD", "mystream", "*", "f", "v"]);
+
+    // NOMKSTREAM on existing stream should work
+    let r2 = redis_cli(16487, &["XADD", "mystream", "NOMKSTREAM", "*", "f2", "v2"]);
+    assert!(r2.contains('-'), "Expected ID, got: {}", r2);
+}
+
+#[test]
+fn test_xadd_maxlen() {
+    let _server = start_server(16488);
+
+    // Add entries with MAXLEN 3
+    for i in 1..=5 {
+        redis_cli(16488, &["XADD", "mystream", "MAXLEN", "3", &format!("{}-0", i * 1000), "f", "v"]);
+    }
+
+    let r = redis_cli(16488, &["XLEN", "mystream"]);
+    assert!(check_int(&r, 3), "Expected 3, got: {}", r);
+}

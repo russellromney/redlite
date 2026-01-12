@@ -144,6 +144,14 @@ redis-cli -p 6767 GET foo
 - `ZINCRBY`
 - `ZREMRANGEBYRANK`, `ZREMRANGEBYSCORE`
 
+### Streams
+- `XADD` (with NOMKSTREAM, MAXLEN, MINID options)
+- `XLEN`, `XRANGE`, `XREVRANGE`
+- `XREAD` (with COUNT)
+- `XTRIM` (MAXLEN, MINID)
+- `XDEL`
+- `XINFO STREAM`
+
 ### Server
 - `PING`, `ECHO`, `QUIT`, `COMMAND`
 - `SELECT` (databases 0-15, per-connection isolation)
@@ -178,6 +186,7 @@ Data stored in SQLite with these tables:
 - `lists` - List elements (gap-based positioning)
 - `sets` - Set members
 - `zsets` - Sorted set members with scores
+- `streams` - Stream entries (timestamp-sequence IDs, MessagePack fields)
 
 ## License
 

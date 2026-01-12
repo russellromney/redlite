@@ -4,7 +4,7 @@ use std::sync::{Arc, Mutex};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use crate::error::{KvError, Result};
-use crate::types::{KeyInfo, KeyType, SetOptions, ZMember};
+use crate::types::{KeyInfo, KeyType, SetOptions, StreamEntry, StreamId, StreamInfo, ZMember};
 
 /// Default autovacuum interval in milliseconds (60 seconds)
 const DEFAULT_AUTOVACUUM_INTERVAL_MS: i64 = 60_000;
@@ -3042,6 +3042,492 @@ impl Db {
             Err(e) => Err(e.into()),
         }
     }
+
+    // --- Session 13: Stream Operations ---
+
+    /// Get or create a stream key, returning the key_id
+    fn get_or_create_stream_key(&self, conn: &Connection, key: &str) -> Result<i64> {
+        let db = self.selected_db;
+        let now = Self::now_ms();
+
+        // Check if key exists and is correct type
+        let existing: std::result::Result<(i64, i32, Option<i64>), _> = conn.query_row(
+            "SELECT id, type, expire_at FROM keys WHERE db = ?1 AND key = ?2",
+            params![db, key],
+            |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+        );
+
+        match existing {
+            Ok((key_id, key_type, expire_at)) => {
+                // Check expiration
+                if let Some(exp) = expire_at {
+                    if exp <= now {
+                        // Expired - delete and create new
+                        conn.execute("DELETE FROM keys WHERE id = ?1", params![key_id])?;
+                        return self.create_stream_key(conn, key);
+                    }
+                }
+                // Check type
+                if key_type != KeyType::Stream as i32 {
+                    return Err(KvError::WrongType);
+                }
+                Ok(key_id)
+            }
+            Err(rusqlite::Error::QueryReturnedNoRows) => self.create_stream_key(conn, key),
+            Err(e) => Err(e.into()),
+        }
+    }
+
+    fn create_stream_key(&self, conn: &Connection, key: &str) -> Result<i64> {
+        let db = self.selected_db;
+        let now = Self::now_ms();
+
+        conn.execute(
+            "INSERT INTO keys (db, key, type, updated_at) VALUES (?1, ?2, ?3, ?4)",
+            params![db, key, KeyType::Stream as i32, now],
+        )?;
+
+        Ok(conn.last_insert_rowid())
+    }
+
+    /// Get stream key_id if it exists and is the correct type
+    fn get_stream_key_id(&self, conn: &Connection, key: &str) -> Result<Option<i64>> {
+        let db = self.selected_db;
+        let now = Self::now_ms();
+
+        let result: std::result::Result<(i64, i32, Option<i64>), _> = conn.query_row(
+            "SELECT id, type, expire_at FROM keys WHERE db = ?1 AND key = ?2",
+            params![db, key],
+            |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+        );
+
+        match result {
+            Ok((key_id, key_type, expire_at)) => {
+                // Check expiration
+                if let Some(exp) = expire_at {
+                    if exp <= now {
+                        return Ok(None);
+                    }
+                }
+                // Check type
+                if key_type != KeyType::Stream as i32 {
+                    return Err(KvError::WrongType);
+                }
+                Ok(Some(key_id))
+            }
+            Err(rusqlite::Error::QueryReturnedNoRows) => Ok(None),
+            Err(e) => Err(e.into()),
+        }
+    }
+
+    /// Encode field-value pairs as MessagePack
+    fn encode_stream_fields(fields: &[(&[u8], &[u8])]) -> Vec<u8> {
+        // Convert to owned vecs for serialization
+        let data: Vec<(Vec<u8>, Vec<u8>)> = fields
+            .iter()
+            .map(|(k, v)| (k.to_vec(), v.to_vec()))
+            .collect();
+        rmp_serde::to_vec(&data).unwrap_or_default()
+    }
+
+    /// Decode MessagePack to field-value pairs
+    fn decode_stream_fields(data: &[u8]) -> Vec<(Vec<u8>, Vec<u8>)> {
+        rmp_serde::from_slice(data).unwrap_or_default()
+    }
+
+    /// Get the last entry ID for a stream, or (0, 0) if empty
+    fn get_last_stream_id(&self, conn: &Connection, key_id: i64) -> StreamId {
+        let result: std::result::Result<(i64, i64), _> = conn.query_row(
+            "SELECT entry_ms, entry_seq FROM streams WHERE key_id = ?1 ORDER BY entry_ms DESC, entry_seq DESC LIMIT 1",
+            params![key_id],
+            |row| Ok((row.get(0)?, row.get(1)?)),
+        );
+
+        match result {
+            Ok((ms, seq)) => StreamId::new(ms, seq),
+            Err(_) => StreamId::new(0, 0),
+        }
+    }
+
+    /// XADD key [NOMKSTREAM] [MAXLEN|MINID [=|~] threshold] *|id field value [field value ...]
+    /// Returns the entry ID that was added
+    pub fn xadd(
+        &self,
+        key: &str,
+        id: Option<StreamId>,  // None means auto-generate with *
+        fields: &[(&[u8], &[u8])],
+        nomkstream: bool,
+        maxlen: Option<i64>,
+        minid: Option<StreamId>,
+        approximate: bool,
+    ) -> Result<Option<StreamId>> {
+        if fields.is_empty() {
+            return Err(KvError::SyntaxError);
+        }
+
+        let conn = self.core.conn.lock().unwrap_or_else(|e| e.into_inner());
+        let now = Self::now_ms();
+
+        // Check if stream exists
+        let existing_key_id = self.get_stream_key_id(&conn, key)?;
+
+        // Handle NOMKSTREAM - don't create if stream doesn't exist
+        if nomkstream && existing_key_id.is_none() {
+            return Ok(None);
+        }
+
+        let key_id = match existing_key_id {
+            Some(id) => id,
+            None => self.create_stream_key(&conn, key)?,
+        };
+
+        // Determine the entry ID
+        let last_id = self.get_last_stream_id(&conn, key_id);
+        let entry_id = match id {
+            Some(explicit_id) => {
+                // Explicit ID must be greater than last ID
+                if explicit_id <= last_id && last_id != StreamId::new(0, 0) {
+                    return Err(KvError::InvalidData); // ID is equal or smaller than last
+                }
+                if explicit_id.ms == 0 && explicit_id.seq == 0 {
+                    return Err(KvError::InvalidData); // 0-0 is not allowed
+                }
+                explicit_id
+            }
+            None => {
+                // Auto-generate: use current time, increment seq if same ms
+                if now > last_id.ms {
+                    StreamId::new(now, 0)
+                } else {
+                    StreamId::new(last_id.ms, last_id.seq + 1)
+                }
+            }
+        };
+
+        // Encode fields as MessagePack
+        let data = Self::encode_stream_fields(fields);
+
+        // Insert the entry
+        conn.execute(
+            "INSERT INTO streams (key_id, entry_ms, entry_seq, data, created_at) VALUES (?1, ?2, ?3, ?4, ?5)",
+            params![key_id, entry_id.ms, entry_id.seq, data, now],
+        )?;
+
+        // Update key timestamp
+        conn.execute(
+            "UPDATE keys SET updated_at = ?1 WHERE id = ?2",
+            params![now, key_id],
+        )?;
+
+        // Apply MAXLEN trimming
+        if let Some(max) = maxlen {
+            self.trim_stream_maxlen(&conn, key_id, max, approximate)?;
+        }
+
+        // Apply MINID trimming
+        if let Some(min) = minid {
+            self.trim_stream_minid(&conn, key_id, min)?;
+        }
+
+        Ok(Some(entry_id))
+    }
+
+    /// Trim stream to MAXLEN
+    fn trim_stream_maxlen(
+        &self,
+        conn: &Connection,
+        key_id: i64,
+        maxlen: i64,
+        _approximate: bool, // For now, we always do exact trimming
+    ) -> Result<i64> {
+        // Delete oldest entries to keep at most maxlen entries
+        let deleted = conn.execute(
+            "DELETE FROM streams WHERE key_id = ?1 AND id NOT IN (
+                SELECT id FROM streams WHERE key_id = ?1
+                ORDER BY entry_ms DESC, entry_seq DESC
+                LIMIT ?2
+            )",
+            params![key_id, maxlen],
+        )?;
+        Ok(deleted as i64)
+    }
+
+    /// Trim stream by MINID
+    fn trim_stream_minid(&self, conn: &Connection, key_id: i64, minid: StreamId) -> Result<i64> {
+        // Delete entries with ID less than minid
+        let deleted = conn.execute(
+            "DELETE FROM streams WHERE key_id = ?1 AND (entry_ms < ?2 OR (entry_ms = ?2 AND entry_seq < ?3))",
+            params![key_id, minid.ms, minid.seq],
+        )?;
+        Ok(deleted as i64)
+    }
+
+    /// XLEN key - get number of entries in stream
+    pub fn xlen(&self, key: &str) -> Result<i64> {
+        self.maybe_autovacuum();
+        let conn = self.core.conn.lock().unwrap_or_else(|e| e.into_inner());
+
+        let key_id = match self.get_stream_key_id(&conn, key)? {
+            Some(id) => id,
+            None => return Ok(0),
+        };
+
+        let count: i64 = conn.query_row(
+            "SELECT COUNT(*) FROM streams WHERE key_id = ?1",
+            params![key_id],
+            |row| row.get(0),
+        )?;
+
+        Ok(count)
+    }
+
+    /// XRANGE key start end [COUNT count] - get entries in ID range
+    pub fn xrange(
+        &self,
+        key: &str,
+        start: StreamId,
+        end: StreamId,
+        count: Option<i64>,
+    ) -> Result<Vec<StreamEntry>> {
+        self.maybe_autovacuum();
+        let conn = self.core.conn.lock().unwrap_or_else(|e| e.into_inner());
+
+        let key_id = match self.get_stream_key_id(&conn, key)? {
+            Some(id) => id,
+            None => return Ok(vec![]),
+        };
+
+        // Use a large default limit if no count specified
+        let limit = count.unwrap_or(i64::MAX);
+
+        let mut stmt = conn.prepare(
+            "SELECT entry_ms, entry_seq, data FROM streams
+             WHERE key_id = ?1
+             AND (entry_ms > ?2 OR (entry_ms = ?2 AND entry_seq >= ?3))
+             AND (entry_ms < ?4 OR (entry_ms = ?4 AND entry_seq <= ?5))
+             ORDER BY entry_ms ASC, entry_seq ASC
+             LIMIT ?6",
+        )?;
+
+        let entries: Vec<StreamEntry> = stmt
+            .query_map(
+                params![key_id, start.ms, start.seq, end.ms, end.seq, limit],
+                |row| {
+                    let ms: i64 = row.get(0)?;
+                    let seq: i64 = row.get(1)?;
+                    let data: Vec<u8> = row.get(2)?;
+                    Ok(StreamEntry::new(
+                        StreamId::new(ms, seq),
+                        Self::decode_stream_fields(&data),
+                    ))
+                },
+            )?
+            .filter_map(|r| r.ok())
+            .collect();
+
+        Ok(entries)
+    }
+
+    /// XREVRANGE key end start [COUNT count] - get entries in reverse ID range
+    pub fn xrevrange(
+        &self,
+        key: &str,
+        end: StreamId,
+        start: StreamId,
+        count: Option<i64>,
+    ) -> Result<Vec<StreamEntry>> {
+        self.maybe_autovacuum();
+        let conn = self.core.conn.lock().unwrap_or_else(|e| e.into_inner());
+
+        let key_id = match self.get_stream_key_id(&conn, key)? {
+            Some(id) => id,
+            None => return Ok(vec![]),
+        };
+
+        // Use a large default limit if no count specified
+        let limit = count.unwrap_or(i64::MAX);
+
+        let mut stmt = conn.prepare(
+            "SELECT entry_ms, entry_seq, data FROM streams
+             WHERE key_id = ?1
+             AND (entry_ms > ?2 OR (entry_ms = ?2 AND entry_seq >= ?3))
+             AND (entry_ms < ?4 OR (entry_ms = ?4 AND entry_seq <= ?5))
+             ORDER BY entry_ms DESC, entry_seq DESC
+             LIMIT ?6",
+        )?;
+
+        let entries: Vec<StreamEntry> = stmt
+            .query_map(
+                params![key_id, start.ms, start.seq, end.ms, end.seq, limit],
+                |row| {
+                    let ms: i64 = row.get(0)?;
+                    let seq: i64 = row.get(1)?;
+                    let data: Vec<u8> = row.get(2)?;
+                    Ok(StreamEntry::new(
+                        StreamId::new(ms, seq),
+                        Self::decode_stream_fields(&data),
+                    ))
+                },
+            )?
+            .filter_map(|r| r.ok())
+            .collect();
+
+        Ok(entries)
+    }
+
+    /// XREAD [COUNT count] STREAMS key [key ...] id [id ...]
+    /// Returns entries from multiple streams starting after the given IDs
+    pub fn xread(
+        &self,
+        keys: &[&str],
+        ids: &[StreamId],
+        count: Option<i64>,
+    ) -> Result<Vec<(String, Vec<StreamEntry>)>> {
+        if keys.len() != ids.len() {
+            return Err(KvError::SyntaxError);
+        }
+
+        self.maybe_autovacuum();
+        let mut results = Vec::new();
+
+        for (key, id) in keys.iter().zip(ids.iter()) {
+            // Get entries after the given ID (exclusive)
+            let start = if id.seq == i64::MAX {
+                StreamId::new(id.ms + 1, 0)
+            } else {
+                StreamId::new(id.ms, id.seq + 1)
+            };
+            let entries = self.xrange(key, start, StreamId::max(), count)?;
+            if !entries.is_empty() {
+                results.push(((*key).to_string(), entries));
+            }
+        }
+
+        Ok(results)
+    }
+
+    /// XTRIM key MAXLEN|MINID [=|~] threshold
+    pub fn xtrim(
+        &self,
+        key: &str,
+        maxlen: Option<i64>,
+        minid: Option<StreamId>,
+        _approximate: bool,
+    ) -> Result<i64> {
+        let conn = self.core.conn.lock().unwrap_or_else(|e| e.into_inner());
+
+        let key_id = match self.get_stream_key_id(&conn, key)? {
+            Some(id) => id,
+            None => return Ok(0),
+        };
+
+        let deleted = if let Some(max) = maxlen {
+            self.trim_stream_maxlen(&conn, key_id, max, _approximate)?
+        } else if let Some(min) = minid {
+            self.trim_stream_minid(&conn, key_id, min)?
+        } else {
+            0
+        };
+
+        // Update key timestamp
+        let now = Self::now_ms();
+        conn.execute(
+            "UPDATE keys SET updated_at = ?1 WHERE id = ?2",
+            params![now, key_id],
+        )?;
+
+        Ok(deleted)
+    }
+
+    /// XDEL key id [id ...] - delete specific entries
+    pub fn xdel(&self, key: &str, ids: &[StreamId]) -> Result<i64> {
+        if ids.is_empty() {
+            return Ok(0);
+        }
+
+        let conn = self.core.conn.lock().unwrap_or_else(|e| e.into_inner());
+
+        let key_id = match self.get_stream_key_id(&conn, key)? {
+            Some(id) => id,
+            None => return Ok(0),
+        };
+
+        let mut deleted = 0i64;
+        for id in ids {
+            let count = conn.execute(
+                "DELETE FROM streams WHERE key_id = ?1 AND entry_ms = ?2 AND entry_seq = ?3",
+                params![key_id, id.ms, id.seq],
+            )?;
+            deleted += count as i64;
+        }
+
+        // Update key timestamp
+        let now = Self::now_ms();
+        conn.execute(
+            "UPDATE keys SET updated_at = ?1 WHERE id = ?2",
+            params![now, key_id],
+        )?;
+
+        Ok(deleted)
+    }
+
+    /// XINFO STREAM key - get stream info
+    pub fn xinfo_stream(&self, key: &str) -> Result<Option<StreamInfo>> {
+        self.maybe_autovacuum();
+        let conn = self.core.conn.lock().unwrap_or_else(|e| e.into_inner());
+
+        let key_id = match self.get_stream_key_id(&conn, key)? {
+            Some(id) => id,
+            None => return Ok(None),
+        };
+
+        // Get length
+        let length: i64 = conn.query_row(
+            "SELECT COUNT(*) FROM streams WHERE key_id = ?1",
+            params![key_id],
+            |row| row.get(0),
+        )?;
+
+        // Get last generated ID
+        let last_id = self.get_last_stream_id(&conn, key_id);
+
+        // Get first entry
+        let first_entry: Option<StreamEntry> = conn
+            .query_row(
+                "SELECT entry_ms, entry_seq, data FROM streams WHERE key_id = ?1 ORDER BY entry_ms ASC, entry_seq ASC LIMIT 1",
+                params![key_id],
+                |row| {
+                    let ms: i64 = row.get(0)?;
+                    let seq: i64 = row.get(1)?;
+                    let data: Vec<u8> = row.get(2)?;
+                    Ok(StreamEntry::new(StreamId::new(ms, seq), Self::decode_stream_fields(&data)))
+                },
+            )
+            .ok();
+
+        // Get last entry
+        let last_entry: Option<StreamEntry> = conn
+            .query_row(
+                "SELECT entry_ms, entry_seq, data FROM streams WHERE key_id = ?1 ORDER BY entry_ms DESC, entry_seq DESC LIMIT 1",
+                params![key_id],
+                |row| {
+                    let ms: i64 = row.get(0)?;
+                    let seq: i64 = row.get(1)?;
+                    let data: Vec<u8> = row.get(2)?;
+                    Ok(StreamEntry::new(StreamId::new(ms, seq), Self::decode_stream_fields(&data)))
+                },
+            )
+            .ok();
+
+        Ok(Some(StreamInfo {
+            length,
+            radix_tree_keys: 0,
+            radix_tree_nodes: 0,
+            last_generated_id: last_id,
+            first_entry,
+            last_entry,
+        }))
+    }
 }
 
 #[cfg(test)]
@@ -5791,5 +6277,333 @@ mod tests {
         // KEYINFO should return None for expired keys (and delete them)
         let info = db.keyinfo("expired").unwrap();
         assert!(info.is_none());
+    }
+
+    // --- Session 13: Stream Tests ---
+
+    #[test]
+    fn test_xadd_auto_id() {
+        let db = Db::open_memory().unwrap();
+
+        let fields: Vec<(&[u8], &[u8])> = vec![(b"field1", b"value1")];
+        let id = db
+            .xadd("mystream", None, &fields, false, None, None, false)
+            .unwrap()
+            .unwrap();
+
+        assert!(id.ms > 0);
+        assert_eq!(id.seq, 0);
+    }
+
+    #[test]
+    fn test_xadd_explicit_id() {
+        let db = Db::open_memory().unwrap();
+
+        let explicit_id = StreamId::new(1000, 5);
+        let fields: Vec<(&[u8], &[u8])> = vec![(b"field1", b"value1")];
+        let id = db
+            .xadd("mystream", Some(explicit_id), &fields, false, None, None, false)
+            .unwrap()
+            .unwrap();
+
+        assert_eq!(id.ms, 1000);
+        assert_eq!(id.seq, 5);
+    }
+
+    #[test]
+    fn test_xadd_nomkstream() {
+        let db = Db::open_memory().unwrap();
+
+        let fields: Vec<(&[u8], &[u8])> = vec![(b"field1", b"value1")];
+        // NOMKSTREAM should return None if stream doesn't exist
+        let result = db
+            .xadd("nonexistent", None, &fields, true, None, None, false)
+            .unwrap();
+
+        assert!(result.is_none());
+    }
+
+    #[test]
+    fn test_xadd_multiple_entries() {
+        let db = Db::open_memory().unwrap();
+
+        let fields1: Vec<(&[u8], &[u8])> = vec![(b"field1", b"value1")];
+        let fields2: Vec<(&[u8], &[u8])> = vec![(b"field2", b"value2")];
+
+        let id1 = db
+            .xadd("mystream", None, &fields1, false, None, None, false)
+            .unwrap()
+            .unwrap();
+        let id2 = db
+            .xadd("mystream", None, &fields2, false, None, None, false)
+            .unwrap()
+            .unwrap();
+
+        // Second ID should be greater than first
+        assert!(id2 > id1);
+    }
+
+    #[test]
+    fn test_xlen() {
+        let db = Db::open_memory().unwrap();
+
+        assert_eq!(db.xlen("mystream").unwrap(), 0);
+
+        let fields: Vec<(&[u8], &[u8])> = vec![(b"f", b"v")];
+        db.xadd("mystream", None, &fields, false, None, None, false)
+            .unwrap();
+        assert_eq!(db.xlen("mystream").unwrap(), 1);
+
+        db.xadd("mystream", None, &fields, false, None, None, false)
+            .unwrap();
+        assert_eq!(db.xlen("mystream").unwrap(), 2);
+    }
+
+    #[test]
+    fn test_xrange() {
+        let db = Db::open_memory().unwrap();
+
+        let id1 = StreamId::new(1000, 0);
+        let id2 = StreamId::new(2000, 0);
+        let id3 = StreamId::new(3000, 0);
+
+        let fields1: Vec<(&[u8], &[u8])> = vec![(b"a", b"1")];
+        let fields2: Vec<(&[u8], &[u8])> = vec![(b"b", b"2")];
+        let fields3: Vec<(&[u8], &[u8])> = vec![(b"c", b"3")];
+
+        db.xadd("s", Some(id1), &fields1, false, None, None, false).unwrap();
+        db.xadd("s", Some(id2), &fields2, false, None, None, false).unwrap();
+        db.xadd("s", Some(id3), &fields3, false, None, None, false).unwrap();
+
+        // Get all entries
+        let entries = db.xrange("s", StreamId::min(), StreamId::max(), None).unwrap();
+        assert_eq!(entries.len(), 3);
+        assert_eq!(entries[0].id, id1);
+        assert_eq!(entries[1].id, id2);
+        assert_eq!(entries[2].id, id3);
+
+        // Get range
+        let entries = db.xrange("s", id1, id2, None).unwrap();
+        assert_eq!(entries.len(), 2);
+
+        // Get with count
+        let entries = db.xrange("s", StreamId::min(), StreamId::max(), Some(2)).unwrap();
+        assert_eq!(entries.len(), 2);
+    }
+
+    #[test]
+    fn test_xrevrange() {
+        let db = Db::open_memory().unwrap();
+
+        let id1 = StreamId::new(1000, 0);
+        let id2 = StreamId::new(2000, 0);
+        let id3 = StreamId::new(3000, 0);
+
+        let fields: Vec<(&[u8], &[u8])> = vec![(b"f", b"v")];
+
+        db.xadd("s", Some(id1), &fields, false, None, None, false).unwrap();
+        db.xadd("s", Some(id2), &fields, false, None, None, false).unwrap();
+        db.xadd("s", Some(id3), &fields, false, None, None, false).unwrap();
+
+        // Get all entries in reverse
+        let entries = db.xrevrange("s", StreamId::max(), StreamId::min(), None).unwrap();
+        assert_eq!(entries.len(), 3);
+        assert_eq!(entries[0].id, id3);
+        assert_eq!(entries[1].id, id2);
+        assert_eq!(entries[2].id, id1);
+    }
+
+    #[test]
+    fn test_xread() {
+        let db = Db::open_memory().unwrap();
+
+        let id1 = StreamId::new(1000, 0);
+        let id2 = StreamId::new(2000, 0);
+
+        let fields1: Vec<(&[u8], &[u8])> = vec![(b"a", b"1")];
+        let fields2: Vec<(&[u8], &[u8])> = vec![(b"b", b"2")];
+
+        db.xadd("s", Some(id1), &fields1, false, None, None, false).unwrap();
+        db.xadd("s", Some(id2), &fields2, false, None, None, false).unwrap();
+
+        // Read from beginning
+        let results = db.xread(&["s"], &[StreamId::new(0, 0)], None).unwrap();
+        assert_eq!(results.len(), 1);
+        assert_eq!(results[0].0, "s");
+        assert_eq!(results[0].1.len(), 2);
+
+        // Read after id1
+        let results = db.xread(&["s"], &[id1], None).unwrap();
+        assert_eq!(results.len(), 1);
+        assert_eq!(results[0].1.len(), 1);
+        assert_eq!(results[0].1[0].id, id2);
+    }
+
+    #[test]
+    fn test_xtrim_maxlen() {
+        let db = Db::open_memory().unwrap();
+
+        let fields: Vec<(&[u8], &[u8])> = vec![(b"f", b"v")];
+        for i in 1..=5 {
+            db.xadd("s", Some(StreamId::new(i * 1000, 0)), &fields, false, None, None, false).unwrap();
+        }
+
+        assert_eq!(db.xlen("s").unwrap(), 5);
+
+        // Trim to 3 entries
+        let deleted = db.xtrim("s", Some(3), None, false).unwrap();
+        assert_eq!(deleted, 2);
+        assert_eq!(db.xlen("s").unwrap(), 3);
+
+        // Verify oldest entries were removed
+        let entries = db.xrange("s", StreamId::min(), StreamId::max(), None).unwrap();
+        assert_eq!(entries[0].id.ms, 3000);
+    }
+
+    #[test]
+    fn test_xtrim_minid() {
+        let db = Db::open_memory().unwrap();
+
+        let fields: Vec<(&[u8], &[u8])> = vec![(b"f", b"v")];
+        for i in 1..=5 {
+            db.xadd("s", Some(StreamId::new(i * 1000, 0)), &fields, false, None, None, false).unwrap();
+        }
+
+        // Trim entries before 3000-0
+        let deleted = db.xtrim("s", None, Some(StreamId::new(3000, 0)), false).unwrap();
+        assert_eq!(deleted, 2);
+        assert_eq!(db.xlen("s").unwrap(), 3);
+    }
+
+    #[test]
+    fn test_xdel() {
+        let db = Db::open_memory().unwrap();
+
+        let id1 = StreamId::new(1000, 0);
+        let id2 = StreamId::new(2000, 0);
+        let id3 = StreamId::new(3000, 0);
+
+        let fields: Vec<(&[u8], &[u8])> = vec![(b"f", b"v")];
+        db.xadd("s", Some(id1), &fields, false, None, None, false).unwrap();
+        db.xadd("s", Some(id2), &fields, false, None, None, false).unwrap();
+        db.xadd("s", Some(id3), &fields, false, None, None, false).unwrap();
+
+        // Delete middle entry
+        let deleted = db.xdel("s", &[id2]).unwrap();
+        assert_eq!(deleted, 1);
+        assert_eq!(db.xlen("s").unwrap(), 2);
+
+        // Delete non-existent entry
+        let deleted = db.xdel("s", &[id2]).unwrap();
+        assert_eq!(deleted, 0);
+    }
+
+    #[test]
+    fn test_xinfo_stream() {
+        let db = Db::open_memory().unwrap();
+
+        let id1 = StreamId::new(1000, 0);
+        let id2 = StreamId::new(2000, 0);
+
+        let fields1: Vec<(&[u8], &[u8])> = vec![(b"a", b"1")];
+        let fields2: Vec<(&[u8], &[u8])> = vec![(b"b", b"2")];
+
+        db.xadd("s", Some(id1), &fields1, false, None, None, false).unwrap();
+        db.xadd("s", Some(id2), &fields2, false, None, None, false).unwrap();
+
+        let info = db.xinfo_stream("s").unwrap().unwrap();
+        assert_eq!(info.length, 2);
+        assert_eq!(info.last_generated_id, id2);
+        assert_eq!(info.first_entry.as_ref().unwrap().id, id1);
+        assert_eq!(info.last_entry.as_ref().unwrap().id, id2);
+    }
+
+    #[test]
+    fn test_xadd_maxlen() {
+        let db = Db::open_memory().unwrap();
+
+        let fields: Vec<(&[u8], &[u8])> = vec![(b"f", b"v")];
+
+        // Add entries with MAXLEN 3
+        for i in 1..=5 {
+            db.xadd("s", Some(StreamId::new(i * 1000, 0)), &fields, false, Some(3), None, false).unwrap();
+        }
+
+        // Should only have 3 entries
+        assert_eq!(db.xlen("s").unwrap(), 3);
+
+        // Should have the latest 3
+        let entries = db.xrange("s", StreamId::min(), StreamId::max(), None).unwrap();
+        assert_eq!(entries[0].id.ms, 3000);
+    }
+
+    #[test]
+    fn test_stream_type() {
+        let db = Db::open_memory().unwrap();
+
+        let fields: Vec<(&[u8], &[u8])> = vec![(b"f", b"v")];
+        db.xadd("mystream", None, &fields, false, None, None, false).unwrap();
+
+        let key_type = db.key_type("mystream").unwrap();
+        assert_eq!(key_type, Some(KeyType::Stream));
+    }
+
+    #[test]
+    fn test_stream_wrong_type() {
+        let db = Db::open_memory().unwrap();
+
+        // Create a string key
+        db.set("mykey", b"value", None).unwrap();
+
+        // Try to use stream operations on it
+        let fields: Vec<(&[u8], &[u8])> = vec![(b"f", b"v")];
+        let result = db.xadd("mykey", None, &fields, false, None, None, false);
+        assert!(matches!(result, Err(KvError::WrongType)));
+
+        let result = db.xlen("mykey");
+        assert!(matches!(result, Err(KvError::WrongType)));
+    }
+
+    #[test]
+    fn test_stream_id_parse() {
+        // Basic ID
+        let id = StreamId::parse("1234-5").unwrap();
+        assert_eq!(id.ms, 1234);
+        assert_eq!(id.seq, 5);
+
+        // Just timestamp
+        let id = StreamId::parse("1234").unwrap();
+        assert_eq!(id.ms, 1234);
+        assert_eq!(id.seq, 0);
+
+        // Min/max
+        let id = StreamId::parse("-").unwrap();
+        assert_eq!(id, StreamId::min());
+
+        let id = StreamId::parse("+").unwrap();
+        assert_eq!(id, StreamId::max());
+
+        // Special values return None
+        assert!(StreamId::parse("$").is_none());
+        assert!(StreamId::parse(">").is_none());
+    }
+
+    #[test]
+    fn test_stream_entry_fields() {
+        let db = Db::open_memory().unwrap();
+
+        let fields: Vec<(&[u8], &[u8])> = vec![
+            (b"field1", b"value1"),
+            (b"field2", b"value2"),
+            (b"field3", b"value3"),
+        ];
+        let id = StreamId::new(1000, 0);
+        db.xadd("s", Some(id), &fields, false, None, None, false).unwrap();
+
+        let entries = db.xrange("s", StreamId::min(), StreamId::max(), None).unwrap();
+        assert_eq!(entries.len(), 1);
+        assert_eq!(entries[0].fields.len(), 3);
+        assert_eq!(entries[0].fields[0].0, b"field1");
+        assert_eq!(entries[0].fields[0].1, b"value1");
     }
 }

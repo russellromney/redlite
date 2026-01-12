@@ -4,7 +4,7 @@ use tokio::net::{TcpListener, TcpStream};
 use crate::db::Db;
 use crate::error::KvError;
 use crate::resp::{RespReader, RespValue};
-use crate::types::ZMember;
+use crate::types::{StreamId, ZMember};
 
 pub struct Server {
     db: Db,
@@ -154,6 +154,15 @@ fn execute_command(db: &mut Db, args: &[Vec<u8>]) -> RespValue {
         "VACUUM" => cmd_vacuum(db),
         "KEYINFO" => cmd_keyinfo(db, cmd_args),
         "AUTOVACUUM" => cmd_autovacuum(db, cmd_args),
+        // Stream commands
+        "XADD" => cmd_xadd(db, cmd_args),
+        "XLEN" => cmd_xlen(db, cmd_args),
+        "XRANGE" => cmd_xrange(db, cmd_args),
+        "XREVRANGE" => cmd_xrevrange(db, cmd_args),
+        "XREAD" => cmd_xread(db, cmd_args),
+        "XTRIM" => cmd_xtrim(db, cmd_args),
+        "XDEL" => cmd_xdel(db, cmd_args),
+        "XINFO" => cmd_xinfo(db, cmd_args),
         _ => RespValue::error(format!("unknown command '{}'", cmd)),
     }
 }
@@ -2144,4 +2153,524 @@ fn cmd_autovacuum(db: &Db, args: &[Vec<u8>]) -> RespValue {
         }
         _ => RespValue::error("argument must be ON, OFF, or INTERVAL <ms>"),
     }
+}
+
+// --- Session 13: Stream command handlers ---
+
+fn cmd_xadd(db: &Db, args: &[Vec<u8>]) -> RespValue {
+    if args.len() < 4 {
+        return RespValue::error("wrong number of arguments for 'xadd' command");
+    }
+
+    let key = match std::str::from_utf8(&args[0]) {
+        Ok(k) => k,
+        Err(_) => return RespValue::error("invalid key"),
+    };
+
+    // Parse options and find field-value pairs
+    let mut i = 1;
+    let mut nomkstream = false;
+    let mut maxlen: Option<i64> = None;
+    let mut minid: Option<StreamId> = None;
+    let mut approximate = false;
+
+    // Parse optional flags before the ID
+    while i < args.len() {
+        let arg = match std::str::from_utf8(&args[i]) {
+            Ok(s) => s.to_uppercase(),
+            Err(_) => break,
+        };
+
+        match arg.as_str() {
+            "NOMKSTREAM" => {
+                nomkstream = true;
+                i += 1;
+            }
+            "MAXLEN" => {
+                i += 1;
+                if i >= args.len() {
+                    return RespValue::error("syntax error");
+                }
+                // Check for = or ~
+                let next = match std::str::from_utf8(&args[i]) {
+                    Ok(s) => s,
+                    Err(_) => return RespValue::error("syntax error"),
+                };
+                if next == "~" {
+                    approximate = true;
+                    i += 1;
+                } else if next == "=" {
+                    i += 1;
+                }
+                if i >= args.len() {
+                    return RespValue::error("syntax error");
+                }
+                maxlen = match std::str::from_utf8(&args[i]).ok().and_then(|s| s.parse().ok()) {
+                    Some(v) => Some(v),
+                    None => return RespValue::error("value is not an integer or out of range"),
+                };
+                i += 1;
+            }
+            "MINID" => {
+                i += 1;
+                if i >= args.len() {
+                    return RespValue::error("syntax error");
+                }
+                // Check for = or ~
+                let next = match std::str::from_utf8(&args[i]) {
+                    Ok(s) => s,
+                    Err(_) => return RespValue::error("syntax error"),
+                };
+                if next == "~" {
+                    approximate = true;
+                    i += 1;
+                } else if next == "=" {
+                    i += 1;
+                }
+                if i >= args.len() {
+                    return RespValue::error("syntax error");
+                }
+                let id_str = match std::str::from_utf8(&args[i]) {
+                    Ok(s) => s,
+                    Err(_) => return RespValue::error("invalid stream ID"),
+                };
+                minid = match StreamId::parse(id_str) {
+                    Some(id) => Some(id),
+                    None => return RespValue::error("invalid stream ID"),
+                };
+                i += 1;
+            }
+            _ => break, // Not an option, must be ID
+        }
+    }
+
+    // Now args[i] should be the ID (or *)
+    if i >= args.len() {
+        return RespValue::error("wrong number of arguments for 'xadd' command");
+    }
+
+    let id_str = match std::str::from_utf8(&args[i]) {
+        Ok(s) => s,
+        Err(_) => return RespValue::error("invalid stream ID"),
+    };
+    i += 1;
+
+    let id: Option<StreamId> = if id_str == "*" {
+        None // Auto-generate
+    } else {
+        match StreamId::parse(id_str) {
+            Some(id) => Some(id),
+            None => return RespValue::error("invalid stream ID"),
+        }
+    };
+
+    // Rest are field-value pairs
+    let remaining = &args[i..];
+    if remaining.len() < 2 || remaining.len() % 2 != 0 {
+        return RespValue::error("wrong number of arguments for 'xadd' command");
+    }
+
+    let fields: Vec<(&[u8], &[u8])> = remaining
+        .chunks(2)
+        .map(|chunk| (chunk[0].as_slice(), chunk[1].as_slice()))
+        .collect();
+
+    match db.xadd(key, id, &fields, nomkstream, maxlen, minid, approximate) {
+        Ok(Some(entry_id)) => RespValue::BulkString(Some(entry_id.to_string().into_bytes())),
+        Ok(None) => RespValue::null(), // NOMKSTREAM and stream doesn't exist
+        Err(KvError::WrongType) => RespValue::wrong_type(),
+        Err(KvError::InvalidData) => {
+            RespValue::error("The ID specified in XADD is equal or smaller than the target stream top item")
+        }
+        Err(e) => RespValue::error(e.to_string()),
+    }
+}
+
+fn cmd_xlen(db: &Db, args: &[Vec<u8>]) -> RespValue {
+    if args.len() != 1 {
+        return RespValue::error("wrong number of arguments for 'xlen' command");
+    }
+
+    let key = match std::str::from_utf8(&args[0]) {
+        Ok(k) => k,
+        Err(_) => return RespValue::error("invalid key"),
+    };
+
+    match db.xlen(key) {
+        Ok(count) => RespValue::Integer(count),
+        Err(KvError::WrongType) => RespValue::wrong_type(),
+        Err(e) => RespValue::error(e.to_string()),
+    }
+}
+
+fn cmd_xrange(db: &Db, args: &[Vec<u8>]) -> RespValue {
+    if args.len() < 3 || args.len() > 5 {
+        return RespValue::error("wrong number of arguments for 'xrange' command");
+    }
+
+    let key = match std::str::from_utf8(&args[0]) {
+        Ok(k) => k,
+        Err(_) => return RespValue::error("invalid key"),
+    };
+
+    let start_str = match std::str::from_utf8(&args[1]) {
+        Ok(s) => s,
+        Err(_) => return RespValue::error("invalid start ID"),
+    };
+    let start = match StreamId::parse(start_str) {
+        Some(id) => id,
+        None => return RespValue::error("invalid stream ID"),
+    };
+
+    let end_str = match std::str::from_utf8(&args[2]) {
+        Ok(s) => s,
+        Err(_) => return RespValue::error("invalid end ID"),
+    };
+    let end = match StreamId::parse(end_str) {
+        Some(id) => id,
+        None => return RespValue::error("invalid stream ID"),
+    };
+
+    // Parse optional COUNT
+    let mut count: Option<i64> = None;
+    if args.len() >= 5 {
+        let opt = match std::str::from_utf8(&args[3]) {
+            Ok(s) => s.to_uppercase(),
+            Err(_) => return RespValue::error("syntax error"),
+        };
+        if opt != "COUNT" {
+            return RespValue::error("syntax error");
+        }
+        count = match std::str::from_utf8(&args[4]).ok().and_then(|s| s.parse().ok()) {
+            Some(c) => Some(c),
+            None => return RespValue::error("value is not an integer or out of range"),
+        };
+    }
+
+    match db.xrange(key, start, end, count) {
+        Ok(entries) => format_stream_entries(&entries),
+        Err(KvError::WrongType) => RespValue::wrong_type(),
+        Err(e) => RespValue::error(e.to_string()),
+    }
+}
+
+fn cmd_xrevrange(db: &Db, args: &[Vec<u8>]) -> RespValue {
+    if args.len() < 3 || args.len() > 5 {
+        return RespValue::error("wrong number of arguments for 'xrevrange' command");
+    }
+
+    let key = match std::str::from_utf8(&args[0]) {
+        Ok(k) => k,
+        Err(_) => return RespValue::error("invalid key"),
+    };
+
+    let end_str = match std::str::from_utf8(&args[1]) {
+        Ok(s) => s,
+        Err(_) => return RespValue::error("invalid end ID"),
+    };
+    let end = match StreamId::parse(end_str) {
+        Some(id) => id,
+        None => return RespValue::error("invalid stream ID"),
+    };
+
+    let start_str = match std::str::from_utf8(&args[2]) {
+        Ok(s) => s,
+        Err(_) => return RespValue::error("invalid start ID"),
+    };
+    let start = match StreamId::parse(start_str) {
+        Some(id) => id,
+        None => return RespValue::error("invalid stream ID"),
+    };
+
+    // Parse optional COUNT
+    let mut count: Option<i64> = None;
+    if args.len() >= 5 {
+        let opt = match std::str::from_utf8(&args[3]) {
+            Ok(s) => s.to_uppercase(),
+            Err(_) => return RespValue::error("syntax error"),
+        };
+        if opt != "COUNT" {
+            return RespValue::error("syntax error");
+        }
+        count = match std::str::from_utf8(&args[4]).ok().and_then(|s| s.parse().ok()) {
+            Some(c) => Some(c),
+            None => return RespValue::error("value is not an integer or out of range"),
+        };
+    }
+
+    match db.xrevrange(key, end, start, count) {
+        Ok(entries) => format_stream_entries(&entries),
+        Err(KvError::WrongType) => RespValue::wrong_type(),
+        Err(e) => RespValue::error(e.to_string()),
+    }
+}
+
+fn cmd_xread(db: &Db, args: &[Vec<u8>]) -> RespValue {
+    if args.len() < 3 {
+        return RespValue::error("wrong number of arguments for 'xread' command");
+    }
+
+    let mut i = 0;
+    let mut count: Option<i64> = None;
+
+    // Parse optional COUNT
+    while i < args.len() {
+        let arg = match std::str::from_utf8(&args[i]) {
+            Ok(s) => s.to_uppercase(),
+            Err(_) => break,
+        };
+
+        match arg.as_str() {
+            "COUNT" => {
+                i += 1;
+                if i >= args.len() {
+                    return RespValue::error("syntax error");
+                }
+                count = match std::str::from_utf8(&args[i]).ok().and_then(|s| s.parse().ok()) {
+                    Some(c) => Some(c),
+                    None => return RespValue::error("value is not an integer or out of range"),
+                };
+                i += 1;
+            }
+            "BLOCK" => {
+                // Blocking not implemented yet (Session 15)
+                return RespValue::error("BLOCK not supported in this version");
+            }
+            "STREAMS" => {
+                i += 1;
+                break;
+            }
+            _ => {
+                return RespValue::error("syntax error");
+            }
+        }
+    }
+
+    // Rest is keys... ids...
+    let remaining = &args[i..];
+    if remaining.is_empty() || remaining.len() % 2 != 0 {
+        return RespValue::error("syntax error");
+    }
+
+    let half = remaining.len() / 2;
+    let key_args = &remaining[..half];
+    let id_args = &remaining[half..];
+
+    let keys: Vec<&str> = match key_args
+        .iter()
+        .map(|k| std::str::from_utf8(k))
+        .collect::<std::result::Result<Vec<_>, _>>()
+    {
+        Ok(k) => k,
+        Err(_) => return RespValue::error("invalid key"),
+    };
+
+    let ids: Vec<StreamId> = match id_args.iter().map(|id| {
+        let s = std::str::from_utf8(id).ok()?;
+        if s == "$" {
+            // $ means last ID - for non-blocking, this means "nothing new"
+            Some(StreamId::max())
+        } else {
+            StreamId::parse(s)
+        }
+    }).collect::<Option<Vec<_>>>() {
+        Some(ids) => ids,
+        None => return RespValue::error("invalid stream ID"),
+    };
+
+    match db.xread(&keys, &ids, count) {
+        Ok(results) => {
+            if results.is_empty() {
+                return RespValue::null();
+            }
+            let mut arr = Vec::new();
+            for (key, entries) in results {
+                arr.push(RespValue::Array(Some(vec![
+                    RespValue::BulkString(Some(key.into_bytes())),
+                    format_stream_entries(&entries),
+                ])));
+            }
+            RespValue::Array(Some(arr))
+        }
+        Err(KvError::WrongType) => RespValue::wrong_type(),
+        Err(e) => RespValue::error(e.to_string()),
+    }
+}
+
+fn cmd_xtrim(db: &Db, args: &[Vec<u8>]) -> RespValue {
+    if args.len() < 3 {
+        return RespValue::error("wrong number of arguments for 'xtrim' command");
+    }
+
+    let key = match std::str::from_utf8(&args[0]) {
+        Ok(k) => k,
+        Err(_) => return RespValue::error("invalid key"),
+    };
+
+    let strategy = match std::str::from_utf8(&args[1]) {
+        Ok(s) => s.to_uppercase(),
+        Err(_) => return RespValue::error("syntax error"),
+    };
+
+    let mut i = 2;
+    let mut approximate = false;
+
+    // Check for = or ~
+    if i < args.len() {
+        let next = std::str::from_utf8(&args[i]).unwrap_or("");
+        if next == "~" {
+            approximate = true;
+            i += 1;
+        } else if next == "=" {
+            i += 1;
+        }
+    }
+
+    if i >= args.len() {
+        return RespValue::error("syntax error");
+    }
+
+    match strategy.as_str() {
+        "MAXLEN" => {
+            let maxlen: i64 = match std::str::from_utf8(&args[i]).ok().and_then(|s| s.parse().ok()) {
+                Some(v) => v,
+                None => return RespValue::error("value is not an integer or out of range"),
+            };
+            match db.xtrim(key, Some(maxlen), None, approximate) {
+                Ok(deleted) => RespValue::Integer(deleted),
+                Err(KvError::WrongType) => RespValue::wrong_type(),
+                Err(e) => RespValue::error(e.to_string()),
+            }
+        }
+        "MINID" => {
+            let minid_str = match std::str::from_utf8(&args[i]) {
+                Ok(s) => s,
+                Err(_) => return RespValue::error("invalid stream ID"),
+            };
+            let minid = match StreamId::parse(minid_str) {
+                Some(id) => id,
+                None => return RespValue::error("invalid stream ID"),
+            };
+            match db.xtrim(key, None, Some(minid), approximate) {
+                Ok(deleted) => RespValue::Integer(deleted),
+                Err(KvError::WrongType) => RespValue::wrong_type(),
+                Err(e) => RespValue::error(e.to_string()),
+            }
+        }
+        _ => RespValue::error("syntax error"),
+    }
+}
+
+fn cmd_xdel(db: &Db, args: &[Vec<u8>]) -> RespValue {
+    if args.len() < 2 {
+        return RespValue::error("wrong number of arguments for 'xdel' command");
+    }
+
+    let key = match std::str::from_utf8(&args[0]) {
+        Ok(k) => k,
+        Err(_) => return RespValue::error("invalid key"),
+    };
+
+    let ids: Vec<StreamId> = match args[1..].iter().map(|id| {
+        let s = std::str::from_utf8(id).ok()?;
+        StreamId::parse(s)
+    }).collect::<Option<Vec<_>>>() {
+        Some(ids) => ids,
+        None => return RespValue::error("invalid stream ID"),
+    };
+
+    match db.xdel(key, &ids) {
+        Ok(deleted) => RespValue::Integer(deleted),
+        Err(KvError::WrongType) => RespValue::wrong_type(),
+        Err(e) => RespValue::error(e.to_string()),
+    }
+}
+
+fn cmd_xinfo(db: &Db, args: &[Vec<u8>]) -> RespValue {
+    if args.len() < 2 {
+        return RespValue::error("wrong number of arguments for 'xinfo' command");
+    }
+
+    let subcommand = match std::str::from_utf8(&args[0]) {
+        Ok(s) => s.to_uppercase(),
+        Err(_) => return RespValue::error("invalid subcommand"),
+    };
+
+    let key = match std::str::from_utf8(&args[1]) {
+        Ok(k) => k,
+        Err(_) => return RespValue::error("invalid key"),
+    };
+
+    match subcommand.as_str() {
+        "STREAM" => {
+            match db.xinfo_stream(key) {
+                Ok(Some(info)) => {
+                    let mut result = vec![
+                        RespValue::BulkString(Some(b"length".to_vec())),
+                        RespValue::Integer(info.length),
+                        RespValue::BulkString(Some(b"radix-tree-keys".to_vec())),
+                        RespValue::Integer(info.radix_tree_keys),
+                        RespValue::BulkString(Some(b"radix-tree-nodes".to_vec())),
+                        RespValue::Integer(info.radix_tree_nodes),
+                        RespValue::BulkString(Some(b"last-generated-id".to_vec())),
+                        RespValue::BulkString(Some(info.last_generated_id.to_string().into_bytes())),
+                    ];
+
+                    // Add first-entry
+                    result.push(RespValue::BulkString(Some(b"first-entry".to_vec())));
+                    if let Some(entry) = info.first_entry {
+                        result.push(format_single_entry(&entry));
+                    } else {
+                        result.push(RespValue::null());
+                    }
+
+                    // Add last-entry
+                    result.push(RespValue::BulkString(Some(b"last-entry".to_vec())));
+                    if let Some(entry) = info.last_entry {
+                        result.push(format_single_entry(&entry));
+                    } else {
+                        result.push(RespValue::null());
+                    }
+
+                    RespValue::Array(Some(result))
+                }
+                Ok(None) => RespValue::error("no such key"),
+                Err(KvError::WrongType) => RespValue::wrong_type(),
+                Err(e) => RespValue::error(e.to_string()),
+            }
+        }
+        "GROUPS" | "CONSUMERS" => {
+            // Consumer groups - Session 14
+            RespValue::error("XINFO GROUPS/CONSUMERS not implemented yet")
+        }
+        _ => RespValue::error("unknown subcommand"),
+    }
+}
+
+/// Format a list of stream entries for RESP response
+fn format_stream_entries(entries: &[crate::types::StreamEntry]) -> RespValue {
+    let arr: Vec<RespValue> = entries
+        .iter()
+        .map(|entry| format_single_entry(entry))
+        .collect();
+    RespValue::Array(Some(arr))
+}
+
+/// Format a single stream entry as [id, [field, value, ...]]
+fn format_single_entry(entry: &crate::types::StreamEntry) -> RespValue {
+    let fields: Vec<RespValue> = entry
+        .fields
+        .iter()
+        .flat_map(|(k, v)| {
+            vec![
+                RespValue::BulkString(Some(k.clone())),
+                RespValue::BulkString(Some(v.clone())),
+            ]
+        })
+        .collect();
+
+    RespValue::Array(Some(vec![
+        RespValue::BulkString(Some(entry.id.to_string().into_bytes())),
+        RespValue::Array(Some(fields)),
+    ]))
 }

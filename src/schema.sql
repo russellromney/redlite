@@ -53,3 +53,48 @@ CREATE TABLE IF NOT EXISTS zsets (
 );
 
 CREATE INDEX IF NOT EXISTS idx_zsets_score ON zsets(key_id, score, member);
+
+-- Streams
+CREATE TABLE IF NOT EXISTS streams (
+    id INTEGER PRIMARY KEY,
+    key_id INTEGER NOT NULL REFERENCES keys(id) ON DELETE CASCADE,
+    entry_ms INTEGER NOT NULL,
+    entry_seq INTEGER NOT NULL,
+    data BLOB NOT NULL,
+    created_at INTEGER NOT NULL DEFAULT (unixepoch('now', 'subsec') * 1000)
+);
+
+CREATE INDEX IF NOT EXISTS idx_streams_key_entry ON streams(key_id, entry_ms, entry_seq);
+
+-- Stream consumer groups (Session 14)
+CREATE TABLE IF NOT EXISTS stream_groups (
+    id INTEGER PRIMARY KEY,
+    key_id INTEGER NOT NULL REFERENCES keys(id) ON DELETE CASCADE,
+    name TEXT NOT NULL,
+    last_ms INTEGER NOT NULL DEFAULT 0,
+    last_seq INTEGER NOT NULL DEFAULT 0,
+    UNIQUE(key_id, name)
+);
+
+-- Stream pending entries (Session 14)
+CREATE TABLE IF NOT EXISTS stream_pending (
+    id INTEGER PRIMARY KEY,
+    key_id INTEGER NOT NULL REFERENCES keys(id) ON DELETE CASCADE,
+    group_id INTEGER NOT NULL REFERENCES stream_groups(id) ON DELETE CASCADE,
+    entry_id INTEGER NOT NULL REFERENCES streams(id) ON DELETE CASCADE,
+    consumer TEXT NOT NULL,
+    delivered_at INTEGER NOT NULL,
+    delivery_count INTEGER NOT NULL DEFAULT 1,
+    UNIQUE(group_id, entry_id)
+);
+
+CREATE INDEX IF NOT EXISTS idx_stream_pending_consumer ON stream_pending(group_id, consumer);
+
+-- Stream consumers (Session 14)
+CREATE TABLE IF NOT EXISTS stream_consumers (
+    id INTEGER PRIMARY KEY,
+    group_id INTEGER NOT NULL REFERENCES stream_groups(id) ON DELETE CASCADE,
+    name TEXT NOT NULL,
+    seen_time INTEGER NOT NULL DEFAULT 0,
+    UNIQUE(group_id, name)
+);
