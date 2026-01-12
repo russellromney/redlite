@@ -23,4 +23,4 @@ pub use db::Db;
 pub use error::{KvError, Result};
 pub use resp::RespValue;
 pub use server::Server;
-pub use types::{KeyType, SetOptions, ZMember};
+pub use types::{KeyType, SetOptions, ZMember, HistoryLevel, RetentionType, HistoryConfig, HistoryEntry};

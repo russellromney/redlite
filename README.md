@@ -2,7 +2,7 @@
 
 SQLite-backed Redis-compatible embedded key-value store written in Rust.
 
-**Status:** Sessions 1-16 complete (388+ tests passing). See [ROADMAP.md](./ROADMAP.md) for implementation progress.
+**Status:** Sessions 1-16 complete (388+ tests). Session 17.1 complete (270+ tests). See [ROADMAP.md](./ROADMAP.md) for implementation progress.
 
 **Documentation:** [redlite.dev](https://redlite.dev)
 

@@ -273,22 +273,23 @@ Split into 6 focused sessions (like Session 15).
 
 ### Session 17: History Tracking & Time-Travel Queries 🎯
 
-**Status:** In Progress - Starting with Session 17.1
+**Status:** In Progress - Session 17.1 Complete ✅
 
 **Goal:** Implement versioned history tracking with three-tier opt-in (global, per-database, per-key) and time-travel query commands.
 
-#### Session 17.1: Schema & Types
-- [ ] Create `src/schema_history.sql` with history tables:
+#### Session 17.1: Schema & Types ✅
+- [x] Create `src/schema_history.sql` with history tables:
   - `history_config` (three-tier opt-in: global, database, key)
   - `key_history` (versioned snapshots with MessagePack encoding)
   - Indexes: `(key_id, timestamp_ms DESC)`, `(db, key, timestamp_ms DESC)`
-- [ ] Add types to `src/types.rs`:
+- [x] Add types to `src/types.rs`:
   - `HistoryEntry` struct (id, version_num, operation, timestamp_ms, key_type, data_snapshot, expire_at)
   - `HistoryLevel` enum (Global, Database(i32), Key)
   - `HistoryConfig` struct
   - `RetentionType` enum (Unlimited, Time(i64), Count(i64))
-- [ ] Update `Db::new()` to run history migrations
-- [ ] Unit tests: Schema validation, type serialization
+- [x] Update `Db::migrate()` to run history migrations
+- [x] Unit tests: Schema validation (3 tests), type operations (12 tests)
+- [x] **Test:** 270 unit tests passing (15 new tests + 255 existing)
 
 #### Session 17.2: Configuration Methods (Enable/Disable)
 - [ ] `history_enable_global(retention)` — Enable history for all databases

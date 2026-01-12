@@ -100,6 +100,7 @@ impl Db {
     fn migrate(&self) -> Result<()> {
         let conn = self.core.conn.lock().unwrap_or_else(|e| e.into_inner());
         conn.execute_batch(include_str!("schema.sql"))?;
+        conn.execute_batch(include_str!("schema_history.sql"))?;
         Ok(())
     }
 
@@ -8551,5 +8552,106 @@ mod tests {
                 panic!("Second LPUSH should broadcast");
             }
         }
+    }
+
+    // --- Session 17: History Tracking Schema & Types Tests ---
+
+    #[test]
+    fn test_history_schema_created() {
+        // Verify that history tables are created with migrations
+        let db = Db::open_memory().unwrap();
+        let conn = db.core.conn.lock().unwrap_or_else(|e| e.into_inner());
+
+        // Check history_config table exists
+        let result: rusqlite::Result<i32> = conn.query_row(
+            "SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name='history_config'",
+            [],
+            |row| row.get(0),
+        );
+        assert!(result.is_ok() && result.unwrap() > 0, "history_config table should exist");
+
+        // Check key_history table exists
+        let result: rusqlite::Result<i32> = conn.query_row(
+            "SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name='key_history'",
+            [],
+            |row| row.get(0),
+        );
+        assert!(result.is_ok() && result.unwrap() > 0, "key_history table should exist");
+
+        // Check history_config indexes
+        let result: rusqlite::Result<i32> = conn.query_row(
+            "SELECT COUNT(*) FROM sqlite_master WHERE type='index' AND name='idx_history_config_level_target'",
+            [],
+            |row| row.get(0),
+        );
+        assert!(result.is_ok() && result.unwrap() > 0, "history_config index should exist");
+
+        // Check key_history indexes
+        let result: rusqlite::Result<i32> = conn.query_row(
+            "SELECT COUNT(*) FROM sqlite_master WHERE type='index' AND name='idx_history_key_time'",
+            [],
+            |row| row.get(0),
+        );
+        assert!(result.is_ok() && result.unwrap() > 0, "key_history time index should exist");
+
+        let result: rusqlite::Result<i32> = conn.query_row(
+            "SELECT COUNT(*) FROM sqlite_master WHERE type='index' AND name='idx_history_db_key_time'",
+            [],
+            |row| row.get(0),
+        );
+        assert!(result.is_ok() && result.unwrap() > 0, "key_history db_key_time index should exist");
+    }
+
+    #[test]
+    fn test_history_config_table_schema() {
+        // Verify history_config table has correct columns
+        let db = Db::open_memory().unwrap();
+        let conn = db.core.conn.lock().unwrap_or_else(|e| e.into_inner());
+
+        let mut stmt = conn
+            .prepare("PRAGMA table_info(history_config)")
+            .expect("Should be able to query table schema");
+
+        let columns: Vec<String> = stmt
+            .query_map([], |row| row.get::<_, String>(1))
+            .expect("Should be able to iterate columns")
+            .map(|r| r.expect("Should be able to get column name"))
+            .collect();
+
+        assert!(columns.contains(&"id".to_string()));
+        assert!(columns.contains(&"level".to_string()));
+        assert!(columns.contains(&"target".to_string()));
+        assert!(columns.contains(&"enabled".to_string()));
+        assert!(columns.contains(&"retention_type".to_string()));
+        assert!(columns.contains(&"retention_value".to_string()));
+        assert!(columns.contains(&"created_at".to_string()));
+    }
+
+    #[test]
+    fn test_key_history_table_schema() {
+        // Verify key_history table has correct columns
+        let db = Db::open_memory().unwrap();
+        let conn = db.core.conn.lock().unwrap_or_else(|e| e.into_inner());
+
+        let mut stmt = conn
+            .prepare("PRAGMA table_info(key_history)")
+            .expect("Should be able to query table schema");
+
+        let columns: Vec<String> = stmt
+            .query_map([], |row| row.get::<_, String>(1))
+            .expect("Should be able to iterate columns")
+            .map(|r| r.expect("Should be able to get column name"))
+            .collect();
+
+        assert!(columns.contains(&"id".to_string()));
+        assert!(columns.contains(&"key_id".to_string()));
+        assert!(columns.contains(&"db".to_string()));
+        assert!(columns.contains(&"key".to_string()));
+        assert!(columns.contains(&"key_type".to_string()));
+        assert!(columns.contains(&"version_num".to_string()));
+        assert!(columns.contains(&"operation".to_string()));
+        assert!(columns.contains(&"timestamp_ms".to_string()));
+        assert!(columns.contains(&"data_snapshot".to_string()));
+        assert!(columns.contains(&"expire_at".to_string()));
     }
 }
