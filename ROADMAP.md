@@ -215,6 +215,61 @@ Incremental implementation plan. Each session = one commit = one testable featur
 - [x] Integration tests: 5 pub/sub tests (PUBLISH with/without subscribers)
 - [x] **Test:** 232 lib + 131 integration + 2 doc tests passing (365 total)
 
+### Session 16: Transactions (MULTI/EXEC/DISCARD) 🚧
+
+Split into 6 focused sessions (like Session 15).
+
+#### Session 16.1: Transaction State Management ✅
+- [x] QueuedCommand struct for buffering commands
+- [x] ConnectionState::Transaction variant + helper methods
+- [x] is_transaction() state checker
+- [x] Handle Transaction variant in all pub/sub match statements
+- [x] Unit tests: 5 transaction state tests + existing 8 glob tests
+- [x] **Test:** 237 lib + 131 integration + 2 doc tests passing (370 total)
+
+**Commit:** "feat(transactions): Session 16.1 - Transaction State Management"
+
+#### Session 16.2: Command Queueing (📅 Next)
+- [ ] cmd_multi() — Enter transaction mode
+- [ ] cmd_discard() — Exit transaction, clear queue
+- [ ] execute_transaction_command() dispatcher
+- [ ] Integrate into handle_connection() loop
+- [ ] Command validation (reject WATCH, blocking, pub/sub)
+- [ ] Unit tests: 8-10 queueing tests
+- [ ] Integration tests: 0-2 basic redis-cli tests
+- [ ] Expected: 378-385 total tests
+
+#### Session 16.3: EXEC Implementation
+- [ ] execute_transaction() with SQLite BEGIN IMMEDIATE
+- [ ] Command replay from queue
+- [ ] Error handling and rollback logic
+- [ ] Atomicity verification
+- [ ] Unit tests: 10-15 execution tests
+- [ ] Integration tests: 5-10 atomicity tests
+- [ ] Expected: 395-420 total tests
+
+#### Session 16.4: Error Handling & Restrictions
+- [ ] Reject WATCH/UNWATCH in transaction
+- [ ] Reject blocking commands (BLPOP, BRPOP, XREAD BLOCK)
+- [ ] Reject pub/sub commands (SUBSCRIBE, PUBLISH)
+- [ ] Error rollback tests
+- [ ] Unit tests: 10-15 restriction tests
+- [ ] Integration tests: 5-10 error handling tests
+- [ ] Expected: 420-445 total tests
+
+#### Session 16.5: Integration Testing
+- [ ] 15-20 comprehensive redis-cli tests
+- [ ] Atomicity scenarios, rollback verification
+- [ ] Edge cases: empty transaction, concurrent transactions
+- [ ] Multi-database isolation
+- [ ] Expected: 445-475 total tests
+
+#### Session 16.6: Documentation & Polish
+- [ ] README examples with transaction usage
+- [ ] Doc comments for transaction commands
+- [ ] Error message review for Redis compatibility
+- [ ] Expected: 475-480 total tests
+
 ---
 
 ## MVP — Core Redis Compatibility

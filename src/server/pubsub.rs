@@ -11,6 +11,15 @@ pub struct PubSubMessage {
     pub payload: Vec<u8>,
 }
 
+/// Command queued during MULTI
+#[derive(Debug, Clone)]
+pub struct QueuedCommand {
+    /// Command name (uppercase)
+    pub cmd: String,
+    /// Command arguments (raw bytes)
+    pub args: Vec<Vec<u8>>,
+}
+
 /// Tracks the connection's subscription state
 #[derive(Debug)]
 pub enum ConnectionState {
@@ -27,6 +36,11 @@ pub enum ConnectionState {
         /// Receivers for each pattern (pattern, receiver) tuples
         pattern_receivers: Vec<(String, broadcast::Receiver<PubSubMessage>)>,
     },
+    /// Transaction mode - buffering commands for atomic execution
+    Transaction {
+        /// Commands queued for execution
+        queue: Vec<QueuedCommand>,
+    },
 }
 
 impl ConnectionState {
@@ -37,12 +51,18 @@ impl ConnectionState {
             ConnectionState::Subscribed { channels, patterns, .. } => {
                 channels.len() + patterns.len()
             }
+            ConnectionState::Transaction { .. } => 0,
         }
     }
 
     /// Check if currently in subscription mode with any subscriptions
     pub fn is_subscribed(&self) -> bool {
         self.subscription_count() > 0
+    }
+
+    /// Check if currently in transaction mode
+    pub fn is_transaction(&self) -> bool {
+        matches!(self, ConnectionState::Transaction { .. })
     }
 }
 
@@ -101,6 +121,11 @@ pub fn cmd_subscribe(
 ) -> RespValue {
     if args.is_empty() {
         return RespValue::error("wrong number of arguments for 'subscribe' command");
+    }
+
+    // Check for transaction mode
+    if let ConnectionState::Transaction { .. } = state {
+        return RespValue::error("ERR pub/sub commands not allowed in transaction");
     }
 
     // Parse channel names
@@ -250,6 +275,9 @@ pub fn cmd_unsubscribe(state: &mut ConnectionState, args: &[Vec<u8>]) -> RespVal
                 responses.into_iter().next().unwrap()
             }
         }
+        ConnectionState::Transaction { .. } => {
+            RespValue::error("ERR pub/sub commands not allowed in transaction")
+        }
     }
 }
 
@@ -262,6 +290,11 @@ pub fn cmd_psubscribe(
 ) -> RespValue {
     if args.is_empty() {
         return RespValue::error("wrong number of arguments for 'psubscribe' command");
+    }
+
+    // Check for transaction mode
+    if let ConnectionState::Transaction { .. } = state {
+        return RespValue::error("ERR pub/sub commands not allowed in transaction");
     }
 
     // Parse patterns
@@ -411,6 +444,9 @@ pub fn cmd_punsubscribe(state: &mut ConnectionState, args: &[Vec<u8>]) -> RespVa
                 responses.into_iter().next().unwrap()
             }
         }
+        ConnectionState::Transaction { .. } => {
+            RespValue::error("ERR pub/sub commands not allowed in transaction")
+        }
     }
 }
 
@@ -419,6 +455,7 @@ pub fn cmd_punsubscribe(state: &mut ConnectionState, args: &[Vec<u8>]) -> RespVa
 pub async fn receive_pubsub_message(state: &mut ConnectionState) -> Option<RespValue> {
     match state {
         ConnectionState::Normal => None,
+        ConnectionState::Transaction { .. } => None,
         ConnectionState::Subscribed {
             channel_receivers,
             pattern_receivers,
@@ -594,7 +631,7 @@ mod tests {
         assert_eq!(state.subscription_count(), 0);
         assert!(!state.is_subscribed());
 
-        let mut state = ConnectionState::Subscribed {
+        let state = ConnectionState::Subscribed {
             channels: {
                 let mut set = HashSet::new();
                 set.insert("ch1".to_string());
@@ -612,6 +649,68 @@ mod tests {
 
         assert_eq!(state.subscription_count(), 3);
         assert!(state.is_subscribed());
+    }
+
+    #[test]
+    fn test_transaction_state_creation() {
+        let state = ConnectionState::Transaction {
+            queue: Vec::new(),
+        };
+        assert!(state.is_transaction());
+        assert!(!state.is_subscribed());
+        assert_eq!(state.subscription_count(), 0);
+    }
+
+    #[test]
+    fn test_normal_state_not_transaction() {
+        let state = ConnectionState::Normal;
+        assert!(!state.is_transaction());
+        assert!(!state.is_subscribed());
+    }
+
+    #[test]
+    fn test_subscribed_state_not_transaction() {
+        let state = ConnectionState::Subscribed {
+            channels: HashSet::new(),
+            patterns: HashSet::new(),
+            channel_receivers: HashMap::new(),
+            pattern_receivers: Vec::new(),
+        };
+        assert!(!state.is_transaction());
+        assert!(!state.is_subscribed());
+    }
+
+    #[test]
+    fn test_queued_command_creation() {
+        let cmd = QueuedCommand {
+            cmd: "SET".to_string(),
+            args: vec![b"key".to_vec(), b"value".to_vec()],
+        };
+        assert_eq!(cmd.cmd, "SET");
+        assert_eq!(cmd.args.len(), 2);
+        assert_eq!(cmd.args[0], b"key");
+        assert_eq!(cmd.args[1], b"value");
+    }
+
+    #[test]
+    fn test_transaction_queue_operations() {
+        let mut state = ConnectionState::Transaction {
+            queue: Vec::new(),
+        };
+
+        if let ConnectionState::Transaction { queue } = &mut state {
+            queue.push(QueuedCommand {
+                cmd: "SET".to_string(),
+                args: vec![b"k1".to_vec(), b"v1".to_vec()],
+            });
+            queue.push(QueuedCommand {
+                cmd: "INCR".to_string(),
+                args: vec![b"counter".to_vec()],
+            });
+            assert_eq!(queue.len(), 2);
+        } else {
+            panic!("Expected Transaction state");
+        }
     }
 
     #[test]
