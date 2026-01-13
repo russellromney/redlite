@@ -102,21 +102,27 @@ db.set_autovacuum_interval(30_000);  // 30 seconds
 # Build
 cargo build --release
 
-# Run server (default port 6767)
+# Run server (default port 6379)
 ./target/release/redlite --db=mydata.db
 
 # In-memory mode
 ./target/release/redlite --db=:memory:
 
+# With authentication
+./target/release/redlite --db=mydata.db --password=secret
+
 # Custom port
-./target/release/redlite --db=mydata.db --addr=127.0.0.1:6379
+./target/release/redlite --db=mydata.db --addr=127.0.0.1:6380
 ```
 
 Connect with any Redis client:
 
 ```bash
-redis-cli -p 6767 SET foo bar
-redis-cli -p 6767 GET foo
+redis-cli SET foo bar
+redis-cli GET foo
+
+# With authentication
+redis-cli -a secret SET foo bar
 ```
 
 ## Commands
@@ -147,32 +153,35 @@ redis-cli -p 6767 GET foo
 
 ## Recently Completed
 
+**Session 22: Redis Ecosystem Compatibility** ✅
+- Authentication: `--password` flag, AUTH command
+- Backend options: `--backend` (sqlite/turso), `--storage` (file/memory)
+- Default port changed to 6379 (Redis standard)
+
 **Session 17: History Tracking & Time-Travel Queries** ✅
 - Track value changes per key with three-tier opt-in (global, database, key-level)
 - Time-travel queries: `HISTORY GETAT key timestamp`
 - Configurable retention policies (unlimited, time-based, count-based)
-- Automatic instrumentation on write operations (SET, DEL, HSET, LPUSH, XADD, etc.)
 - Full HISTORY command suite with enable/disable/get/stats/clear/prune/list subcommands
 
 ## Upcoming Features
 
 See [ROADMAP.md](./ROADMAP.md) for detailed plans.
 
-**Session 18: Performance Testing & Benchmarking** (Next)
+**Session 22.3: WATCH/UNWATCH** (Next)
+- Optimistic locking for transactions
+- Per-connection watched keys tracking
+- EXEC returns nil if watched keys were modified
+
+**Session 18: Performance Testing & Benchmarking**
 - Establish baseline QPS metrics in embedded mode
-- Profile and optimize hot paths (SQLite, RESP parsing, expiration)
+- Profile and optimize hot paths
 - Target: 10,000+ QPS
 
-**Sessions 19-21: Language Bindings** (After S18)
+**Sessions 19-21: Language Bindings**
 - **Python** (`redlite-py`) - PyO3 bindings via PyPI
 - **Node.js/Bun** (`redlite-js`) - NAPI-RS bindings via npm
 - **C FFI + Go** - C bindings via cbindgen + Go cgo wrapper
-
-**V3+ Features:**
-- Full-text search (SQLite FTS5)
-- Replication (walsync-based)
-- Active expiration daemon
-- History replay & reconstruction
 
 ## Testing
 
