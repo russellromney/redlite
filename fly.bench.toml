@@ -1,0 +1,22 @@
+# Fly.io config for running Redlite scaling benchmarks
+# Usage:
+#   fly apps create redlite-bench
+#   fly deploy -c fly.bench.toml --dockerfile Dockerfile.bench
+#   fly logs -c fly.bench.toml
+#   fly apps destroy redlite-bench
+
+app = "redlite-bench"
+primary_region = "sjc"
+
+[build]
+  dockerfile = "Dockerfile.bench"
+
+# Use a large machine for benchmarks
+[[vm]]
+  memory = "8gb"
+  cpu_kind = "performance"
+  cpus = 4
+
+# One-shot task - exits when done
+[processes]
+  app = "/app/run_bench.sh"

@@ -11,6 +11,7 @@ use crate::types::{ConsumerGroupInfo, ConsumerInfo, KeyInfo, KeyType, PendingEnt
 /// Default autovacuum interval in milliseconds (60 seconds)
 const DEFAULT_AUTOVACUUM_INTERVAL_MS: i64 = 60_000;
 
+
 /// Shared database backend (SQLite connection)
 struct DbCore {
     conn: Mutex<Connection>,
@@ -57,12 +58,15 @@ impl Db {
     pub fn open(path: &str) -> Result<Self> {
         let conn = Connection::open(path)?;
 
-        // Enable WAL mode and optimize pragmas
+        // Enable WAL mode and optimize pragmas for performance
         conn.execute_batch(
             "PRAGMA journal_mode = WAL;
              PRAGMA synchronous = NORMAL;
              PRAGMA foreign_keys = ON;
-             PRAGMA busy_timeout = 5000;",
+             PRAGMA busy_timeout = 5000;
+             PRAGMA cache_size = -64000;
+             PRAGMA mmap_size = 268435456;
+             PRAGMA temp_store = MEMORY;",
         )?;
 
         let core = Arc::new(DbCore {
@@ -1024,9 +1028,9 @@ impl Db {
         let conn = self.core.conn.lock().unwrap_or_else(|e| e.into_inner());
         let key_id = self.get_or_create_hash_key(&conn, key)?;
 
+        // Count new fields with per-field existence checks (simple, fast for typical use)
         let mut new_fields = 0i64;
         for (field, value) in pairs {
-            // Check if field exists
             let exists: bool = conn
                 .query_row(
                     "SELECT 1 FROM hashes WHERE key_id = ?1 AND field = ?2",
@@ -1039,7 +1043,6 @@ impl Db {
                 new_fields += 1;
             }
 
-            // Upsert field
             conn.execute(
                 "INSERT INTO hashes (key_id, field, value) VALUES (?1, ?2, ?3)
                  ON CONFLICT(key_id, field) DO UPDATE SET value = excluded.value",
@@ -1054,15 +1057,13 @@ impl Db {
             params![now, key_id],
         )?;
 
-        let result = new_fields;
-
         // Release connection before recording history
         drop(conn);
 
         // Record history for HSET operation
         let _ = self.record_history(self.selected_db, key, "HSET", None);
 
-        Ok(result)
+        Ok(new_fields)
     }
 
     /// HGET key field - get hash field value
@@ -1790,30 +1791,43 @@ impl Db {
             None => return Ok(vec![]),
         };
 
-        // Get list length
-        let len: i64 = conn.query_row(
-            "SELECT COUNT(*) FROM lists WHERE key_id = ?1",
-            params![key_id],
-            |row| row.get(0),
-        )?;
-
-        if len == 0 {
-            return Ok(vec![]);
-        }
-
-        // Convert negative indices to positive
-        let start = if start < 0 {
-            (len + start).max(0)
+        // Only query COUNT if we have negative indices (optimization)
+        let len: i64 = if start < 0 || stop < 0 {
+            conn.query_row(
+                "SELECT COUNT(*) FROM lists WHERE key_id = ?1",
+                params![key_id],
+                |row| row.get(0),
+            )?
         } else {
-            start.min(len - 1)
+            // For positive indices, we can skip the COUNT and rely on LIMIT/OFFSET
+            -1i64  // sentinel value indicating COUNT was not needed
         };
 
-        let stop = if stop < 0 {
-            (len + stop).max(0)
+        // Convert negative indices to positive (only if len was queried)
+        let (start, stop, needs_bounds) = if len >= 0 {
+            if len == 0 {
+                return Ok(vec![]);
+            }
+
+            let start = if start < 0 {
+                (len + start).max(0)
+            } else {
+                start.min(len - 1)
+            };
+
+            let stop = if stop < 0 {
+                (len + stop).max(0)
+            } else {
+                stop.min(len - 1)
+            };
+
+            (start, stop, true)
         } else {
-            stop.min(len - 1)
+            // For positive indices, don't apply bounds yet
+            (start, stop, false)
         };
 
+        // For positive indices, start > stop means empty range
         if start > stop {
             return Ok(vec![]);
         }
@@ -1843,21 +1857,26 @@ impl Db {
             None => return Ok(None),
         };
 
-        // Get list length
-        let len: i64 = conn.query_row(
-            "SELECT COUNT(*) FROM lists WHERE key_id = ?1",
-            params![key_id],
-            |row| row.get(0),
-        )?;
+        // Only query list length if we have negative index (optimization)
+        let index = if index < 0 {
+            // Need to query length for negative index conversion
+            let len: i64 = conn.query_row(
+                "SELECT COUNT(*) FROM lists WHERE key_id = ?1",
+                params![key_id],
+                |row| row.get(0),
+            )?;
 
-        if len == 0 {
-            return Ok(None);
-        }
+            if len == 0 {
+                return Ok(None);
+            }
 
-        // Convert negative index
-        let index = if index < 0 { len + index } else { index };
+            len + index
+        } else {
+            // For non-negative indices, use as-is
+            index
+        };
 
-        if index < 0 || index >= len {
+        if index < 0 {
             return Ok(None);
         }
 
@@ -2484,31 +2503,26 @@ impl Db {
         let conn = self.core.conn.lock().unwrap_or_else(|e| e.into_inner());
         let key_id = self.get_or_create_zset_key(&conn, key)?;
 
+        // Count new members with per-member existence checks (simple, fast for typical use)
         let mut added = 0i64;
         for m in members {
-            // Check if member already exists
             let exists: bool = conn
                 .query_row(
                     "SELECT 1 FROM zsets WHERE key_id = ?1 AND member = ?2",
-                    params![key_id, &m.member],
+                    params![key_id, m.member],
                     |_| Ok(true),
                 )
                 .unwrap_or(false);
 
-            if exists {
-                // Update score
-                conn.execute(
-                    "UPDATE zsets SET score = ?1 WHERE key_id = ?2 AND member = ?3",
-                    params![m.score, key_id, &m.member],
-                )?;
-            } else {
-                // Insert new member
-                conn.execute(
-                    "INSERT INTO zsets (key_id, member, score) VALUES (?1, ?2, ?3)",
-                    params![key_id, &m.member, m.score],
-                )?;
+            if !exists {
                 added += 1;
             }
+
+            conn.execute(
+                "INSERT INTO zsets (key_id, member, score) VALUES (?1, ?2, ?3)
+                 ON CONFLICT(key_id, member) DO UPDATE SET score = excluded.score",
+                params![key_id, m.member, m.score],
+            )?;
         }
 
         // Update timestamp
@@ -2678,31 +2692,42 @@ impl Db {
             None => return Ok(vec![]),
         };
 
-        // Get total count for negative index handling
-        let total: i64 = conn.query_row(
-            "SELECT COUNT(*) FROM zsets WHERE key_id = ?1",
-            params![key_id],
-            |row| row.get(0),
-        )?;
-
-        if total == 0 {
-            return Ok(vec![]);
-        }
-
-        // Convert negative indices to positive
-        let start = if start < 0 {
-            (total + start).max(0)
+        // Only query total count if we have negative indices (optimization)
+        let total: i64 = if start < 0 || stop < 0 {
+            conn.query_row(
+                "SELECT COUNT(*) FROM zsets WHERE key_id = ?1",
+                params![key_id],
+                |row| row.get(0),
+            )?
         } else {
-            start.min(total)
+            // For positive indices, use sentinel value
+            -1i64
         };
 
-        let stop = if stop < 0 {
-            (total + stop).max(0)
+        // Convert negative indices to positive (only if total was queried)
+        let (start, stop, needs_bounds) = if total >= 0 {
+            if total == 0 {
+                return Ok(vec![]);
+            }
+
+            let start = if start < 0 {
+                (total + start).max(0)
+            } else {
+                start.min(total)
+            };
+
+            let stop = if stop < 0 {
+                (total + stop).max(0)
+            } else {
+                stop.min(total - 1)
+            };
+
+            (start, stop, true)
         } else {
-            stop.min(total - 1)
+            (start, stop, false)
         };
 
-        if start > stop || start >= total {
+        if needs_bounds && (start > stop || start >= total) {
             return Ok(vec![]);
         }
 

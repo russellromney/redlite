@@ -19,14 +19,16 @@ pub struct Server {
     db: Db,
     notifier: Arc<RwLock<HashMap<String, broadcast::Sender<()>>>>,
     pubsub_channels: Arc<RwLock<HashMap<String, broadcast::Sender<PubSubMessage>>>>,
+    password: Option<Arc<String>>,
 }
 
 impl Server {
-    pub fn new(db: Db) -> Self {
+    pub fn new(db: Db, password: Option<String>) -> Self {
         Self {
             db,
             notifier: Arc::new(RwLock::new(HashMap::new())),
             pubsub_channels: Arc::new(RwLock::new(HashMap::new())),
+            password: password.map(Arc::new),
         }
     }
 
@@ -44,9 +46,10 @@ impl Server {
             // Clone notifier and pubsub channels for this connection
             let notifier = Arc::clone(&self.notifier);
             let pubsub_channels = Arc::clone(&self.pubsub_channels);
+            let password = self.password.clone();
 
             tokio::spawn(async move {
-                if let Err(e) = handle_connection(socket, session, notifier, pubsub_channels).await {
+                if let Err(e) = handle_connection(socket, session, notifier, pubsub_channels, password).await {
                     tracing::error!("Connection error: {}", e);
                 }
             });
@@ -59,6 +62,7 @@ async fn handle_connection(
     mut db: Db,
     notifier: Arc<RwLock<HashMap<String, broadcast::Sender<()>>>>,
     pubsub_channels: Arc<RwLock<HashMap<String, broadcast::Sender<PubSubMessage>>>>,
+    password: Option<Arc<String>>,
 ) -> std::io::Result<()> {
     // Attach notifier to database for server mode
     db.with_notifier(notifier);
@@ -66,6 +70,8 @@ async fn handle_connection(
     let (reader, mut writer) = socket.into_split();
     let mut reader = RespReader::new(reader);
     let mut state = ConnectionState::Normal;
+    // If no password is configured, start authenticated
+    let mut authenticated = password.is_none();
 
     loop {
         if state.is_subscribed() {
@@ -109,6 +115,8 @@ async fn handle_connection(
                         &mut db,
                         &args,
                         &pubsub_channels,
+                        &mut authenticated,
+                        &password,
                     ).await;
                     writer.write_all(&response.encode()).await?;
                     writer.flush().await?;
@@ -135,6 +143,8 @@ async fn execute_normal_command(
     db: &mut Db,
     args: &[Vec<u8>],
     pubsub_channels: &Arc<RwLock<HashMap<String, broadcast::Sender<PubSubMessage>>>>,
+    authenticated: &mut bool,
+    password: &Option<Arc<String>>,
 ) -> RespValue {
     if args.is_empty() {
         return RespValue::error("empty command");
@@ -142,6 +152,16 @@ async fn execute_normal_command(
 
     let cmd = String::from_utf8_lossy(&args[0]).to_uppercase();
     let cmd_args = &args[1..];
+
+    // Handle AUTH command (always allowed)
+    if cmd == "AUTH" {
+        return cmd_auth(cmd_args, authenticated, password);
+    }
+
+    // Check authentication for all other commands (except QUIT)
+    if !*authenticated && cmd != "QUIT" {
+        return RespValue::error("NOAUTH Authentication required.");
+    }
 
     // Handle transaction commands
     if let ConnectionState::Transaction { .. } = state {
@@ -326,6 +346,46 @@ async fn execute_command(db: &mut Db, args: &[Vec<u8>]) -> RespValue {
 }
 
 // --- Server commands ---
+
+fn cmd_auth(
+    args: &[Vec<u8>],
+    authenticated: &mut bool,
+    password: &Option<Arc<String>>,
+) -> RespValue {
+    // Redis AUTH command supports:
+    // AUTH <password>
+    // AUTH <username> <password> (Redis 6+, we only support default user)
+    if args.is_empty() || args.len() > 2 {
+        return RespValue::error("ERR wrong number of arguments for 'auth' command");
+    }
+
+    // Get the password from args (last argument if 2 args, first if 1 arg)
+    let provided_password = if args.len() == 2 {
+        // AUTH <username> <password> - we ignore username, use password
+        &args[1]
+    } else {
+        &args[0]
+    };
+
+    match password {
+        Some(expected) => {
+            let provided = String::from_utf8_lossy(provided_password);
+            if provided == **expected {
+                *authenticated = true;
+                RespValue::ok()
+            } else {
+                *authenticated = false;
+                RespValue::error("WRONGPASS invalid username-password pair or user is disabled.")
+            }
+        }
+        None => {
+            // No password configured, but client sent AUTH anyway
+            // Redis returns OK in this case for compatibility
+            *authenticated = true;
+            RespValue::ok()
+        }
+    }
+}
 
 fn cmd_ping(args: &[Vec<u8>]) -> RespValue {
     if args.is_empty() {

@@ -1,0 +1,150 @@
+name: Benchmark CI
+
+on:
+  push:
+    branches: [main, master]
+    paths:
+      - 'redlite/src/**'
+      - 'redlite/benches/**'
+      - 'redlite/Cargo.toml'
+  pull_request:
+    branches: [main, master]
+    paths:
+      - 'redlite/src/**'
+      - 'redlite/benches/**'
+      - 'redlite/Cargo.toml'
+  workflow_dispatch:
+
+env:
+  CARGO_TERM_COLOR: always
+  # Regression threshold: fail if performance degrades by more than this percentage
+  REGRESSION_THRESHOLD: 15
+
+jobs:
+  benchmark:
+    name: Performance Benchmarks
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: redlite
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-action@stable
+        with:
+          components: clippy
+
+      - name: Cache cargo registry
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            redlite/target
+          key: ${{ runner.os }}-cargo-bench-${{ hashFiles('redlite/Cargo.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-cargo-bench-
+
+      - name: Build release
+        run: cargo build --release
+
+      - name: Run benchmarks
+        run: |
+          cargo bench --bench redlite_benchmarks -- --noplot --save-baseline current 2>&1 | tee benchmark_output.txt
+
+      - name: Download baseline (if exists)
+        uses: actions/cache@v4
+        id: baseline-cache
+        with:
+          path: redlite/target/criterion
+          key: benchmark-baseline-${{ github.base_ref || 'main' }}
+          restore-keys: |
+            benchmark-baseline-main
+            benchmark-baseline-
+
+      - name: Compare with baseline
+        if: steps.baseline-cache.outputs.cache-hit == 'true'
+        run: |
+          cargo bench --bench redlite_benchmarks -- --noplot --baseline main 2>&1 | tee comparison_output.txt || true
+
+          # Check for regressions
+          if grep -q "Performance has regressed" comparison_output.txt; then
+            echo "::warning::Performance regression detected!"
+            grep -A 5 "Performance has regressed" comparison_output.txt
+          fi
+
+      - name: Save new baseline (main branch only)
+        if: github.ref == 'refs/heads/main' && github.event_name == 'push'
+        run: |
+          cargo bench --bench redlite_benchmarks -- --noplot --save-baseline main
+
+      - name: Update baseline cache (main branch only)
+        if: github.ref == 'refs/heads/main' && github.event_name == 'push'
+        uses: actions/cache@v4
+        with:
+          path: redlite/target/criterion
+          key: benchmark-baseline-main-${{ github.sha }}
+
+      - name: Extract key metrics
+        run: |
+          echo "## Benchmark Results" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "### Key Metrics" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "| Operation | Time | Throughput |" >> $GITHUB_STEP_SUMMARY
+          echo "|-----------|------|------------|" >> $GITHUB_STEP_SUMMARY
+
+          # Extract timing from benchmark output
+          grep -E "time:\s+\[" benchmark_output.txt | head -20 | while read line; do
+            echo "| $line |" >> $GITHUB_STEP_SUMMARY
+          done
+
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "See artifacts for full benchmark report." >> $GITHUB_STEP_SUMMARY
+
+      - name: Upload benchmark results
+        uses: actions/upload-artifact@v4
+        with:
+          name: benchmark-results
+          path: |
+            redlite/benchmark_output.txt
+            redlite/target/criterion
+          retention-days: 30
+
+  regression-check:
+    name: Regression Detection
+    runs-on: ubuntu-latest
+    needs: benchmark
+    if: github.event_name == 'pull_request'
+    defaults:
+      run:
+        working-directory: redlite
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Download benchmark results
+        uses: actions/download-artifact@v4
+        with:
+          name: benchmark-results
+          path: redlite/benchmark-results
+
+      - name: Check for regressions
+        run: |
+          # Parse benchmark output and check against thresholds
+          python3 scripts/check_regression.py benchmark-results/benchmark_output.txt ${{ env.REGRESSION_THRESHOLD }}
+        continue-on-error: true
+
+      - name: Comment on PR (if regression)
+        if: failure()
+        uses: actions/github-script@v7
+        with:
+          script: |
+            github.rest.issues.createComment({
+              issue_number: context.issue.number,
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              body: '## Performance Regression Detected\n\nThis PR introduces a performance regression exceeding the ${{ env.REGRESSION_THRESHOLD }}% threshold.\n\nPlease review the benchmark results in the Actions tab.'
+            })

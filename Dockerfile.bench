@@ -1,0 +1,48 @@
+# Dockerfile for running Redlite scaling benchmarks on Fly.io
+# Use debian:testing for newer glibc
+FROM --platform=linux/amd64 debian:testing-slim AS base
+
+FROM base AS builder
+
+WORKDIR /app
+
+# Install Rust and build dependencies
+RUN apt-get update && apt-get install -y \
+    curl \
+    build-essential \
+    pkg-config \
+    libssl-dev \
+    && rm -rf /var/lib/apt/lists/*
+
+# Install Rust via rustup
+RUN curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y
+ENV PATH="/root/.cargo/bin:${PATH}"
+
+# Copy source
+COPY . .
+
+# Build benchmarks in release mode and find the binary
+RUN cargo build --release --bench redlite_benchmarks && \
+    find target/release/deps -name 'redlite_benchmarks-*' -type f -executable | head -1 | xargs -I{} cp {} /app/bench
+
+# Runtime stage - same base for glibc compatibility
+FROM base
+
+WORKDIR /app
+
+# Install Redis for comparison benchmarks
+RUN apt-get update && apt-get install -y \
+    redis-server \
+    ca-certificates \
+    procps \
+    && rm -rf /var/lib/apt/lists/*
+
+# Copy benchmark binary and Redlite server
+COPY --from=builder /app/bench /app/bench
+COPY --from=builder /app/target/release/redlite /app/redlite
+
+# Copy benchmark script
+COPY --from=builder /app/scripts/run_fly_bench.sh /app/run_bench.sh
+RUN chmod +x /app/run_bench.sh
+
+CMD ["/app/run_bench.sh"]

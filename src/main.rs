@@ -18,8 +18,12 @@ struct Args {
     db: String,
 
     /// Listen address
-    #[arg(short, long, default_value = "127.0.0.1:6767")]
+    #[arg(short, long, default_value = "127.0.0.1:6379")]
     addr: String,
+
+    /// Require password for connections (like Redis requirepass)
+    #[arg(long)]
+    password: Option<String>,
 }
 
 #[tokio::main]
@@ -31,7 +35,11 @@ async fn main() -> anyhow::Result<()> {
     let db = Db::open(&args.db)?;
     tracing::info!("Opened database: {}", args.db);
 
-    let server = Server::new(db);
+    if args.password.is_some() {
+        tracing::info!("Authentication enabled");
+    }
+
+    let server = Server::new(db, args.password);
     server.run(&args.addr).await?;
 
     Ok(())
