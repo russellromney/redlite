@@ -36,6 +36,7 @@ pub enum BenchError {
     Serialization(String),
     Configuration(String),
     NoDataPopulated(String),
+    TaskFailed(String),
 }
 
 impl fmt::Display for BenchError {
@@ -46,6 +47,7 @@ impl fmt::Display for BenchError {
             BenchError::Serialization(msg) => write!(f, "Serialization error: {}", msg),
             BenchError::Configuration(msg) => write!(f, "Configuration error: {}", msg),
             BenchError::NoDataPopulated(msg) => write!(f, "No data populated: {}", msg),
+            BenchError::TaskFailed(msg) => write!(f, "Task failed: {}", msg),
         }
     }
 }
@@ -61,6 +63,12 @@ impl From<ClientError> for BenchError {
 impl From<std::io::Error> for BenchError {
     fn from(e: std::io::Error) -> Self {
         BenchError::Io(e)
+    }
+}
+
+impl From<tokio::task::JoinError> for BenchError {
+    fn from(e: tokio::task::JoinError) -> Self {
+        BenchError::TaskFailed(e.to_string())
     }
 }
 
