@@ -2073,6 +2073,263 @@ impl Db {
         Ok(())
     }
 
+    /// LREM key count element - remove elements equal to element, returns count removed
+    /// count > 0: remove first count occurrences from head to tail
+    /// count < 0: remove first |count| occurrences from tail to head
+    /// count = 0: remove all occurrences
+    pub fn lrem(&self, key: &str, count: i64, element: &[u8]) -> Result<i64> {
+        let conn = self.core.conn.lock().unwrap_or_else(|e| e.into_inner());
+
+        let key_id = match self.get_list_key_id(&conn, key)? {
+            Some(id) => id,
+            None => return Ok(0), // Non-existent key returns 0
+        };
+
+        // Get all list entries to find matching positions
+        let mut stmt = conn.prepare(
+            "SELECT pos FROM lists WHERE key_id = ?1 ORDER BY pos ASC",
+        )?;
+        let rows = stmt.query_map(params![key_id], |row| row.get::<_, i64>(0))?;
+
+        let all_positions: Vec<i64> = rows.filter_map(|r| r.ok()).collect();
+
+        if all_positions.is_empty() {
+            return Ok(0);
+        }
+
+        // Find indices of matching values
+        let mut matching_indices: Vec<usize> = Vec::new();
+        for (idx, pos) in all_positions.iter().enumerate() {
+            let value: Vec<u8> = conn.query_row(
+                "SELECT value FROM lists WHERE key_id = ?1 AND pos = ?2",
+                params![key_id, pos],
+                |row| row.get(0),
+            )?;
+            if value == element {
+                matching_indices.push(idx);
+            }
+        }
+
+        if matching_indices.is_empty() {
+            return Ok(0);
+        }
+
+        // Determine which indices to delete based on count
+        let indices_to_delete: Vec<usize> = if count == 0 {
+            // Delete all matches
+            matching_indices
+        } else if count > 0 {
+            // Delete first count matches from head (take from start)
+            matching_indices.into_iter().take(count as usize).collect()
+        } else {
+            // Delete first |count| matches from tail (take from end)
+            let abs_count = (-count) as usize;
+            let len = matching_indices.len();
+            if abs_count >= len {
+                matching_indices
+            } else {
+                matching_indices.into_iter().skip(len - abs_count).collect()
+            }
+        };
+
+        let removed_count = indices_to_delete.len() as i64;
+
+        // Sort indices in reverse order for safe deletion
+        let mut sorted_indices = indices_to_delete;
+        sorted_indices.sort_by(|a, b| b.cmp(a));
+
+        // Delete in reverse order to maintain correct indices
+        for idx in sorted_indices {
+            let pos = all_positions[idx];
+            conn.execute(
+                "DELETE FROM lists WHERE key_id = ?1 AND pos = ?2",
+                params![key_id, pos],
+            )?;
+        }
+
+        // Check if list is now empty
+        let remaining: i64 = conn.query_row(
+            "SELECT COUNT(*) FROM lists WHERE key_id = ?1",
+            params![key_id],
+            |row| row.get(0),
+        )?;
+
+        if remaining == 0 {
+            conn.execute("DELETE FROM keys WHERE id = ?1", params![key_id])?;
+        } else {
+            // Update timestamp
+            let now = Self::now_ms();
+            conn.execute(
+                "UPDATE keys SET updated_at = ?1, version = version + 1 WHERE id = ?2",
+                params![now, key_id],
+            )?;
+
+            // Record history for LREM operation
+            let _ = self.record_history(self.selected_db, key, "LREM", None);
+
+            // Notify watchers
+            if self.is_server_mode() {
+                let key = key.to_string();
+                let db = self.clone();
+                tokio::spawn(async move {
+                    let _ = db.notify_key(&key).await;
+                });
+            }
+        }
+
+        Ok(removed_count)
+    }
+
+    /// LINSERT key BEFORE|AFTER pivot element - insert element before or after pivot
+    /// Returns: length of list after insert, 0 if key doesn't exist, -1 if pivot not found
+    pub fn linsert(&self, key: &str, before: bool, pivot: &[u8], element: &[u8]) -> Result<i64> {
+        let conn = self.core.conn.lock().unwrap_or_else(|e| e.into_inner());
+
+        let key_id = match self.get_list_key_id(&conn, key)? {
+            Some(id) => id,
+            None => return Ok(0), // Key doesn't exist
+        };
+
+        // Find the position of the pivot element
+        let mut stmt = conn.prepare(
+            "SELECT pos FROM lists WHERE key_id = ?1 ORDER BY pos ASC",
+        )?;
+        let rows = stmt.query_map(params![key_id], |row| row.get::<_, i64>(0))?;
+
+        let positions: Vec<i64> = rows.filter_map(|r| r.ok()).collect();
+        let mut pivot_pos: Option<i64> = None;
+
+        for pos in &positions {
+            let value: Vec<u8> = conn.query_row(
+                "SELECT value FROM lists WHERE key_id = ?1 AND pos = ?2",
+                params![key_id, pos],
+                |row| row.get(0),
+            )?;
+            if value == pivot {
+                pivot_pos = Some(*pos);
+                break;
+            }
+        }
+
+        let pivot_pos = match pivot_pos {
+            Some(p) => p,
+            None => return Ok(-1), // Pivot not found
+        };
+
+        // Find the next and previous positions to insert between
+        let target_pos = if before {
+            // Insert before pivot: use position between previous and pivot
+            let prev_idx = positions.iter().position(|&p| p == pivot_pos).unwrap_or(0);
+            if prev_idx == 0 {
+                // Insert at head: use position less than pivot
+                pivot_pos - Self::LIST_GAP
+            } else {
+                // Insert between previous and pivot
+                let prev_pos = positions[prev_idx - 1];
+                let next_pos = pivot_pos;
+                if prev_pos < next_pos - 1 {
+                    (prev_pos + next_pos) / 2
+                } else {
+                    // Need to rebalance
+                    self.rebalance_list(&conn, key_id)?;
+                    // Re-find pivot and positions after rebalancing
+                    let mut stmt = conn.prepare(
+                        "SELECT pos FROM lists WHERE key_id = ?1 ORDER BY pos ASC",
+                    )?;
+                    let rows = stmt.query_map(params![key_id], |row| row.get::<_, i64>(0))?;
+                    let new_positions: Vec<i64> = rows.filter_map(|r| r.ok()).collect();
+                    let prev_idx = new_positions.iter().position(|&p| {
+                        let v: std::result::Result<Vec<u8>, _> = conn.query_row(
+                            "SELECT value FROM lists WHERE key_id = ?1 AND pos = ?2",
+                            params![key_id, p],
+                            |row| row.get(0),
+                        );
+                        v.ok().as_ref() == Some(&pivot.to_vec())
+                    }).unwrap_or(0);
+                    if prev_idx == 0 {
+                        new_positions[0] - Self::LIST_GAP
+                    } else {
+                        let prev = new_positions[prev_idx - 1];
+                        let curr = new_positions[prev_idx];
+                        (prev + curr) / 2
+                    }
+                }
+            }
+        } else {
+            // Insert after pivot: use position between pivot and next
+            let pivot_idx = positions.iter().position(|&p| p == pivot_pos).unwrap_or(0);
+            if pivot_idx == positions.len() - 1 {
+                // Insert at tail: use position greater than pivot
+                pivot_pos + Self::LIST_GAP
+            } else {
+                // Insert between pivot and next
+                let curr_pos = pivot_pos;
+                let next_pos = positions[pivot_idx + 1];
+                if curr_pos < next_pos - 1 {
+                    (curr_pos + next_pos) / 2
+                } else {
+                    // Need to rebalance
+                    self.rebalance_list(&conn, key_id)?;
+                    // Re-find pivot and positions after rebalancing
+                    let mut stmt = conn.prepare(
+                        "SELECT pos FROM lists WHERE key_id = ?1 ORDER BY pos ASC",
+                    )?;
+                    let rows = stmt.query_map(params![key_id], |row| row.get::<_, i64>(0))?;
+                    let new_positions: Vec<i64> = rows.filter_map(|r| r.ok()).collect();
+                    let pivot_idx = new_positions.iter().position(|&p| {
+                        let v: std::result::Result<Vec<u8>, _> = conn.query_row(
+                            "SELECT value FROM lists WHERE key_id = ?1 AND pos = ?2",
+                            params![key_id, p],
+                            |row| row.get(0),
+                        );
+                        v.ok().as_ref() == Some(&pivot.to_vec())
+                    }).unwrap_or(0);
+                    if pivot_idx == new_positions.len() - 1 {
+                        new_positions[pivot_idx] + Self::LIST_GAP
+                    } else {
+                        let curr = new_positions[pivot_idx];
+                        let next = new_positions[pivot_idx + 1];
+                        (curr + next) / 2
+                    }
+                }
+            }
+        };
+
+        // Insert the element
+        conn.execute(
+            "INSERT INTO lists (key_id, pos, value) VALUES (?1, ?2, ?3)",
+            params![key_id, target_pos, element],
+        )?;
+
+        // Get new list length
+        let length: i64 = conn.query_row(
+            "SELECT COUNT(*) FROM lists WHERE key_id = ?1",
+            params![key_id],
+            |row| row.get(0),
+        )?;
+
+        // Update key timestamp
+        let now = Self::now_ms();
+        conn.execute(
+            "UPDATE keys SET updated_at = ?1, version = version + 1 WHERE id = ?2",
+            params![now, key_id],
+        )?;
+
+        // Record history for LINSERT operation
+        let _ = self.record_history(self.selected_db, key, "LINSERT", None);
+
+        // Notify watchers
+        if self.is_server_mode() {
+            let key = key.to_string();
+            let db = self.clone();
+            tokio::spawn(async move {
+                let _ = db.notify_key(&key).await;
+            });
+        }
+
+        Ok(length)
+    }
+
     // --- Session 8: Set operations ---
 
     /// Helper to create a new set key
@@ -2451,6 +2708,199 @@ impl Db {
         }
 
         Ok(result)
+    }
+
+    /// SMOVE source destination member - atomically move member from source to destination
+    /// Returns: 1 if member was moved, 0 if member not in source or source doesn't exist
+    pub fn smove(&self, source: &str, destination: &str, member: &[u8]) -> Result<i64> {
+        let conn = self.core.conn.lock().unwrap_or_else(|e| e.into_inner());
+
+        // Get source set key_id
+        let source_key_id = match self.get_set_key_id(&conn, source)? {
+            Some(id) => id,
+            None => return Ok(0), // Source doesn't exist
+        };
+
+        // Check if member exists in source
+        let mut stmt = conn.prepare(
+            "SELECT 1 FROM sets WHERE key_id = ?1 AND member = ?2 LIMIT 1",
+        )?;
+        let exists: std::result::Result<i32, _> = stmt.query_row(params![source_key_id, member], |_| Ok(1));
+
+        if exists.is_err() {
+            return Ok(0); // Member not in source
+        }
+
+        // Get or create destination set key_id
+        let dest_key_id = self.get_or_create_set_key(&conn, destination)?;
+
+        // Remove from source
+        conn.execute(
+            "DELETE FROM sets WHERE key_id = ?1 AND member = ?2",
+            params![source_key_id, member],
+        )?;
+
+        // Add to destination (using INSERT OR IGNORE to avoid duplicate if already exists)
+        conn.execute(
+            "INSERT OR IGNORE INTO sets (key_id, member) VALUES (?1, ?2)",
+            params![dest_key_id, member],
+        )?;
+
+        // Clean up empty source set
+        let remaining: i64 = conn.query_row(
+            "SELECT COUNT(*) FROM sets WHERE key_id = ?1",
+            params![source_key_id],
+            |row| row.get(0),
+        )?;
+
+        if remaining == 0 {
+            conn.execute("DELETE FROM keys WHERE id = ?1", params![source_key_id])?;
+        } else {
+            // Update source timestamp
+            let now = Self::now_ms();
+            conn.execute(
+                "UPDATE keys SET updated_at = ?1, version = version + 1 WHERE id = ?2",
+                params![now, source_key_id],
+            )?;
+        }
+
+        // Update destination timestamp
+        let now = Self::now_ms();
+        conn.execute(
+            "UPDATE keys SET updated_at = ?1, version = version + 1 WHERE id = ?2",
+            params![now, dest_key_id],
+        )?;
+
+        Ok(1)
+    }
+
+    /// SDIFFSTORE destination key [key ...] - compute set difference and store result
+    /// Returns: number of elements in resulting set
+    pub fn sdiffstore(&self, destination: &str, keys: &[&str]) -> Result<i64> {
+        if keys.is_empty() {
+            return Ok(0);
+        }
+
+        // Compute the difference
+        let diff_result = self.sdiff(keys)?;
+
+        // Clear destination if it exists
+        if let Some(dest_key_id) = self.get_set_key_id(&self.core.conn.lock().unwrap_or_else(|e| e.into_inner()), destination)? {
+            let conn = self.core.conn.lock().unwrap_or_else(|e| e.into_inner());
+            conn.execute("DELETE FROM sets WHERE key_id = ?1", params![dest_key_id])?;
+            conn.execute("DELETE FROM keys WHERE id = ?1", params![dest_key_id])?;
+        }
+
+        // If result is empty, delete destination and return 0
+        if diff_result.is_empty() {
+            return Ok(0);
+        }
+
+        // Store the result in destination
+        let conn = self.core.conn.lock().unwrap_or_else(|e| e.into_inner());
+        let dest_key_id = self.get_or_create_set_key(&conn, destination)?;
+
+        for member in &diff_result {
+            conn.execute(
+                "INSERT INTO sets (key_id, member) VALUES (?1, ?2)",
+                params![dest_key_id, member],
+            )?;
+        }
+
+        // Update timestamp
+        let now = Self::now_ms();
+        conn.execute(
+            "UPDATE keys SET updated_at = ?1, version = version + 1 WHERE id = ?2",
+            params![now, dest_key_id],
+        )?;
+
+        Ok(diff_result.len() as i64)
+    }
+
+    /// SINTERSTORE destination key [key ...] - compute set intersection and store result
+    /// Returns: number of elements in resulting set
+    pub fn sinterstore(&self, destination: &str, keys: &[&str]) -> Result<i64> {
+        if keys.is_empty() {
+            return Ok(0);
+        }
+
+        // Compute the intersection
+        let inter_result = self.sinter(keys)?;
+
+        // Clear destination if it exists
+        if let Some(dest_key_id) = self.get_set_key_id(&self.core.conn.lock().unwrap_or_else(|e| e.into_inner()), destination)? {
+            let conn = self.core.conn.lock().unwrap_or_else(|e| e.into_inner());
+            conn.execute("DELETE FROM sets WHERE key_id = ?1", params![dest_key_id])?;
+            conn.execute("DELETE FROM keys WHERE id = ?1", params![dest_key_id])?;
+        }
+
+        // If result is empty, delete destination and return 0
+        if inter_result.is_empty() {
+            return Ok(0);
+        }
+
+        // Store the result in destination
+        let conn = self.core.conn.lock().unwrap_or_else(|e| e.into_inner());
+        let dest_key_id = self.get_or_create_set_key(&conn, destination)?;
+
+        for member in &inter_result {
+            conn.execute(
+                "INSERT INTO sets (key_id, member) VALUES (?1, ?2)",
+                params![dest_key_id, member],
+            )?;
+        }
+
+        // Update timestamp
+        let now = Self::now_ms();
+        conn.execute(
+            "UPDATE keys SET updated_at = ?1, version = version + 1 WHERE id = ?2",
+            params![now, dest_key_id],
+        )?;
+
+        Ok(inter_result.len() as i64)
+    }
+
+    /// SUNIONSTORE destination key [key ...] - compute set union and store result
+    /// Returns: number of elements in resulting set
+    pub fn sunionstore(&self, destination: &str, keys: &[&str]) -> Result<i64> {
+        if keys.is_empty() {
+            return Ok(0);
+        }
+
+        // Compute the union
+        let union_result = self.sunion(keys)?;
+
+        // Clear destination if it exists
+        if let Some(dest_key_id) = self.get_set_key_id(&self.core.conn.lock().unwrap_or_else(|e| e.into_inner()), destination)? {
+            let conn = self.core.conn.lock().unwrap_or_else(|e| e.into_inner());
+            conn.execute("DELETE FROM sets WHERE key_id = ?1", params![dest_key_id])?;
+            conn.execute("DELETE FROM keys WHERE id = ?1", params![dest_key_id])?;
+        }
+
+        // If result is empty, delete destination and return 0
+        if union_result.is_empty() {
+            return Ok(0);
+        }
+
+        // Store the result in destination
+        let conn = self.core.conn.lock().unwrap_or_else(|e| e.into_inner());
+        let dest_key_id = self.get_or_create_set_key(&conn, destination)?;
+
+        for member in &union_result {
+            conn.execute(
+                "INSERT INTO sets (key_id, member) VALUES (?1, ?2)",
+                params![dest_key_id, member],
+            )?;
+        }
+
+        // Update timestamp
+        let now = Self::now_ms();
+        conn.execute(
+            "UPDATE keys SET updated_at = ?1, version = version + 1 WHERE id = ?2",
+            params![now, dest_key_id],
+        )?;
+
+        Ok(union_result.len() as i64)
     }
 
     // --- Session 9: Sorted Set operations ---

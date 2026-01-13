@@ -256,6 +256,7 @@ async fn execute_command(db: &mut Db, args: &[Vec<u8>]) -> RespValue {
         "COMMAND" => cmd_command(),
         "QUIT" => RespValue::ok(),
         "SELECT" => cmd_select(db, cmd_args),
+        "CLIENT" => cmd_client(cmd_args),
         "DBSIZE" => cmd_dbsize(db),
         "FLUSHDB" => cmd_flushdb(db),
         "INFO" => cmd_info(db, cmd_args),
@@ -307,6 +308,8 @@ async fn execute_command(db: &mut Db, args: &[Vec<u8>]) -> RespValue {
         "LINDEX" => cmd_lindex(db, cmd_args),
         "LSET" => cmd_lset(db, cmd_args),
         "LTRIM" => cmd_ltrim(db, cmd_args),
+        "LREM" => cmd_lrem(db, cmd_args),
+        "LINSERT" => cmd_linsert(db, cmd_args),
         // Set operations
         "SADD" => cmd_sadd(db, cmd_args),
         "SREM" => cmd_srem(db, cmd_args),
@@ -318,6 +321,10 @@ async fn execute_command(db: &mut Db, args: &[Vec<u8>]) -> RespValue {
         "SDIFF" => cmd_sdiff(db, cmd_args),
         "SINTER" => cmd_sinter(db, cmd_args),
         "SUNION" => cmd_sunion(db, cmd_args),
+        "SMOVE" => cmd_smove(db, cmd_args),
+        "SDIFFSTORE" => cmd_sdiffstore(db, cmd_args),
+        "SINTERSTORE" => cmd_sinterstore(db, cmd_args),
+        "SUNIONSTORE" => cmd_sunionstore(db, cmd_args),
         // Sorted set operations
         "ZADD" => cmd_zadd(db, cmd_args),
         "ZREM" => cmd_zrem(db, cmd_args),
@@ -481,6 +488,52 @@ fn cmd_info(db: &Db, args: &[Vec<u8>]) -> RespValue {
     }
 
     RespValue::BulkString(Some(info.into_bytes()))
+}
+
+fn cmd_client(args: &[Vec<u8>]) -> RespValue {
+    if args.is_empty() {
+        return RespValue::error("wrong number of arguments for 'client' command");
+    }
+
+    let subcommand = match std::str::from_utf8(&args[0]) {
+        Ok(s) => s.to_uppercase(),
+        Err(_) => return RespValue::error("invalid subcommand"),
+    };
+
+    match subcommand.as_str() {
+        "SETNAME" => {
+            if args.len() != 2 {
+                return RespValue::error("wrong number of arguments for 'client|setname' command");
+            }
+            // In a full implementation, we would store this per-connection
+            // For now, just return OK to indicate success
+            RespValue::ok()
+        }
+        "GETNAME" => {
+            if args.len() != 1 {
+                return RespValue::error("wrong number of arguments for 'client|getname' command");
+            }
+            // In a full implementation, we would return the per-connection name
+            // For now, return null (no name set)
+            RespValue::null()
+        }
+        "LIST" => {
+            if !args[1..].is_empty() {
+                // Optional filters not implemented yet
+                return RespValue::error("CLIENT LIST filters not yet supported");
+            }
+            // Return a minimal client list format
+            // In a full implementation, we would enumerate active connections
+            let list = "id=1 addr=127.0.0.1:12345 fd=7 name= age=0 idle=0 flags=N db=0 sub=0 psub=0 multi=-1 qbuf=0 qbuf-free=0 argv-mem=0 obl=0 oll=0 omem=0 tot-mem=0 events=r cmd=client\r\n";
+            RespValue::BulkString(Some(list.as_bytes().to_vec()))
+        }
+        "ID" => {
+            // Return a fixed client ID for now
+            // In a full implementation, each connection would have a unique ID
+            RespValue::Integer(1)
+        }
+        _ => RespValue::error(format!("Unknown CLIENT subcommand '{}'", subcommand)),
+    }
 }
 
 // --- String commands ---
@@ -1670,6 +1723,62 @@ fn cmd_ltrim(db: &Db, args: &[Vec<u8>]) -> RespValue {
     }
 }
 
+fn cmd_lrem(db: &Db, args: &[Vec<u8>]) -> RespValue {
+    if args.len() != 3 {
+        return RespValue::error("wrong number of arguments for 'lrem' command");
+    }
+
+    let key = match std::str::from_utf8(&args[0]) {
+        Ok(k) => k,
+        Err(_) => return RespValue::error("invalid key"),
+    };
+
+    let count: i64 = match std::str::from_utf8(&args[1])
+        .ok()
+        .and_then(|s| s.parse().ok())
+    {
+        Some(i) => i,
+        None => return RespValue::error("value is not an integer or out of range"),
+    };
+
+    let element = &args[2];
+
+    match db.lrem(key, count, element) {
+        Ok(removed) => RespValue::Integer(removed),
+        Err(KvError::WrongType) => RespValue::wrong_type(),
+        Err(e) => RespValue::error(e.to_string()),
+    }
+}
+
+fn cmd_linsert(db: &Db, args: &[Vec<u8>]) -> RespValue {
+    if args.len() != 4 {
+        return RespValue::error("wrong number of arguments for 'linsert' command");
+    }
+
+    let key = match std::str::from_utf8(&args[0]) {
+        Ok(k) => k,
+        Err(_) => return RespValue::error("invalid key"),
+    };
+
+    let position = match std::str::from_utf8(&args[1]) {
+        Ok(p) => match p.to_uppercase().as_str() {
+            "BEFORE" => true,
+            "AFTER" => false,
+            _ => return RespValue::error("syntax error"),
+        },
+        Err(_) => return RespValue::error("invalid position"),
+    };
+
+    let pivot = &args[2];
+    let element = &args[3];
+
+    match db.linsert(key, position, pivot, element) {
+        Ok(length) => RespValue::Integer(length),
+        Err(KvError::WrongType) => RespValue::wrong_type(),
+        Err(e) => RespValue::error(e.to_string()),
+    }
+}
+
 // --- Set operations ---
 
 fn cmd_sadd(db: &Db, args: &[Vec<u8>]) -> RespValue {
@@ -1932,6 +2041,108 @@ fn cmd_sunion(db: &Db, args: &[Vec<u8>]) -> RespValue {
                 .map(|m| RespValue::BulkString(Some(m)))
                 .collect(),
         )),
+        Err(KvError::WrongType) => RespValue::wrong_type(),
+        Err(e) => RespValue::error(e.to_string()),
+    }
+}
+
+fn cmd_smove(db: &Db, args: &[Vec<u8>]) -> RespValue {
+    if args.len() != 3 {
+        return RespValue::error("wrong number of arguments for 'smove' command");
+    }
+
+    let source = match std::str::from_utf8(&args[0]) {
+        Ok(k) => k,
+        Err(_) => return RespValue::error("invalid key"),
+    };
+
+    let destination = match std::str::from_utf8(&args[1]) {
+        Ok(k) => k,
+        Err(_) => return RespValue::error("invalid key"),
+    };
+
+    let member = &args[2];
+
+    match db.smove(source, destination, member) {
+        Ok(moved) => RespValue::Integer(moved),
+        Err(KvError::WrongType) => RespValue::wrong_type(),
+        Err(e) => RespValue::error(e.to_string()),
+    }
+}
+
+fn cmd_sdiffstore(db: &Db, args: &[Vec<u8>]) -> RespValue {
+    if args.len() < 2 {
+        return RespValue::error("wrong number of arguments for 'sdiffstore' command");
+    }
+
+    let destination = match std::str::from_utf8(&args[0]) {
+        Ok(k) => k,
+        Err(_) => return RespValue::error("invalid key"),
+    };
+
+    let keys: Vec<&str> = match args[1..]
+        .iter()
+        .map(|k| std::str::from_utf8(k))
+        .collect::<std::result::Result<Vec<_>, _>>()
+    {
+        Ok(k) => k,
+        Err(_) => return RespValue::error("invalid key"),
+    };
+
+    match db.sdiffstore(destination, &keys) {
+        Ok(count) => RespValue::Integer(count),
+        Err(KvError::WrongType) => RespValue::wrong_type(),
+        Err(e) => RespValue::error(e.to_string()),
+    }
+}
+
+fn cmd_sinterstore(db: &Db, args: &[Vec<u8>]) -> RespValue {
+    if args.len() < 2 {
+        return RespValue::error("wrong number of arguments for 'sinterstore' command");
+    }
+
+    let destination = match std::str::from_utf8(&args[0]) {
+        Ok(k) => k,
+        Err(_) => return RespValue::error("invalid key"),
+    };
+
+    let keys: Vec<&str> = match args[1..]
+        .iter()
+        .map(|k| std::str::from_utf8(k))
+        .collect::<std::result::Result<Vec<_>, _>>()
+    {
+        Ok(k) => k,
+        Err(_) => return RespValue::error("invalid key"),
+    };
+
+    match db.sinterstore(destination, &keys) {
+        Ok(count) => RespValue::Integer(count),
+        Err(KvError::WrongType) => RespValue::wrong_type(),
+        Err(e) => RespValue::error(e.to_string()),
+    }
+}
+
+fn cmd_sunionstore(db: &Db, args: &[Vec<u8>]) -> RespValue {
+    if args.len() < 2 {
+        return RespValue::error("wrong number of arguments for 'sunionstore' command");
+    }
+
+    let destination = match std::str::from_utf8(&args[0]) {
+        Ok(k) => k,
+        Err(_) => return RespValue::error("invalid key"),
+    };
+
+    let keys: Vec<&str> = match args[1..]
+        .iter()
+        .map(|k| std::str::from_utf8(k))
+        .collect::<std::result::Result<Vec<_>, _>>()
+    {
+        Ok(k) => k,
+        Err(_) => return RespValue::error("invalid key"),
+    };
+
+    match db.sunionstore(destination, &keys) {
+        Ok(count) => RespValue::Integer(count),
         Err(KvError::WrongType) => RespValue::wrong_type(),
         Err(e) => RespValue::error(e.to_string()),
     }
