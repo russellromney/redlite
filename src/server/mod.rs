@@ -472,6 +472,14 @@ async fn execute_command(
         "KEYINFO" => cmd_keyinfo(db, cmd_args),
         "AUTOVACUUM" => cmd_autovacuum(db, cmd_args),
         "HISTORY" => cmd_history(db, cmd_args),
+        "FTS" => cmd_fts(db, cmd_args),
+        // Vector commands (Session 24.2)
+        "VECTOR" => cmd_vector(db, cmd_args),
+        "VADD" => cmd_vadd(db, cmd_args),
+        "VGET" => cmd_vget(db, cmd_args),
+        "VDEL" => cmd_vdel(db, cmd_args),
+        "VCOUNT" => cmd_vcount(db, cmd_args),
+        "VSEARCH" => cmd_vsearch(db, cmd_args),
         // Stream commands
         "XADD" => cmd_xadd(db, cmd_args),
         "XLEN" => cmd_xlen(db, cmd_args),
@@ -3155,6 +3163,724 @@ fn cmd_history(db: &Db, args: &[Vec<u8>]) -> RespValue {
     }
 }
 
+// --- Session 24.1: FTS command handlers ---
+
+fn cmd_fts(db: &Db, args: &[Vec<u8>]) -> RespValue {
+    if args.is_empty() {
+        return RespValue::error("FTS subcommand required (ENABLE|DISABLE|SEARCH|INFO|REINDEX)");
+    }
+
+    let subcommand = match std::str::from_utf8(&args[0]) {
+        Ok(s) => s.to_uppercase(),
+        Err(_) => return RespValue::error("invalid subcommand"),
+    };
+
+    match subcommand.as_str() {
+        "ENABLE" => {
+            if args.len() < 2 {
+                return RespValue::error("FTS ENABLE requires level (GLOBAL|DATABASE|PATTERN|KEY)");
+            }
+
+            let level = match std::str::from_utf8(&args[1]) {
+                Ok(s) => s.to_uppercase(),
+                Err(_) => return RespValue::error("invalid level"),
+            };
+
+            match level.as_str() {
+                "GLOBAL" => {
+                    if let Err(e) = db.fts_enable_global() {
+                        return RespValue::error(format!("FTS enable failed: {}", e));
+                    }
+                    RespValue::ok()
+                }
+                "DATABASE" => {
+                    if args.len() < 3 {
+                        return RespValue::error("FTS ENABLE DATABASE requires database number");
+                    }
+                    let db_num: i32 = match std::str::from_utf8(&args[2])
+                        .ok()
+                        .and_then(|s| s.parse().ok())
+                    {
+                        Some(n) => n,
+                        None => return RespValue::error("database number must be an integer"),
+                    };
+                    if let Err(e) = db.fts_enable_database(db_num) {
+                        return RespValue::error(format!("FTS enable failed: {}", e));
+                    }
+                    RespValue::ok()
+                }
+                "PATTERN" => {
+                    if args.len() < 3 {
+                        return RespValue::error("FTS ENABLE PATTERN requires pattern");
+                    }
+                    let pattern = match std::str::from_utf8(&args[2]) {
+                        Ok(p) => p,
+                        Err(_) => return RespValue::error("invalid pattern"),
+                    };
+                    if let Err(e) = db.fts_enable_pattern(pattern) {
+                        return RespValue::error(format!("FTS enable failed: {}", e));
+                    }
+                    RespValue::ok()
+                }
+                "KEY" => {
+                    if args.len() < 3 {
+                        return RespValue::error("FTS ENABLE KEY requires key name");
+                    }
+                    let key = match std::str::from_utf8(&args[2]) {
+                        Ok(k) => k,
+                        Err(_) => return RespValue::error("invalid key"),
+                    };
+                    if let Err(e) = db.fts_enable_key(key) {
+                        return RespValue::error(format!("FTS enable failed: {}", e));
+                    }
+                    RespValue::ok()
+                }
+                _ => RespValue::error("level must be GLOBAL, DATABASE, PATTERN, or KEY"),
+            }
+        }
+        "DISABLE" => {
+            if args.len() < 2 {
+                return RespValue::error("FTS DISABLE requires level (GLOBAL|DATABASE|PATTERN|KEY)");
+            }
+
+            let level = match std::str::from_utf8(&args[1]) {
+                Ok(s) => s.to_uppercase(),
+                Err(_) => return RespValue::error("invalid level"),
+            };
+
+            match level.as_str() {
+                "GLOBAL" => {
+                    if let Err(e) = db.fts_disable_global() {
+                        return RespValue::error(format!("FTS disable failed: {}", e));
+                    }
+                    RespValue::ok()
+                }
+                "DATABASE" => {
+                    if args.len() < 3 {
+                        return RespValue::error("FTS DISABLE DATABASE requires database number");
+                    }
+                    let db_num: i32 = match std::str::from_utf8(&args[2])
+                        .ok()
+                        .and_then(|s| s.parse().ok())
+                    {
+                        Some(n) => n,
+                        None => return RespValue::error("database number must be an integer"),
+                    };
+                    if let Err(e) = db.fts_disable_database(db_num) {
+                        return RespValue::error(format!("FTS disable failed: {}", e));
+                    }
+                    RespValue::ok()
+                }
+                "PATTERN" => {
+                    if args.len() < 3 {
+                        return RespValue::error("FTS DISABLE PATTERN requires pattern");
+                    }
+                    let pattern = match std::str::from_utf8(&args[2]) {
+                        Ok(p) => p,
+                        Err(_) => return RespValue::error("invalid pattern"),
+                    };
+                    if let Err(e) = db.fts_disable_pattern(pattern) {
+                        return RespValue::error(format!("FTS disable failed: {}", e));
+                    }
+                    RespValue::ok()
+                }
+                "KEY" => {
+                    if args.len() < 3 {
+                        return RespValue::error("FTS DISABLE KEY requires key name");
+                    }
+                    let key = match std::str::from_utf8(&args[2]) {
+                        Ok(k) => k,
+                        Err(_) => return RespValue::error("invalid key"),
+                    };
+                    if let Err(e) = db.fts_disable_key(key) {
+                        return RespValue::error(format!("FTS disable failed: {}", e));
+                    }
+                    RespValue::ok()
+                }
+                _ => RespValue::error("level must be GLOBAL, DATABASE, PATTERN, or KEY"),
+            }
+        }
+        "SEARCH" => {
+            if args.len() < 2 {
+                return RespValue::error("FTS SEARCH requires query");
+            }
+            let query = match std::str::from_utf8(&args[1]) {
+                Ok(q) => q,
+                Err(_) => return RespValue::error("invalid query"),
+            };
+
+            // Parse optional LIMIT and HIGHLIGHT
+            let mut limit: Option<i64> = None;
+            let mut highlight = false;
+            let mut i = 2;
+            while i < args.len() {
+                let arg = match std::str::from_utf8(&args[i]) {
+                    Ok(s) => s.to_uppercase(),
+                    Err(_) => {
+                        i += 1;
+                        continue;
+                    }
+                };
+                match arg.as_str() {
+                    "LIMIT" => {
+                        if i + 1 < args.len() {
+                            limit = std::str::from_utf8(&args[i + 1])
+                                .ok()
+                                .and_then(|s| s.parse().ok());
+                            i += 2;
+                        } else {
+                            i += 1;
+                        }
+                    }
+                    "HIGHLIGHT" => {
+                        highlight = true;
+                        i += 1;
+                    }
+                    _ => i += 1,
+                }
+            }
+
+            match db.fts_search(query, limit, highlight) {
+                Ok(results) => {
+                    let resp_results: Vec<RespValue> = results
+                        .into_iter()
+                        .map(|r| {
+                            let mut entry = vec![
+                                RespValue::BulkString(Some(b"key".to_vec())),
+                                RespValue::BulkString(Some(r.key.as_bytes().to_vec())),
+                                RespValue::BulkString(Some(b"rank".to_vec())),
+                                RespValue::BulkString(Some(r.rank.to_string().as_bytes().to_vec())),
+                            ];
+                            if let Some(snippet) = r.snippet {
+                                entry.push(RespValue::BulkString(Some(b"snippet".to_vec())));
+                                entry.push(RespValue::BulkString(Some(snippet.as_bytes().to_vec())));
+                            }
+                            RespValue::Array(Some(entry))
+                        })
+                        .collect();
+                    RespValue::Array(Some(resp_results))
+                }
+                Err(e) => RespValue::error(format!("FTS search failed: {}", e)),
+            }
+        }
+        "INFO" => {
+            match db.fts_info() {
+                Ok(stats) => {
+                    let configs: Vec<RespValue> = stats
+                        .configs
+                        .iter()
+                        .map(|c| {
+                            RespValue::Array(Some(vec![
+                                RespValue::BulkString(Some(b"level".to_vec())),
+                                RespValue::BulkString(Some(c.level.as_str().as_bytes().to_vec())),
+                                RespValue::BulkString(Some(b"target".to_vec())),
+                                RespValue::BulkString(Some(c.target.as_bytes().to_vec())),
+                                RespValue::BulkString(Some(b"enabled".to_vec())),
+                                RespValue::Integer(if c.enabled { 1 } else { 0 }),
+                            ]))
+                        })
+                        .collect();
+
+                    RespValue::Array(Some(vec![
+                        RespValue::BulkString(Some(b"indexed_keys".to_vec())),
+                        RespValue::Integer(stats.indexed_keys),
+                        RespValue::BulkString(Some(b"storage_bytes".to_vec())),
+                        RespValue::Integer(stats.storage_bytes),
+                        RespValue::BulkString(Some(b"configs".to_vec())),
+                        RespValue::Array(Some(configs)),
+                    ]))
+                }
+                Err(e) => RespValue::error(format!("FTS info failed: {}", e)),
+            }
+        }
+        "REINDEX" => {
+            if args.len() < 2 {
+                return RespValue::error("FTS REINDEX requires key");
+            }
+            let key = match std::str::from_utf8(&args[1]) {
+                Ok(k) => k,
+                Err(_) => return RespValue::error("invalid key"),
+            };
+
+            match db.fts_reindex_key(key) {
+                Ok(reindexed) => {
+                    if reindexed {
+                        RespValue::ok()
+                    } else {
+                        RespValue::Integer(0)
+                    }
+                }
+                Err(e) => RespValue::error(format!("FTS reindex failed: {}", e)),
+            }
+        }
+        _ => RespValue::error(format!("unknown FTS subcommand '{}'. Use ENABLE|DISABLE|SEARCH|INFO|REINDEX", subcommand)),
+    }
+}
+
+// --- Session 24.2: Vector command handlers (feature-gated) ---
+
+#[cfg(feature = "vectors")]
+fn cmd_vector(db: &Db, args: &[Vec<u8>]) -> RespValue {
+    if args.is_empty() {
+        return RespValue::error("VECTOR subcommand required (ENABLE|DISABLE|INFO)");
+    }
+
+    let subcommand = match std::str::from_utf8(&args[0]) {
+        Ok(s) => s.to_uppercase(),
+        Err(_) => return RespValue::error("invalid subcommand"),
+    };
+
+    match subcommand.as_str() {
+        "ENABLE" => {
+            if args.len() < 3 {
+                return RespValue::error("VECTOR ENABLE requires level (GLOBAL|DATABASE|PATTERN|KEY) and dimensions");
+            }
+
+            let level = match std::str::from_utf8(&args[1]) {
+                Ok(s) => s.to_uppercase(),
+                Err(_) => return RespValue::error("invalid level"),
+            };
+
+            match level.as_str() {
+                "GLOBAL" => {
+                    let dimensions: i32 = match std::str::from_utf8(&args[2])
+                        .ok()
+                        .and_then(|s| s.parse().ok())
+                    {
+                        Some(d) => d,
+                        None => return RespValue::error("dimensions must be a positive integer"),
+                    };
+                    if let Err(e) = db.vector_enable_global(dimensions) {
+                        return RespValue::error(format!("VECTOR enable failed: {}", e));
+                    }
+                    RespValue::ok()
+                }
+                "DATABASE" => {
+                    if args.len() < 4 {
+                        return RespValue::error("VECTOR ENABLE DATABASE requires database number and dimensions");
+                    }
+                    let db_num: i32 = match std::str::from_utf8(&args[2])
+                        .ok()
+                        .and_then(|s| s.parse().ok())
+                    {
+                        Some(n) => n,
+                        None => return RespValue::error("database number must be an integer"),
+                    };
+                    let dimensions: i32 = match std::str::from_utf8(&args[3])
+                        .ok()
+                        .and_then(|s| s.parse().ok())
+                    {
+                        Some(d) => d,
+                        None => return RespValue::error("dimensions must be a positive integer"),
+                    };
+                    if let Err(e) = db.vector_enable_database(db_num, dimensions) {
+                        return RespValue::error(format!("VECTOR enable failed: {}", e));
+                    }
+                    RespValue::ok()
+                }
+                "PATTERN" => {
+                    if args.len() < 4 {
+                        return RespValue::error("VECTOR ENABLE PATTERN requires pattern and dimensions");
+                    }
+                    let pattern = match std::str::from_utf8(&args[2]) {
+                        Ok(p) => p,
+                        Err(_) => return RespValue::error("invalid pattern"),
+                    };
+                    let dimensions: i32 = match std::str::from_utf8(&args[3])
+                        .ok()
+                        .and_then(|s| s.parse().ok())
+                    {
+                        Some(d) => d,
+                        None => return RespValue::error("dimensions must be a positive integer"),
+                    };
+                    if let Err(e) = db.vector_enable_pattern(pattern, dimensions) {
+                        return RespValue::error(format!("VECTOR enable failed: {}", e));
+                    }
+                    RespValue::ok()
+                }
+                "KEY" => {
+                    if args.len() < 4 {
+                        return RespValue::error("VECTOR ENABLE KEY requires key name and dimensions");
+                    }
+                    let key = match std::str::from_utf8(&args[2]) {
+                        Ok(k) => k,
+                        Err(_) => return RespValue::error("invalid key"),
+                    };
+                    let dimensions: i32 = match std::str::from_utf8(&args[3])
+                        .ok()
+                        .and_then(|s| s.parse().ok())
+                    {
+                        Some(d) => d,
+                        None => return RespValue::error("dimensions must be a positive integer"),
+                    };
+                    if let Err(e) = db.vector_enable_key(key, dimensions) {
+                        return RespValue::error(format!("VECTOR enable failed: {}", e));
+                    }
+                    RespValue::ok()
+                }
+                _ => RespValue::error("level must be GLOBAL, DATABASE, PATTERN, or KEY"),
+            }
+        }
+        "DISABLE" => {
+            if args.len() < 2 {
+                return RespValue::error("VECTOR DISABLE requires level (GLOBAL|DATABASE|PATTERN|KEY)");
+            }
+
+            let level = match std::str::from_utf8(&args[1]) {
+                Ok(s) => s.to_uppercase(),
+                Err(_) => return RespValue::error("invalid level"),
+            };
+
+            match level.as_str() {
+                "GLOBAL" => {
+                    if let Err(e) = db.vector_disable_global() {
+                        return RespValue::error(format!("VECTOR disable failed: {}", e));
+                    }
+                    RespValue::ok()
+                }
+                "DATABASE" => {
+                    if args.len() < 3 {
+                        return RespValue::error("VECTOR DISABLE DATABASE requires database number");
+                    }
+                    let db_num: i32 = match std::str::from_utf8(&args[2])
+                        .ok()
+                        .and_then(|s| s.parse().ok())
+                    {
+                        Some(n) => n,
+                        None => return RespValue::error("database number must be an integer"),
+                    };
+                    if let Err(e) = db.vector_disable_database(db_num) {
+                        return RespValue::error(format!("VECTOR disable failed: {}", e));
+                    }
+                    RespValue::ok()
+                }
+                "PATTERN" => {
+                    if args.len() < 3 {
+                        return RespValue::error("VECTOR DISABLE PATTERN requires pattern");
+                    }
+                    let pattern = match std::str::from_utf8(&args[2]) {
+                        Ok(p) => p,
+                        Err(_) => return RespValue::error("invalid pattern"),
+                    };
+                    if let Err(e) = db.vector_disable_pattern(pattern) {
+                        return RespValue::error(format!("VECTOR disable failed: {}", e));
+                    }
+                    RespValue::ok()
+                }
+                "KEY" => {
+                    if args.len() < 3 {
+                        return RespValue::error("VECTOR DISABLE KEY requires key name");
+                    }
+                    let key = match std::str::from_utf8(&args[2]) {
+                        Ok(k) => k,
+                        Err(_) => return RespValue::error("invalid key"),
+                    };
+                    if let Err(e) = db.vector_disable_key(key) {
+                        return RespValue::error(format!("VECTOR disable failed: {}", e));
+                    }
+                    RespValue::ok()
+                }
+                _ => RespValue::error("level must be GLOBAL, DATABASE, PATTERN, or KEY"),
+            }
+        }
+        "INFO" => {
+            match db.vector_info() {
+                Ok(stats) => {
+                    let configs: Vec<RespValue> = stats
+                        .configs
+                        .iter()
+                        .map(|c| {
+                            RespValue::Array(Some(vec![
+                                RespValue::BulkString(Some(b"level".to_vec())),
+                                RespValue::BulkString(Some(c.level.as_str().as_bytes().to_vec())),
+                                RespValue::BulkString(Some(b"target".to_vec())),
+                                RespValue::BulkString(Some(c.target.as_bytes().to_vec())),
+                                RespValue::BulkString(Some(b"enabled".to_vec())),
+                                RespValue::Integer(if c.enabled { 1 } else { 0 }),
+                                RespValue::BulkString(Some(b"dimensions".to_vec())),
+                                RespValue::Integer(c.dimensions as i64),
+                            ]))
+                        })
+                        .collect();
+
+                    RespValue::Array(Some(vec![
+                        RespValue::BulkString(Some(b"total_vectors".to_vec())),
+                        RespValue::Integer(stats.total_vectors),
+                        RespValue::BulkString(Some(b"total_keys".to_vec())),
+                        RespValue::Integer(stats.total_keys),
+                        RespValue::BulkString(Some(b"storage_bytes".to_vec())),
+                        RespValue::Integer(stats.storage_bytes),
+                        RespValue::BulkString(Some(b"configs".to_vec())),
+                        RespValue::Array(Some(configs)),
+                    ]))
+                }
+                Err(e) => RespValue::error(format!("VECTOR info failed: {}", e)),
+            }
+        }
+        _ => RespValue::error(format!("unknown VECTOR subcommand '{}'. Use ENABLE|DISABLE|INFO", subcommand)),
+    }
+}
+
+#[cfg(not(feature = "vectors"))]
+fn cmd_vector(_db: &Db, _args: &[Vec<u8>]) -> RespValue {
+    RespValue::error("vectors feature not enabled. Compile with --features vectors")
+}
+
+#[cfg(feature = "vectors")]
+fn cmd_vadd(db: &Db, args: &[Vec<u8>]) -> RespValue {
+    // VADD key vector_id embedding... [METADATA json]
+    if args.len() < 3 {
+        return RespValue::error("wrong number of arguments for 'vadd' command");
+    }
+
+    let key = match std::str::from_utf8(&args[0]) {
+        Ok(k) => k,
+        Err(_) => return RespValue::error("invalid key"),
+    };
+
+    let vector_id = match std::str::from_utf8(&args[1]) {
+        Ok(v) => v,
+        Err(_) => return RespValue::error("invalid vector_id"),
+    };
+
+    // Parse embedding values and optional metadata
+    let mut embedding: Vec<f32> = Vec::new();
+    let mut metadata: Option<&str> = None;
+    let mut i = 2;
+
+    while i < args.len() {
+        let arg = match std::str::from_utf8(&args[i]) {
+            Ok(s) => s,
+            Err(_) => return RespValue::error("invalid argument"),
+        };
+
+        if arg.to_uppercase() == "METADATA" {
+            if i + 1 < args.len() {
+                metadata = match std::str::from_utf8(&args[i + 1]) {
+                    Ok(m) => Some(m),
+                    Err(_) => return RespValue::error("invalid metadata"),
+                };
+                i += 2;
+            } else {
+                return RespValue::error("METADATA requires a value");
+            }
+        } else {
+            // Parse as float
+            match arg.parse::<f32>() {
+                Ok(f) => embedding.push(f),
+                Err(_) => return RespValue::error(format!("invalid float value: {}", arg)),
+            }
+            i += 1;
+        }
+    }
+
+    if embedding.is_empty() {
+        return RespValue::error("embedding vector cannot be empty");
+    }
+
+    match db.vadd(key, vector_id, &embedding, metadata) {
+        Ok(added) => RespValue::Integer(if added { 1 } else { 0 }),
+        Err(e) => RespValue::error(format!("VADD failed: {}", e)),
+    }
+}
+
+#[cfg(not(feature = "vectors"))]
+fn cmd_vadd(_db: &Db, _args: &[Vec<u8>]) -> RespValue {
+    RespValue::error("vectors feature not enabled. Compile with --features vectors")
+}
+
+#[cfg(feature = "vectors")]
+fn cmd_vget(db: &Db, args: &[Vec<u8>]) -> RespValue {
+    // VGET key vector_id
+    if args.len() < 2 {
+        return RespValue::error("wrong number of arguments for 'vget' command");
+    }
+
+    let key = match std::str::from_utf8(&args[0]) {
+        Ok(k) => k,
+        Err(_) => return RespValue::error("invalid key"),
+    };
+
+    let vector_id = match std::str::from_utf8(&args[1]) {
+        Ok(v) => v,
+        Err(_) => return RespValue::error("invalid vector_id"),
+    };
+
+    match db.vget(key, vector_id) {
+        Ok(Some(entry)) => {
+            let embedding_str: Vec<RespValue> = entry
+                .embedding
+                .iter()
+                .map(|f| RespValue::BulkString(Some(f.to_string().as_bytes().to_vec())))
+                .collect();
+
+            let mut result = vec![
+                RespValue::BulkString(Some(b"vector_id".to_vec())),
+                RespValue::BulkString(Some(entry.vector_id.as_bytes().to_vec())),
+                RespValue::BulkString(Some(b"dimensions".to_vec())),
+                RespValue::Integer(entry.dimensions as i64),
+                RespValue::BulkString(Some(b"embedding".to_vec())),
+                RespValue::Array(Some(embedding_str)),
+            ];
+
+            if let Some(meta) = entry.metadata {
+                result.push(RespValue::BulkString(Some(b"metadata".to_vec())));
+                result.push(RespValue::BulkString(Some(meta.as_bytes().to_vec())));
+            }
+
+            RespValue::Array(Some(result))
+        }
+        Ok(None) => RespValue::null(),
+        Err(e) => RespValue::error(format!("VGET failed: {}", e)),
+    }
+}
+
+#[cfg(not(feature = "vectors"))]
+fn cmd_vget(_db: &Db, _args: &[Vec<u8>]) -> RespValue {
+    RespValue::error("vectors feature not enabled. Compile with --features vectors")
+}
+
+#[cfg(feature = "vectors")]
+fn cmd_vdel(db: &Db, args: &[Vec<u8>]) -> RespValue {
+    // VDEL key vector_id
+    if args.len() < 2 {
+        return RespValue::error("wrong number of arguments for 'vdel' command");
+    }
+
+    let key = match std::str::from_utf8(&args[0]) {
+        Ok(k) => k,
+        Err(_) => return RespValue::error("invalid key"),
+    };
+
+    let vector_id = match std::str::from_utf8(&args[1]) {
+        Ok(v) => v,
+        Err(_) => return RespValue::error("invalid vector_id"),
+    };
+
+    match db.vdel(key, vector_id) {
+        Ok(deleted) => RespValue::Integer(if deleted { 1 } else { 0 }),
+        Err(e) => RespValue::error(format!("VDEL failed: {}", e)),
+    }
+}
+
+#[cfg(not(feature = "vectors"))]
+fn cmd_vdel(_db: &Db, _args: &[Vec<u8>]) -> RespValue {
+    RespValue::error("vectors feature not enabled. Compile with --features vectors")
+}
+
+#[cfg(feature = "vectors")]
+fn cmd_vcount(db: &Db, args: &[Vec<u8>]) -> RespValue {
+    // VCOUNT key
+    if args.is_empty() {
+        return RespValue::error("wrong number of arguments for 'vcount' command");
+    }
+
+    let key = match std::str::from_utf8(&args[0]) {
+        Ok(k) => k,
+        Err(_) => return RespValue::error("invalid key"),
+    };
+
+    match db.vcount(key) {
+        Ok(count) => RespValue::Integer(count),
+        Err(e) => RespValue::error(format!("VCOUNT failed: {}", e)),
+    }
+}
+
+#[cfg(not(feature = "vectors"))]
+fn cmd_vcount(_db: &Db, _args: &[Vec<u8>]) -> RespValue {
+    RespValue::error("vectors feature not enabled. Compile with --features vectors")
+}
+
+#[cfg(feature = "vectors")]
+fn cmd_vsearch(db: &Db, args: &[Vec<u8>]) -> RespValue {
+    use crate::types::DistanceMetric;
+
+    // VSEARCH key K vector... [METRIC L2|COSINE|IP]
+    if args.len() < 3 {
+        return RespValue::error("wrong number of arguments for 'vsearch' command");
+    }
+
+    let key = match std::str::from_utf8(&args[0]) {
+        Ok(k) => k,
+        Err(_) => return RespValue::error("invalid key"),
+    };
+
+    let k: i64 = match std::str::from_utf8(&args[1])
+        .ok()
+        .and_then(|s| s.parse().ok())
+    {
+        Some(k) => k,
+        None => return RespValue::error("K must be a positive integer"),
+    };
+
+    // Parse query vector and optional metric
+    let mut query_vector: Vec<f32> = Vec::new();
+    let mut metric = DistanceMetric::L2;
+    let mut i = 2;
+
+    while i < args.len() {
+        let arg = match std::str::from_utf8(&args[i]) {
+            Ok(s) => s,
+            Err(_) => return RespValue::error("invalid argument"),
+        };
+
+        if arg.to_uppercase() == "METRIC" {
+            if i + 1 < args.len() {
+                let metric_str = match std::str::from_utf8(&args[i + 1]) {
+                    Ok(m) => m,
+                    Err(_) => return RespValue::error("invalid metric"),
+                };
+                metric = match DistanceMetric::from_str(metric_str) {
+                    Some(m) => m,
+                    None => return RespValue::error("metric must be L2, COSINE, or IP"),
+                };
+                i += 2;
+            } else {
+                return RespValue::error("METRIC requires a value");
+            }
+        } else {
+            // Parse as float
+            match arg.parse::<f32>() {
+                Ok(f) => query_vector.push(f),
+                Err(_) => return RespValue::error(format!("invalid float value: {}", arg)),
+            }
+            i += 1;
+        }
+    }
+
+    if query_vector.is_empty() {
+        return RespValue::error("query vector cannot be empty");
+    }
+
+    match db.vsearch(key, &query_vector, k, metric) {
+        Ok(results) => {
+            let resp_results: Vec<RespValue> = results
+                .into_iter()
+                .map(|r| {
+                    let mut entry = vec![
+                        RespValue::BulkString(Some(b"vector_id".to_vec())),
+                        RespValue::BulkString(Some(r.vector_id.as_bytes().to_vec())),
+                        RespValue::BulkString(Some(b"distance".to_vec())),
+                        RespValue::BulkString(Some(r.distance.to_string().as_bytes().to_vec())),
+                    ];
+                    if let Some(meta) = r.metadata {
+                        entry.push(RespValue::BulkString(Some(b"metadata".to_vec())));
+                        entry.push(RespValue::BulkString(Some(meta.as_bytes().to_vec())));
+                    }
+                    RespValue::Array(Some(entry))
+                })
+                .collect();
+            RespValue::Array(Some(resp_results))
+        }
+        Err(e) => RespValue::error(format!("VSEARCH failed: {}", e)),
+    }
+}
+
+#[cfg(not(feature = "vectors"))]
+fn cmd_vsearch(_db: &Db, _args: &[Vec<u8>]) -> RespValue {
+    RespValue::error("vectors feature not enabled. Compile with --features vectors")
+}
+
 // --- Session 13: Stream command handlers ---
 
 fn cmd_xadd(db: &Db, args: &[Vec<u8>]) -> RespValue {
@@ -4534,6 +5260,14 @@ async fn execute_command_in_transaction(db: &mut Db, args: &[Vec<u8>]) -> RespVa
         "AUTOVACUUM" => cmd_autovacuum(db, cmd_args),
         "KEYINFO" => cmd_keyinfo(db, cmd_args),
         "HISTORY" => cmd_history(db, cmd_args),
+        "FTS" => cmd_fts(db, cmd_args),
+        // Vector commands (Session 24.2)
+        "VECTOR" => cmd_vector(db, cmd_args),
+        "VADD" => cmd_vadd(db, cmd_args),
+        "VGET" => cmd_vget(db, cmd_args),
+        "VDEL" => cmd_vdel(db, cmd_args),
+        "VCOUNT" => cmd_vcount(db, cmd_args),
+        "VSEARCH" => cmd_vsearch(db, cmd_args),
         // Stream commands
         "XADD" => cmd_xadd(db, cmd_args),
         "XLEN" => cmd_xlen(db, cmd_args),

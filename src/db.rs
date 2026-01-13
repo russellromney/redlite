@@ -6,7 +6,9 @@ use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use tokio::sync::broadcast;
 
 use crate::error::{KvError, Result};
-use crate::types::{ConsumerGroupInfo, ConsumerInfo, KeyInfo, KeyType, PendingEntry, PendingSummary, SetOptions, StreamEntry, StreamId, StreamInfo, ZMember, HistoryEntry, HistoryStats, RetentionType};
+use crate::types::{ConsumerGroupInfo, ConsumerInfo, KeyInfo, KeyType, PendingEntry, PendingSummary, SetOptions, StreamEntry, StreamId, StreamInfo, ZMember, HistoryEntry, HistoryStats, RetentionType, FtsLevel, FtsResult, FtsStats};
+#[cfg(feature = "vectors")]
+use crate::types::{VectorLevel, VectorEntry, VectorSearchResult, VectorStats, DistanceMetric};
 
 /// Default autovacuum interval in milliseconds (60 seconds)
 const DEFAULT_AUTOVACUUM_INTERVAL_MS: i64 = 60_000;
@@ -53,6 +55,78 @@ pub struct Db {
     selected_db: i32,
 }
 
+/// Simple glob pattern matching (supports *, ?, and [abc])
+fn glob_match(pattern: &str, text: &str) -> bool {
+    let mut text_idx = 0;
+    let mut pattern_idx = 0;
+    let text_bytes = text.as_bytes();
+    let pattern_bytes = pattern.as_bytes();
+
+    while pattern_idx < pattern_bytes.len() {
+        match pattern_bytes[pattern_idx] {
+            b'*' => {
+                // Skip consecutive '*'
+                while pattern_idx < pattern_bytes.len() && pattern_bytes[pattern_idx] == b'*' {
+                    pattern_idx += 1;
+                }
+                // If pattern ends with '*', it matches the rest
+                if pattern_idx >= pattern_bytes.len() {
+                    return true;
+                }
+                // Find next match position
+                let remaining_pattern = std::str::from_utf8(&pattern_bytes[pattern_idx..]).unwrap_or("");
+                while text_idx <= text_bytes.len() {
+                    if glob_match(remaining_pattern, &text[text_idx..]) {
+                        return true;
+                    }
+                    text_idx += 1;
+                }
+                return false;
+            }
+            b'?' => {
+                if text_idx >= text_bytes.len() {
+                    return false;
+                }
+                text_idx += 1;
+                pattern_idx += 1;
+            }
+            b'[' => {
+                if text_idx >= text_bytes.len() {
+                    return false;
+                }
+                pattern_idx += 1;
+                let mut matched = false;
+                let mut negated = false;
+                if pattern_idx < pattern_bytes.len() && pattern_bytes[pattern_idx] == b'^' {
+                    negated = true;
+                    pattern_idx += 1;
+                }
+                while pattern_idx < pattern_bytes.len() && pattern_bytes[pattern_idx] != b']' {
+                    if pattern_bytes[pattern_idx] == text_bytes[text_idx] {
+                        matched = true;
+                    }
+                    pattern_idx += 1;
+                }
+                if pattern_idx < pattern_bytes.len() {
+                    pattern_idx += 1; // Skip ']'
+                }
+                if matched == negated {
+                    return false;
+                }
+                text_idx += 1;
+            }
+            c => {
+                if text_idx >= text_bytes.len() || text_bytes[text_idx] != c {
+                    return false;
+                }
+                text_idx += 1;
+                pattern_idx += 1;
+            }
+        }
+    }
+    text_idx == text_bytes.len()
+}
+
 impl Db {
     /// Open or create a database at the given path
     pub fn open(path: &str) -> Result<Self> {
@@ -91,6 +165,86 @@ impl Db {
         Self::open(":memory:")
     }
 
+    /// Open a database with a specific cache size in MB.
+    ///
+    /// Larger cache = more reads served from RAM = faster.
+    /// Default is 64MB. Set to your available RAM for best performance.
+    ///
+    /// # Example
+    /// ```
+    /// use redlite::Db;
+    ///
+    /// // Use 1GB cache for high-performance reads
+    /// let db = Db::open_with_cache("mydata.db", 1024).unwrap();
+    ///
+    /// // Use 256MB cache
+    /// let db = Db::open_with_cache("mydata.db", 256).unwrap();
+    /// ```
+    pub fn open_with_cache(path: &str, cache_mb: i64) -> Result<Self> {
+        let conn = Connection::open(path)?;
+
+        // Base pragmas (WAL mode, etc.)
+        conn.execute_batch(
+            "PRAGMA journal_mode = WAL;
+             PRAGMA synchronous = NORMAL;
+             PRAGMA foreign_keys = ON;
+             PRAGMA busy_timeout = 5000;
+             PRAGMA temp_store = MEMORY;",
+        )?;
+
+        // Apply cache size (negative = KB, so multiply by 1000)
+        let cache_kb = cache_mb * 1000;
+        conn.execute(&format!("PRAGMA cache_size = -{};", cache_kb), [])?;
+
+        // Set mmap to 4x cache size (reasonable default)
+        let mmap_bytes = cache_mb * 4 * 1024 * 1024;
+        conn.execute(&format!("PRAGMA mmap_size = {};", mmap_bytes), [])?;
+
+        let core = Arc::new(DbCore {
+            conn: Mutex::new(conn),
+            autovacuum_enabled: AtomicBool::new(true),
+            last_cleanup: AtomicI64::new(0),
+            autovacuum_interval_ms: AtomicI64::new(DEFAULT_AUTOVACUUM_INTERVAL_MS),
+            notifier: RwLock::new(None),
+        });
+
+        let db = Self {
+            core,
+            selected_db: 0,
+        };
+
+        db.migrate()?;
+        Ok(db)
+    }
+
+    /// Set the cache size in MB at runtime.
+    ///
+    /// Larger cache = more reads served from RAM = faster.
+    ///
+    /// # Example
+    /// ```
+    /// use redlite::Db;
+    ///
+    /// let db = Db::open("mydata.db").unwrap();
+    /// db.set_cache_mb(1024); // Use 1GB cache
+    /// ```
+    pub fn set_cache_mb(&self, cache_mb: i64) -> Result<()> {
+        let conn = self.core.conn.lock().unwrap_or_else(|e| e.into_inner());
+        let cache_kb = cache_mb * 1000;
+        conn.execute(&format!("PRAGMA cache_size = -{};", cache_kb), [])?;
+        let mmap_bytes = cache_mb * 4 * 1024 * 1024;
+        conn.execute(&format!("PRAGMA mmap_size = {};", mmap_bytes), [])?;
+        Ok(())
+    }
+
+    /// Get current cache size in MB.
+    pub fn cache_mb(&self) -> Result<i64> {
+        let conn = self.core.conn.lock().unwrap_or_else(|e| e.into_inner());
+        let cache_size: i64 = conn.query_row("PRAGMA cache_size", [], |r| r.get(0))?;
+        // Negative means KB
+        Ok(if cache_size < 0 { -cache_size / 1000 } else { cache_size * 4 / 1000 })
+    }
+
     /// Create a new session sharing the same database backend.
     /// The new session starts at database 0.
     pub fn session(&self) -> Self {
@@ -105,6 +259,9 @@ impl Db {
         let conn = self.core.conn.lock().unwrap_or_else(|e| e.into_inner());
         conn.execute_batch(include_str!("schema.sql"))?;
         conn.execute_batch(include_str!("schema_history.sql"))?;
+        conn.execute_batch(include_str!("schema_fts.sql"))?;
+        #[cfg(feature = "vectors")]
+        conn.execute_batch(include_str!("schema_vectors.sql"))?;
 
         // Migration: Add version column to keys table if it doesn't exist
         // SQLite doesn't support ADD COLUMN IF NOT EXISTS, so we check first
@@ -321,6 +478,9 @@ impl Db {
         // Record history for SET operation
         let _ = self.record_history(db, key, "SET", None);
 
+        // Index for FTS if enabled
+        let _ = self.fts_index(key, value);
+
         Ok(true)
     }
 
@@ -356,9 +516,10 @@ impl Db {
         drop(stmt);
         drop(conn);
 
-        // Record history for each deleted key
+        // Record history and deindex FTS for each deleted key
         for key in keys {
             let _ = self.record_history(db, key, "DEL", None);
+            let _ = self.fts_deindex(key);
         }
 
         Ok(count as i64)
@@ -5969,6 +6130,888 @@ impl Db {
         )?;
 
         Ok(conn.changes() as i64)
+    }
+
+    // ===== Session 24.1: Full-Text Search =====
+
+    /// Enable FTS globally (all databases)
+    pub fn fts_enable_global(&self) -> Result<()> {
+        let conn = self.core.conn.lock().unwrap_or_else(|e| e.into_inner());
+        conn.execute(
+            "INSERT OR REPLACE INTO fts_settings (level, target, enabled) VALUES ('global', '*', 1)",
+            [],
+        )?;
+        Ok(())
+    }
+
+    /// Enable FTS for a specific database (0-15)
+    pub fn fts_enable_database(&self, db_num: i32) -> Result<()> {
+        if !(0..=15).contains(&db_num) {
+            return Err(KvError::SyntaxError);
+        }
+        let conn = self.core.conn.lock().unwrap_or_else(|e| e.into_inner());
+        conn.execute(
+            "INSERT OR REPLACE INTO fts_settings (level, target, enabled) VALUES ('database', ?, 1)",
+            params![db_num.to_string()],
+        )?;
+        Ok(())
+    }
+
+    /// Enable FTS for keys matching a glob pattern
+    pub fn fts_enable_pattern(&self, pattern: &str) -> Result<()> {
+        let conn = self.core.conn.lock().unwrap_or_else(|e| e.into_inner());
+        let target = format!("{}:{}", self.selected_db, pattern);
+        conn.execute(
+            "INSERT OR REPLACE INTO fts_settings (level, target, enabled) VALUES ('pattern', ?, 1)",
+            params![target],
+        )?;
+        Ok(())
+    }
+
+    /// Enable FTS for a specific key
+    pub fn fts_enable_key(&self, key: &str) -> Result<()> {
+        let conn = self.core.conn.lock().unwrap_or_else(|e| e.into_inner());
+        let target = format!("{}:{}", self.selected_db, key);
+        conn.execute(
+            "INSERT OR REPLACE INTO fts_settings (level, target, enabled) VALUES ('key', ?, 1)",
+            params![target],
+        )?;
+        Ok(())
+    }
+
+    /// Disable FTS globally
+    pub fn fts_disable_global(&self) -> Result<()> {
+        let conn = self.core.conn.lock().unwrap_or_else(|e| e.into_inner());
+        conn.execute(
+            "UPDATE fts_settings SET enabled = 0 WHERE level = 'global' AND target = '*'",
+            [],
+        )?;
+        Ok(())
+    }
+
+    /// Disable FTS for a specific database
+    pub fn fts_disable_database(&self, db_num: i32) -> Result<()> {
+        if !(0..=15).contains(&db_num) {
+            return Err(KvError::SyntaxError);
+        }
+        let conn = self.core.conn.lock().unwrap_or_else(|e| e.into_inner());
+        conn.execute(
+            "UPDATE fts_settings SET enabled = 0 WHERE level = 'database' AND target = ?",
+            params![db_num.to_string()],
+        )?;
+        Ok(())
+    }
+
+    /// Disable FTS for a specific pattern
+    pub fn fts_disable_pattern(&self, pattern: &str) -> Result<()> {
+        let conn = self.core.conn.lock().unwrap_or_else(|e| e.into_inner());
+        let target = format!("{}:{}", self.selected_db, pattern);
+        conn.execute(
+            "UPDATE fts_settings SET enabled = 0 WHERE level = 'pattern' AND target = ?",
+            params![target],
+        )?;
+        Ok(())
+    }
+
+    /// Disable FTS for a specific key
+    pub fn fts_disable_key(&self, key: &str) -> Result<()> {
+        let conn = self.core.conn.lock().unwrap_or_else(|e| e.into_inner());
+        let target = format!("{}:{}", self.selected_db, key);
+        conn.execute(
+            "UPDATE fts_settings SET enabled = 0 WHERE level = 'key' AND target = ?",
+            params![target],
+        )?;
+        Ok(())
+    }
+
+    /// Check if FTS is enabled for a specific key (four-tier lookup)
+    pub fn is_fts_enabled(&self, key: &str) -> Result<bool> {
+        let conn = self.core.conn.lock().unwrap_or_else(|e| e.into_inner());
+
+        // 1. Check key-level config
+        let key_target = format!("{}:{}", self.selected_db, key);
+        let key_enabled: Option<bool> = conn
+            .query_row(
+                "SELECT enabled FROM fts_settings WHERE level = 'key' AND target = ? LIMIT 1",
+                params![key_target],
+                |row| row.get(0),
+            )
+            .optional()?;
+
+        if let Some(enabled) = key_enabled {
+            return Ok(enabled);
+        }
+
+        // 2. Check pattern-level configs (match glob patterns)
+        let mut stmt = conn.prepare(
+            "SELECT target, enabled FROM fts_settings WHERE level = 'pattern' AND target LIKE ?"
+        )?;
+        let db_prefix = format!("{}:%", self.selected_db);
+        let patterns: Vec<(String, bool)> = stmt
+            .query_map(params![db_prefix], |row| {
+                Ok((row.get::<_, String>(0)?, row.get::<_, bool>(1)?))
+            })?
+            .filter_map(|r| r.ok())
+            .collect();
+
+        // Check if key matches any pattern (strip db prefix from target)
+        for (target, enabled) in patterns {
+            if let Some(pattern) = target.strip_prefix(&format!("{}:", self.selected_db)) {
+                if glob_match(pattern, key) {
+                    return Ok(enabled);
+                }
+            }
+        }
+
+        // 3. Check database-level config
+        let db_enabled: Option<bool> = conn
+            .query_row(
+                "SELECT enabled FROM fts_settings WHERE level = 'database' AND target = ? LIMIT 1",
+                params![self.selected_db.to_string()],
+                |row| row.get(0),
+            )
+            .optional()?;
+
+        if let Some(enabled) = db_enabled {
+            return Ok(enabled);
+        }
+
+        // 4. Fall back to global config
+        let global_enabled: Option<bool> = conn
+            .query_row(
+                "SELECT enabled FROM fts_settings WHERE level = 'global' AND target = '*' LIMIT 1",
+                params![],
+                |row| row.get(0),
+            )
+            .optional()?;
+
+        Ok(global_enabled.unwrap_or(false))
+    }
+
+    /// Index a key's content in FTS (internal, called on SET when FTS enabled)
+    pub fn fts_index(&self, key: &str, content: &[u8]) -> Result<()> {
+        // Only index if FTS is enabled for this key
+        if !self.is_fts_enabled(key)? {
+            return Ok(());
+        }
+
+        let conn = self.core.conn.lock().unwrap_or_else(|e| e.into_inner());
+
+        // Get or create key_id
+        let key_id: Option<i64> = conn
+            .query_row(
+                "SELECT id FROM keys WHERE db = ? AND key = ? LIMIT 1",
+                params![self.selected_db, key],
+                |row| row.get(0),
+            )
+            .optional()?;
+
+        let key_id = match key_id {
+            Some(id) => id,
+            None => return Ok(()), // Key doesn't exist yet, will be indexed on actual SET
+        };
+
+        // Convert content to string for FTS indexing
+        let content_str = String::from_utf8_lossy(content);
+
+        // Check if already indexed
+        let existing_rowid: Option<i64> = conn
+            .query_row(
+                "SELECT rowid FROM fts_keys WHERE db = ? AND key = ? LIMIT 1",
+                params![self.selected_db, key],
+                |row| row.get(0),
+            )
+            .optional()?;
+
+        if let Some(rowid) = existing_rowid {
+            // Update existing index
+            conn.execute(
+                "UPDATE fts SET key_text = ?, content = ? WHERE rowid = ?",
+                params![key, content_str.as_ref(), rowid],
+            )?;
+        } else {
+            // Insert new FTS entry
+            conn.execute(
+                "INSERT INTO fts (key_text, content) VALUES (?, ?)",
+                params![key, content_str.as_ref()],
+            )?;
+            let rowid = conn.last_insert_rowid();
+            // Map rowid to key_id
+            conn.execute(
+                "INSERT INTO fts_keys (rowid, key_id, db, key) VALUES (?, ?, ?, ?)",
+                params![rowid, key_id, self.selected_db, key],
+            )?;
+        }
+
+        Ok(())
+    }
+
+    /// Remove a key from the FTS index (called on DEL)
+    pub fn fts_deindex(&self, key: &str) -> Result<()> {
+        let conn = self.core.conn.lock().unwrap_or_else(|e| e.into_inner());
+
+        // Get rowid from fts_keys
+        let rowid: Option<i64> = conn
+            .query_row(
+                "SELECT rowid FROM fts_keys WHERE db = ? AND key = ? LIMIT 1",
+                params![self.selected_db, key],
+                |row| row.get(0),
+            )
+            .optional()?;
+
+        if let Some(rowid) = rowid {
+            // Delete from FTS (contentless, so just delete the metadata)
+            conn.execute("DELETE FROM fts WHERE rowid = ?", params![rowid])?;
+            conn.execute("DELETE FROM fts_keys WHERE rowid = ?", params![rowid])?;
+        }
+
+        Ok(())
+    }
+
+    /// Search FTS index
+    pub fn fts_search(&self, query: &str, limit: Option<i64>, highlight: bool) -> Result<Vec<FtsResult>> {
+        let conn = self.core.conn.lock().unwrap_or_else(|e| e.into_inner());
+        let limit = limit.unwrap_or(10);
+
+        let sql = if highlight {
+            // Use highlight() function for snippets
+            "SELECT fk.db, fk.key, s.value, bm25(fts) as rank,
+                    highlight(fts, 1, '<b>', '</b>') as snippet
+             FROM fts
+             JOIN fts_keys fk ON fts.rowid = fk.rowid
+             JOIN keys k ON fk.key_id = k.id
+             JOIN strings s ON k.id = s.key_id
+             WHERE fts MATCH ? AND fk.db = ?
+             ORDER BY rank
+             LIMIT ?"
+        } else {
+            "SELECT fk.db, fk.key, s.value, bm25(fts) as rank, NULL as snippet
+             FROM fts
+             JOIN fts_keys fk ON fts.rowid = fk.rowid
+             JOIN keys k ON fk.key_id = k.id
+             JOIN strings s ON k.id = s.key_id
+             WHERE fts MATCH ? AND fk.db = ?
+             ORDER BY rank
+             LIMIT ?"
+        };
+
+        let mut stmt = conn.prepare(sql)?;
+        let results: Vec<FtsResult> = stmt
+            .query_map(params![query, self.selected_db, limit], |row| {
+                let db: i32 = row.get(0)?;
+                let key: String = row.get(1)?;
+                let content: Vec<u8> = row.get(2)?;
+                let rank: f64 = row.get(3)?;
+                let snippet: Option<String> = row.get(4)?;
+                let mut result = FtsResult::new(db, key, content, rank);
+                result.snippet = snippet;
+                Ok(result)
+            })?
+            .filter_map(|r| r.ok())
+            .collect();
+
+        Ok(results)
+    }
+
+    /// Reindex a specific key (force re-indexing)
+    pub fn fts_reindex_key(&self, key: &str) -> Result<bool> {
+        // Get current value
+        let value = self.get(key)?;
+        if let Some(v) = value {
+            // Remove and re-add to FTS
+            self.fts_deindex(key)?;
+            // Temporarily force-enable for this operation
+            let conn = self.core.conn.lock().unwrap_or_else(|e| e.into_inner());
+
+            // Get key_id
+            let key_id: Option<i64> = conn
+                .query_row(
+                    "SELECT id FROM keys WHERE db = ? AND key = ? LIMIT 1",
+                    params![self.selected_db, key],
+                    |row| row.get(0),
+                )
+                .optional()?;
+
+            if let Some(key_id) = key_id {
+                let content_str = String::from_utf8_lossy(&v);
+                conn.execute(
+                    "INSERT INTO fts (key_text, content) VALUES (?, ?)",
+                    params![key, content_str.as_ref()],
+                )?;
+                let rowid = conn.last_insert_rowid();
+                conn.execute(
+                    "INSERT INTO fts_keys (rowid, key_id, db, key) VALUES (?, ?, ?, ?)",
+                    params![rowid, key_id, self.selected_db, key],
+                )?;
+                return Ok(true);
+            }
+        }
+        Ok(false)
+    }
+
+    /// Get FTS statistics
+    pub fn fts_info(&self) -> Result<FtsStats> {
+        let conn = self.core.conn.lock().unwrap_or_else(|e| e.into_inner());
+
+        // Count indexed keys in current database
+        let indexed_keys: i64 = conn.query_row(
+            "SELECT COUNT(*) FROM fts_keys WHERE db = ?",
+            params![self.selected_db],
+            |row| row.get(0),
+        )?;
+
+        // Get total tokens (approximate via FTS metadata if available)
+        // FTS5 doesn't expose token count directly, so we estimate
+        let total_tokens: i64 = 0; // Placeholder - would need custom implementation
+
+        // Get storage bytes (approximate)
+        let storage_bytes: i64 = conn.query_row(
+            "SELECT page_count * page_size FROM pragma_page_count(), pragma_page_size()",
+            [],
+            |row| row.get(0),
+        ).unwrap_or(0);
+
+        let mut stats = FtsStats::new(indexed_keys, total_tokens, storage_bytes);
+
+        // Get all FTS configs for current db
+        let mut stmt = conn.prepare(
+            "SELECT id, level, target, enabled, created_at FROM fts_settings ORDER BY level, target"
+        )?;
+        let configs: Vec<crate::types::FtsConfig> = stmt
+            .query_map([], |row| {
+                let id: i64 = row.get(0)?;
+                let level_str: String = row.get(1)?;
+                let target: String = row.get(2)?;
+                let enabled: bool = row.get(3)?;
+                let created_at: i64 = row.get(4)?;
+
+                let level = match level_str.as_str() {
+                    "global" => FtsLevel::Global,
+                    "database" => {
+                        let db_num: i32 = target.parse().unwrap_or(0);
+                        FtsLevel::Database(db_num)
+                    }
+                    "pattern" => FtsLevel::Pattern(target.clone()),
+                    "key" => FtsLevel::Key,
+                    _ => FtsLevel::Global,
+                };
+
+                Ok(crate::types::FtsConfig {
+                    id,
+                    level,
+                    target,
+                    enabled,
+                    created_at,
+                })
+            })?
+            .filter_map(|r| r.ok())
+            .collect();
+
+        stats.configs = configs;
+        Ok(stats)
+    }
+
+    // ============================================================================
+    // Vector Search Methods (Session 24.2) - Feature-gated
+    // ============================================================================
+
+    /// Enable vectors globally with specified dimensions
+    #[cfg(feature = "vectors")]
+    pub fn vector_enable_global(&self, dimensions: i32) -> Result<()> {
+        if dimensions <= 0 {
+            return Err(KvError::SyntaxError);
+        }
+        let conn = self.core.conn.lock().unwrap_or_else(|e| e.into_inner());
+        conn.execute(
+            "INSERT OR REPLACE INTO vector_settings (level, target, enabled, dimensions) VALUES ('global', '*', 1, ?)",
+            params![dimensions],
+        )?;
+        Ok(())
+    }
+
+    /// Enable vectors for a specific database (0-15) with specified dimensions
+    #[cfg(feature = "vectors")]
+    pub fn vector_enable_database(&self, db_num: i32, dimensions: i32) -> Result<()> {
+        if !(0..=15).contains(&db_num) || dimensions <= 0 {
+            return Err(KvError::SyntaxError);
+        }
+        let conn = self.core.conn.lock().unwrap_or_else(|e| e.into_inner());
+        conn.execute(
+            "INSERT OR REPLACE INTO vector_settings (level, target, enabled, dimensions) VALUES ('database', ?, 1, ?)",
+            params![db_num.to_string(), dimensions],
+        )?;
+        Ok(())
+    }
+
+    /// Enable vectors for keys matching a glob pattern with specified dimensions
+    #[cfg(feature = "vectors")]
+    pub fn vector_enable_pattern(&self, pattern: &str, dimensions: i32) -> Result<()> {
+        if dimensions <= 0 {
+            return Err(KvError::SyntaxError);
+        }
+        let conn = self.core.conn.lock().unwrap_or_else(|e| e.into_inner());
+        let target = format!("{}:{}", self.selected_db, pattern);
+        conn.execute(
+            "INSERT OR REPLACE INTO vector_settings (level, target, enabled, dimensions) VALUES ('pattern', ?, 1, ?)",
+            params![target, dimensions],
+        )?;
+        Ok(())
+    }
+
+    /// Enable vectors for a specific key with specified dimensions
+    #[cfg(feature = "vectors")]
+    pub fn vector_enable_key(&self, key: &str, dimensions: i32) -> Result<()> {
+        if dimensions <= 0 {
+            return Err(KvError::SyntaxError);
+        }
+        let conn = self.core.conn.lock().unwrap_or_else(|e| e.into_inner());
+        let target = format!("{}:{}", self.selected_db, key);
+        conn.execute(
+            "INSERT OR REPLACE INTO vector_settings (level, target, enabled, dimensions) VALUES ('key', ?, 1, ?)",
+            params![target, dimensions],
+        )?;
+        Ok(())
+    }
+
+    /// Disable vectors globally
+    #[cfg(feature = "vectors")]
+    pub fn vector_disable_global(&self) -> Result<()> {
+        let conn = self.core.conn.lock().unwrap_or_else(|e| e.into_inner());
+        conn.execute(
+            "UPDATE vector_settings SET enabled = 0 WHERE level = 'global' AND target = '*'",
+            [],
+        )?;
+        Ok(())
+    }
+
+    /// Disable vectors for a specific database
+    #[cfg(feature = "vectors")]
+    pub fn vector_disable_database(&self, db_num: i32) -> Result<()> {
+        if !(0..=15).contains(&db_num) {
+            return Err(KvError::SyntaxError);
+        }
+        let conn = self.core.conn.lock().unwrap_or_else(|e| e.into_inner());
+        conn.execute(
+            "UPDATE vector_settings SET enabled = 0 WHERE level = 'database' AND target = ?",
+            params![db_num.to_string()],
+        )?;
+        Ok(())
+    }
+
+    /// Disable vectors for a pattern
+    #[cfg(feature = "vectors")]
+    pub fn vector_disable_pattern(&self, pattern: &str) -> Result<()> {
+        let conn = self.core.conn.lock().unwrap_or_else(|e| e.into_inner());
+        let target = format!("{}:{}", self.selected_db, pattern);
+        conn.execute(
+            "UPDATE vector_settings SET enabled = 0 WHERE level = 'pattern' AND target = ?",
+            params![target],
+        )?;
+        Ok(())
+    }
+
+    /// Disable vectors for a specific key
+    #[cfg(feature = "vectors")]
+    pub fn vector_disable_key(&self, key: &str) -> Result<()> {
+        let conn = self.core.conn.lock().unwrap_or_else(|e| e.into_inner());
+        let target = format!("{}:{}", self.selected_db, key);
+        conn.execute(
+            "UPDATE vector_settings SET enabled = 0 WHERE level = 'key' AND target = ?",
+            params![target],
+        )?;
+        Ok(())
+    }
+
+    /// Check if vectors are enabled for a key, returns dimensions if enabled
+    #[cfg(feature = "vectors")]
+    pub fn is_vector_enabled(&self, key: &str) -> Result<Option<i32>> {
+        let conn = self.core.conn.lock().unwrap_or_else(|e| e.into_inner());
+
+        // 1. Check key-level config
+        let key_target = format!("{}:{}", self.selected_db, key);
+        let key_config: Option<(bool, i32)> = conn
+            .query_row(
+                "SELECT enabled, dimensions FROM vector_settings WHERE level = 'key' AND target = ? LIMIT 1",
+                params![key_target],
+                |row| Ok((row.get(0)?, row.get(1)?)),
+            )
+            .optional()?;
+
+        if let Some((enabled, dimensions)) = key_config {
+            return Ok(if enabled { Some(dimensions) } else { None });
+        }
+
+        // 2. Check pattern-level configs (match glob patterns)
+        let mut stmt = conn.prepare(
+            "SELECT target, enabled, dimensions FROM vector_settings WHERE level = 'pattern' AND target LIKE ?"
+        )?;
+        let db_prefix = format!("{}:%", self.selected_db);
+        let patterns: Vec<(String, bool, i32)> = stmt
+            .query_map(params![db_prefix], |row| {
+                Ok((row.get::<_, String>(0)?, row.get::<_, bool>(1)?, row.get::<_, i32>(2)?))
+            })?
+            .filter_map(|r| r.ok())
+            .collect();
+
+        // Check if key matches any pattern
+        for (target, enabled, dimensions) in patterns {
+            if let Some(pattern) = target.strip_prefix(&format!("{}:", self.selected_db)) {
+                if glob_match(pattern, key) {
+                    return Ok(if enabled { Some(dimensions) } else { None });
+                }
+            }
+        }
+
+        // 3. Check database-level config
+        let db_config: Option<(bool, i32)> = conn
+            .query_row(
+                "SELECT enabled, dimensions FROM vector_settings WHERE level = 'database' AND target = ? LIMIT 1",
+                params![self.selected_db.to_string()],
+                |row| Ok((row.get(0)?, row.get(1)?)),
+            )
+            .optional()?;
+
+        if let Some((enabled, dimensions)) = db_config {
+            return Ok(if enabled { Some(dimensions) } else { None });
+        }
+
+        // 4. Check global config
+        let global_config: Option<(bool, i32)> = conn
+            .query_row(
+                "SELECT enabled, dimensions FROM vector_settings WHERE level = 'global' AND target = '*' LIMIT 1",
+                params![],
+                |row| Ok((row.get(0)?, row.get(1)?)),
+            )
+            .optional()?;
+
+        if let Some((enabled, dimensions)) = global_config {
+            return Ok(if enabled { Some(dimensions) } else { None });
+        }
+
+        // No config found, vectors not enabled
+        Ok(None)
+    }
+
+    /// Add a vector to a key
+    #[cfg(feature = "vectors")]
+    pub fn vadd(&self, key: &str, vector_id: &str, embedding: &[f32], metadata: Option<&str>) -> Result<bool> {
+        // Check if vectors are enabled for this key
+        let dimensions = match self.is_vector_enabled(key)? {
+            Some(d) => d,
+            None => return Err(KvError::Other("vectors not enabled for this key".to_string())),
+        };
+
+        // Validate dimensions
+        if embedding.len() != dimensions as usize {
+            return Err(KvError::Other(format!(
+                "vector dimension mismatch: expected {}, got {}",
+                dimensions,
+                embedding.len()
+            )));
+        }
+
+        let conn = self.core.conn.lock().unwrap_or_else(|e| e.into_inner());
+
+        // Get or create key_id
+        let key_id: i64 = match conn
+            .query_row(
+                "SELECT id FROM keys WHERE db = ? AND key = ? LIMIT 1",
+                params![self.selected_db, key],
+                |row| row.get(0),
+            )
+            .optional()?
+        {
+            Some(id) => id,
+            None => {
+                // Create the key as a special "vector" type (using String type for now)
+                conn.execute(
+                    "INSERT INTO keys (db, key, key_type, created_at, updated_at) VALUES (?, ?, ?, ?, ?)",
+                    params![
+                        self.selected_db,
+                        key,
+                        KeyType::String as i32,
+                        Self::now_ms(),
+                        Self::now_ms()
+                    ],
+                )?;
+                conn.last_insert_rowid()
+            }
+        };
+
+        // Convert embedding to bytes
+        let embedding_bytes: Vec<u8> = embedding
+            .iter()
+            .flat_map(|f| f.to_le_bytes())
+            .collect();
+
+        // Insert or replace vector
+        let rows = conn.execute(
+            "INSERT OR REPLACE INTO vectors (key_id, vector_id, embedding, dimensions, metadata, created_at)
+             VALUES (?, ?, ?, ?, ?, ?)",
+            params![
+                key_id,
+                vector_id,
+                embedding_bytes,
+                dimensions,
+                metadata,
+                Self::now_ms()
+            ],
+        )?;
+
+        Ok(rows > 0)
+    }
+
+    /// Get a vector by key and vector_id
+    #[cfg(feature = "vectors")]
+    pub fn vget(&self, key: &str, vector_id: &str) -> Result<Option<VectorEntry>> {
+        let conn = self.core.conn.lock().unwrap_or_else(|e| e.into_inner());
+
+        let result: Option<(i64, i64, String, Vec<u8>, i32, Option<String>, i64)> = conn
+            .query_row(
+                "SELECT v.id, v.key_id, v.vector_id, v.embedding, v.dimensions, v.metadata, v.created_at
+                 FROM vectors v
+                 JOIN keys k ON v.key_id = k.id
+                 WHERE k.db = ? AND k.key = ? AND v.vector_id = ?
+                 LIMIT 1",
+                params![self.selected_db, key, vector_id],
+                |row| Ok((
+                    row.get(0)?,
+                    row.get(1)?,
+                    row.get(2)?,
+                    row.get(3)?,
+                    row.get(4)?,
+                    row.get(5)?,
+                    row.get(6)?,
+                )),
+            )
+            .optional()?;
+
+        match result {
+            Some((id, key_id, vid, embedding_bytes, dimensions, metadata, created_at)) => {
+                // Convert bytes back to f32 vector
+                let embedding: Vec<f32> = embedding_bytes
+                    .chunks_exact(4)
+                    .map(|chunk| f32::from_le_bytes([chunk[0], chunk[1], chunk[2], chunk[3]]))
+                    .collect();
+
+                Ok(Some(VectorEntry {
+                    id,
+                    key_id,
+                    vector_id: vid,
+                    embedding,
+                    dimensions,
+                    metadata,
+                    created_at,
+                }))
+            }
+            None => Ok(None),
+        }
+    }
+
+    /// Delete a vector by key and vector_id
+    #[cfg(feature = "vectors")]
+    pub fn vdel(&self, key: &str, vector_id: &str) -> Result<bool> {
+        let conn = self.core.conn.lock().unwrap_or_else(|e| e.into_inner());
+
+        let rows = conn.execute(
+            "DELETE FROM vectors WHERE key_id IN (
+                SELECT id FROM keys WHERE db = ? AND key = ?
+             ) AND vector_id = ?",
+            params![self.selected_db, key, vector_id],
+        )?;
+
+        Ok(rows > 0)
+    }
+
+    /// Count vectors for a key
+    #[cfg(feature = "vectors")]
+    pub fn vcount(&self, key: &str) -> Result<i64> {
+        let conn = self.core.conn.lock().unwrap_or_else(|e| e.into_inner());
+
+        let count: i64 = conn
+            .query_row(
+                "SELECT COUNT(*) FROM vectors v
+                 JOIN keys k ON v.key_id = k.id
+                 WHERE k.db = ? AND k.key = ?",
+                params![self.selected_db, key],
+                |row| row.get(0),
+            )?;
+
+        Ok(count)
+    }
+
+    /// Search for similar vectors using K-NN
+    /// Note: This uses a brute-force approach. For production with large datasets,
+    /// sqlite-vec should be loaded and used for efficient HNSW search.
+    #[cfg(feature = "vectors")]
+    pub fn vsearch(
+        &self,
+        key: &str,
+        query_vector: &[f32],
+        k: i64,
+        metric: DistanceMetric,
+    ) -> Result<Vec<VectorSearchResult>> {
+        // Check if vectors are enabled and get expected dimensions
+        let expected_dims = match self.is_vector_enabled(key)? {
+            Some(d) => d,
+            None => return Err(KvError::Other("vectors not enabled for this key".to_string())),
+        };
+
+        if query_vector.len() != expected_dims as usize {
+            return Err(KvError::Other(format!(
+                "query vector dimension mismatch: expected {}, got {}",
+                expected_dims,
+                query_vector.len()
+            )));
+        }
+
+        let conn = self.core.conn.lock().unwrap_or_else(|e| e.into_inner());
+
+        // Get all vectors for the key
+        let mut stmt = conn.prepare(
+            "SELECT v.vector_id, v.embedding, v.metadata
+             FROM vectors v
+             JOIN keys k ON v.key_id = k.id
+             WHERE k.db = ? AND k.key = ?"
+        )?;
+
+        let mut results: Vec<VectorSearchResult> = stmt
+            .query_map(params![self.selected_db, key], |row| {
+                let vector_id: String = row.get(0)?;
+                let embedding_bytes: Vec<u8> = row.get(1)?;
+                let metadata: Option<String> = row.get(2)?;
+
+                // Convert bytes to f32 vector
+                let embedding: Vec<f32> = embedding_bytes
+                    .chunks_exact(4)
+                    .map(|chunk| f32::from_le_bytes([chunk[0], chunk[1], chunk[2], chunk[3]]))
+                    .collect();
+
+                // Calculate distance based on metric
+                let distance = match metric {
+                    DistanceMetric::L2 => {
+                        // Euclidean distance
+                        let sum: f32 = query_vector
+                            .iter()
+                            .zip(embedding.iter())
+                            .map(|(a, b)| (a - b).powi(2))
+                            .sum();
+                        sum.sqrt() as f64
+                    }
+                    DistanceMetric::Cosine => {
+                        // Cosine distance = 1 - cosine_similarity
+                        let dot: f32 = query_vector
+                            .iter()
+                            .zip(embedding.iter())
+                            .map(|(a, b)| a * b)
+                            .sum();
+                        let norm_a: f32 = query_vector.iter().map(|x| x.powi(2)).sum::<f32>().sqrt();
+                        let norm_b: f32 = embedding.iter().map(|x| x.powi(2)).sum::<f32>().sqrt();
+                        if norm_a == 0.0 || norm_b == 0.0 {
+                            1.0
+                        } else {
+                            1.0 - (dot / (norm_a * norm_b)) as f64
+                        }
+                    }
+                    DistanceMetric::IP => {
+                        // Inner product (negative for ranking - higher IP = lower distance)
+                        let dot: f32 = query_vector
+                            .iter()
+                            .zip(embedding.iter())
+                            .map(|(a, b)| a * b)
+                            .sum();
+                        -dot as f64
+                    }
+                };
+
+                Ok(VectorSearchResult {
+                    vector_id,
+                    distance,
+                    metadata,
+                })
+            })?
+            .filter_map(|r| r.ok())
+            .collect();
+
+        // Sort by distance (ascending) and take top k
+        results.sort_by(|a, b| a.distance.partial_cmp(&b.distance).unwrap_or(std::cmp::Ordering::Equal));
+        results.truncate(k as usize);
+
+        Ok(results)
+    }
+
+    /// Get vector statistics
+    #[cfg(feature = "vectors")]
+    pub fn vector_info(&self) -> Result<VectorStats> {
+        let conn = self.core.conn.lock().unwrap_or_else(|e| e.into_inner());
+
+        // Count total vectors in current database
+        let total_vectors: i64 = conn.query_row(
+            "SELECT COUNT(*) FROM vectors v
+             JOIN keys k ON v.key_id = k.id
+             WHERE k.db = ?",
+            params![self.selected_db],
+            |row| row.get(0),
+        )?;
+
+        // Count unique keys with vectors
+        let total_keys: i64 = conn.query_row(
+            "SELECT COUNT(DISTINCT k.id) FROM vectors v
+             JOIN keys k ON v.key_id = k.id
+             WHERE k.db = ?",
+            params![self.selected_db],
+            |row| row.get(0),
+        )?;
+
+        // Estimate storage bytes
+        let storage_bytes: i64 = conn.query_row(
+            "SELECT COALESCE(SUM(LENGTH(embedding)), 0) FROM vectors v
+             JOIN keys k ON v.key_id = k.id
+             WHERE k.db = ?",
+            params![self.selected_db],
+            |row| row.get(0),
+        ).unwrap_or(0);
+
+        let mut stats = VectorStats::new(total_vectors, total_keys, storage_bytes);
+
+        // Get all vector configs
+        let mut stmt = conn.prepare(
+            "SELECT id, level, target, enabled, dimensions, created_at FROM vector_settings ORDER BY level, target"
+        )?;
+        let configs: Vec<crate::types::VectorConfig> = stmt
+            .query_map([], |row| {
+                let id: i64 = row.get(0)?;
+                let level_str: String = row.get(1)?;
+                let target: String = row.get(2)?;
+                let enabled: bool = row.get(3)?;
+                let dimensions: i32 = row.get(4)?;
+                let created_at: i64 = row.get(5)?;
+
+                let level = match level_str.as_str() {
+                    "global" => VectorLevel::Global,
+                    "database" => {
+                        let db_num: i32 = target.parse().unwrap_or(0);
+                        VectorLevel::Database(db_num)
+                    }
+                    "pattern" => VectorLevel::Pattern(target.clone()),
+                    "key" => VectorLevel::Key,
+                    _ => VectorLevel::Global,
+                };
+
+                Ok(crate::types::VectorConfig {
+                    id,
+                    level,
+                    target,
+                    enabled,
+                    dimensions,
+                    created_at,
+                })
+            })?
+            .filter_map(|r| r.ok())
+            .collect();
+
+        stats.configs = configs;
+        Ok(stats)
     }
 }
 

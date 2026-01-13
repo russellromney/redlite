@@ -337,6 +337,237 @@ impl HistoryStats {
     }
 }
 
+// ============================================================================
+// Full-Text Search Types (Session 24.1)
+// ============================================================================
+
+/// FTS configuration level (four-tier opt-in: global, database, pattern, key)
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum FtsLevel {
+    /// Global FTS for all databases
+    Global,
+    /// FTS for specific database (0-15)
+    Database(i32),
+    /// FTS for keys matching a glob pattern
+    Pattern(String),
+    /// FTS for specific key
+    Key,
+}
+
+impl FtsLevel {
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            FtsLevel::Global => "global",
+            FtsLevel::Database(_) => "database",
+            FtsLevel::Pattern(_) => "pattern",
+            FtsLevel::Key => "key",
+        }
+    }
+}
+
+/// FTS configuration for a specific level and target
+#[derive(Debug, Clone)]
+pub struct FtsConfig {
+    pub id: i64,
+    pub level: FtsLevel,
+    pub target: String,              // '*' for global, '0-15' for db, 'glob*' for pattern, 'db:key' for key
+    pub enabled: bool,
+    pub created_at: i64,             // Timestamp in milliseconds
+}
+
+impl FtsConfig {
+    pub fn new(level: FtsLevel, target: String) -> Self {
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_millis() as i64;
+
+        Self {
+            id: 0,
+            level,
+            target,
+            enabled: true,
+            created_at: now,
+        }
+    }
+}
+
+/// A full-text search result
+#[derive(Debug, Clone)]
+pub struct FtsResult {
+    pub db: i32,
+    pub key: String,
+    pub content: Vec<u8>,
+    pub rank: f64,                   // BM25 relevance score
+    pub snippet: Option<String>,     // Highlighted snippet (if requested)
+}
+
+impl FtsResult {
+    pub fn new(db: i32, key: String, content: Vec<u8>, rank: f64) -> Self {
+        Self {
+            db,
+            key,
+            content,
+            rank,
+            snippet: None,
+        }
+    }
+}
+
+/// Statistics about FTS indexing
+#[derive(Debug, Clone)]
+pub struct FtsStats {
+    pub indexed_keys: i64,
+    pub total_tokens: i64,
+    pub storage_bytes: i64,
+    pub configs: Vec<FtsConfig>,
+}
+
+impl FtsStats {
+    pub fn new(indexed_keys: i64, total_tokens: i64, storage_bytes: i64) -> Self {
+        Self {
+            indexed_keys,
+            total_tokens,
+            storage_bytes,
+            configs: Vec::new(),
+        }
+    }
+}
+
+// ============================================================================
+// Vector Search Types (Session 24.2) - Feature-gated
+// ============================================================================
+
+/// Vector configuration level (four-tier opt-in: global, database, pattern, key)
+#[cfg(feature = "vectors")]
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum VectorLevel {
+    /// Global vectors for all databases
+    Global,
+    /// Vectors for specific database (0-15)
+    Database(i32),
+    /// Vectors for keys matching a glob pattern
+    Pattern(String),
+    /// Vectors for specific key
+    Key,
+}
+
+#[cfg(feature = "vectors")]
+impl VectorLevel {
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            VectorLevel::Global => "global",
+            VectorLevel::Database(_) => "database",
+            VectorLevel::Pattern(_) => "pattern",
+            VectorLevel::Key => "key",
+        }
+    }
+}
+
+/// Vector configuration for a specific level and target
+#[cfg(feature = "vectors")]
+#[derive(Debug, Clone)]
+pub struct VectorConfig {
+    pub id: i64,
+    pub level: VectorLevel,
+    pub target: String,
+    pub enabled: bool,
+    pub dimensions: i32,
+    pub created_at: i64,
+}
+
+#[cfg(feature = "vectors")]
+impl VectorConfig {
+    pub fn new(level: VectorLevel, target: String, dimensions: i32) -> Self {
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_millis() as i64;
+
+        Self {
+            id: 0,
+            level,
+            target,
+            enabled: true,
+            dimensions,
+            created_at: now,
+        }
+    }
+}
+
+/// A stored vector with metadata
+#[cfg(feature = "vectors")]
+#[derive(Debug, Clone)]
+pub struct VectorEntry {
+    pub id: i64,
+    pub key_id: i64,
+    pub vector_id: String,
+    pub embedding: Vec<f32>,
+    pub dimensions: i32,
+    pub metadata: Option<String>,
+    pub created_at: i64,
+}
+
+/// A vector search result
+#[cfg(feature = "vectors")]
+#[derive(Debug, Clone)]
+pub struct VectorSearchResult {
+    pub vector_id: String,
+    pub distance: f64,
+    pub metadata: Option<String>,
+}
+
+/// Distance metric for vector search
+#[cfg(feature = "vectors")]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum DistanceMetric {
+    L2,       // Euclidean distance
+    Cosine,   // Cosine similarity (converted to distance)
+    IP,       // Inner product (dot product, converted to distance)
+}
+
+#[cfg(feature = "vectors")]
+impl DistanceMetric {
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            DistanceMetric::L2 => "L2",
+            DistanceMetric::Cosine => "cosine",
+            DistanceMetric::IP => "ip",
+        }
+    }
+
+    pub fn from_str(s: &str) -> Option<Self> {
+        match s.to_uppercase().as_str() {
+            "L2" | "EUCLIDEAN" => Some(DistanceMetric::L2),
+            "COSINE" | "COS" => Some(DistanceMetric::Cosine),
+            "IP" | "DOT" | "INNER_PRODUCT" => Some(DistanceMetric::IP),
+            _ => None,
+        }
+    }
+}
+
+/// Statistics about vector storage
+#[cfg(feature = "vectors")]
+#[derive(Debug, Clone)]
+pub struct VectorStats {
+    pub total_vectors: i64,
+    pub total_keys: i64,
+    pub storage_bytes: i64,
+    pub configs: Vec<VectorConfig>,
+}
+
+#[cfg(feature = "vectors")]
+impl VectorStats {
+    pub fn new(total_vectors: i64, total_keys: i64, storage_bytes: i64) -> Self {
+        Self {
+            total_vectors,
+            total_keys,
+            storage_bytes,
+            configs: Vec::new(),
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
