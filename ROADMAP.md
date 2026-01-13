@@ -633,19 +633,19 @@ _Blocking commands require server mode. Embedded mode returns error._
 ### Features
 
 - [x] SQLite schema design (documented)
-- [ ] RESP protocol parser (Session 1)
-- [ ] TCP server mode (Session 1)
-- [ ] Embedded library mode (Session 1+)
-- [ ] Lazy expiration (Session 3)
-- [ ] Multiple databases (Session 10)
-- [ ] Pattern matching (Session 2, 10)
-- [ ] Integer-gap list positioning (Session 7)
+- [x] RESP protocol parser (Session 1)
+- [x] TCP server mode (Session 1)
+- [x] Embedded library mode (Session 1+)
+- [x] Lazy expiration (Session 1)
+- [x] Multiple databases (Session 10)
+- [x] Pattern matching (Session 2, 10)
+- [x] Integer-gap list positioning (Session 7)
 
 ### Testing
 
-- [ ] Unit tests for each command (every session)
-- [ ] Integration tests with redis-cli (every session)
-- [ ] Compatibility tests against real Redis (Session 12)
+- [x] Unit tests for each command (276 passing)
+- [x] Integration tests with redis-cli (285+ passing)
+- [x] Compatibility tests against real Redis (Session 12)
 
 ---
 
@@ -683,9 +683,9 @@ Commands: SUBSCRIBE, UNSUBSCRIBE, PUBLISH, PSUBSCRIBE, PUNSUBSCRIBE
 
 _Embedded mode returns error for all Pub/Sub commands._
 
-### History Tracking & Time-Travel (Session 17) 🎯
+### History Tracking & Time-Travel (Session 17) ✅
 
-**Status:** Planned for Session 17 with 7 detailed subsessions (17.1-17.7)
+**Status:** Complete - All 7 subsessions (17.1-17.7) implemented
 
 Track value changes per key with three-tier opt-in and time-travel queries:
 
@@ -871,17 +871,17 @@ redlite --storage memory --snapshot ./backup.db --snapshot-interval 60
 - **Configurable:** Snapshot interval in seconds
 - **Recovery:** Auto-loads from snapshot on startup if it exists
 
-### Language Bindings (Sessions 18-20) 🎯
+### Language Bindings (Sessions 19-21) 🎯
 
-**Status:** Planned for Sessions 18-20 with hybrid approach.
+**Status:** Planned for Sessions 19-21 with hybrid approach.
 
 Expose Redlite to other languages using direct Rust bindings where possible, C FFI where needed.
 
-**Implemented Languages:**
-- ✅ **Python** (`redlite-py`) - Session 18 - Direct Rust via PyO3
-- ✅ **Node.js/Bun** (`redlite-js`) - Session 19 - Direct Rust via NAPI-RS
-- ✅ **Go** (`redlite-go`) - Session 20 - C FFI + cgo wrapper
-- ✅ **C** (`libredlite`) - Session 20 - Base FFI layer
+**Planned Languages:**
+- **Python** (`redlite-py`) - Session 19 - Direct Rust via PyO3
+- **Node.js/Bun** (`redlite-js`) - Session 20 - Direct Rust via NAPI-RS
+- **Go** (`redlite-go`) - Session 21 - C FFI + cgo wrapper
+- **C** (`libredlite`) - Session 21 - Base FFI layer
 
 **Future Languages (V4+):**
 - **Java** (`redlite-java`) - JNI wrapper
@@ -901,10 +901,10 @@ Expose Redlite to other languages using direct Rust bindings where possible, C F
    - cgo is standard for native libraries
    - Shared library distribution
 
-**Implementation (Sessions 18-20):**
+**Implementation (Sessions 19-21):**
 
 ```python
-# Python (Session 18) - pyo3
+# Python (Session 19) - pyo3
 import redlite
 
 db = redlite.open("mydata.db")
@@ -913,7 +913,7 @@ value = db.get("key")
 ```
 
 ```javascript
-// Node.js/Bun (Session 19) - napi-rs
+// Node.js/Bun (Session 20) - napi-rs
 import { open } from 'redlite';
 
 const db = await open('mydata.db');
@@ -922,7 +922,7 @@ const value = await db.get('key');
 ```
 
 ```go
-// Go (Session 20) - C FFI + cgo
+// Go (Session 21) - C FFI + cgo
 import "github.com/russellromney/redlite-go"
 
 db := redlite.Open("mydata.db")
@@ -945,14 +945,15 @@ value := db.Get("key")
 - C: Header + shared library
 
 **Session Breakdown:**
-- Session 18.1-18.7: Performance Testing & Benchmarking (criterion + flamegraph + optimization)
+- Session 18: Performance Testing & Benchmarking (redlite-bench)
+- Session 18.8: Cache Size Configuration (--cache flag)
 - Session 19.1-19.3: Python bindings (pyo3 + maturin + PyPI)
 - Session 20.1-20.3: Node.js/Bun bindings (napi-rs + npm)
 - Session 21.1-21.3: C FFI layer + Go bindings (cgo)
 
 ---
 
-### Session 22: Redis Ecosystem Compatibility 🎯
+### Session 22: Redis Ecosystem Compatibility ✅
 
 **Goal:** Improve compatibility with Redis clients and ecosystem tools.
 
@@ -1046,36 +1047,33 @@ Test Coverage:
 
 ---
 
-### Session 24: SQLite Ecosystem Integration 🎯
+### Session 24: Vector Search 🎯
 
-**Goal:** Leverage SQLite's unique capabilities for features Redis can't provide.
+**Goal:** Add vector similarity search using sqlite-vec extension.
 
-#### Session 24.1: Backup & Recovery
-- [ ] BACKUP command - Hot backup to path (VACUUM INTO)
-- [ ] CHECKPOINT command - Force WAL checkpoint
-- [ ] RESTORE command - Restore from backup
-- [ ] Point-in-time recovery documentation
+**Why:** Redis requires RedisVL module ($$). SQLite has excellent vector extensions.
 
-#### Session 24.2: Litestream Integration
-- [ ] Documentation for Litestream setup
-- [ ] LITESTREAM STATUS command (if Litestream detected)
-- [ ] S3/GCS/Azure replication examples
-- [ ] Disaster recovery playbook
+#### Session 24.1: Vector Storage & Basic Operations
+- [ ] Schema: `vectors` table (key_id, vector_id, embedding BLOB, metadata JSON)
+- [ ] VADD key id vector [metadata_json] - Add vector with optional metadata
+- [ ] VGET key id - Get vector + metadata
+- [ ] VDEL key id - Delete vector
+- [ ] VCOUNT key - Count vectors in key
+- [ ] sqlite-vec extension loading
 
-#### Session 24.3: Read Replicas
-- [ ] `--readonly` flag for replica mode
-- [ ] Connection to primary for writes
-- [ ] WAL-based replication documentation
-- [ ] Multi-region deployment guide
+#### Session 24.2: Vector Search & Indexing
+- [ ] VSEARCH key vector K [FILTER expr] - K-NN search
+- [ ] VINFO key - Index statistics
+- [ ] Distance metrics: L2, cosine, inner product
+- [ ] Metadata filtering support
+- [ ] Unit + integration tests
 
-#### Session 24.4: Full-Text Search (FTS5)
-- [ ] FT.CREATE index - Create FTS index on keys
-- [ ] FT.SEARCH query - Full-text search
-- [ ] FT.ADD key - Add key to index
-- [ ] FT.DEL key - Remove from index
-- [ ] Automatic index sync on writes
+---
 
-#### Session 24.5: Geospatial (R*Tree)
+### Session 25: Geospatial (R*Tree) 🎯
+
+**Goal:** Add geospatial queries using SQLite R*Tree extension.
+
 - [ ] GEOADD key longitude latitude member
 - [ ] GEOPOS key member [member ...]
 - [ ] GEODIST key member1 member2 [unit]
@@ -1084,30 +1082,30 @@ Test Coverage:
 
 ---
 
-### Session 25: Remaining Ecosystem Commands 🎯
+### Session 26: Remaining Ecosystem Commands
 
 **Goal:** Implement commonly-used Redis commands to increase compatibility.
 
-#### Session 25.1: String Variants
+#### Session 26.1: String Variants
 - [ ] GETEX key [EX seconds | PX milliseconds | EXAT timestamp | PXAT timestamp | PERSIST]
 - [ ] GETDEL key - Get and delete atomically
 - [ ] SETEX key seconds value - Set with TTL
 - [ ] PSETEX key milliseconds value - Set with millisecond TTL
 - [ ] LCS key1 key2 [LEN | IDX] - Longest common subsequence
 
-#### Session 25.2: List Variants
+#### Session 26.2: List Variants
 - [ ] LPUSHX key [element ...] - Push only if key exists
 - [ ] RPUSHX key [element ...] - Push only if key exists
 - [ ] LPOS key element [RANK rank | COUNT num-matches | MAXLEN len]
 - [ ] LMOVE source destination LEFT|RIGHT LEFT|RIGHT
 
-#### Session 25.3: Set Bitwise Operations
+#### Session 26.3: Set Bitwise Operations
 - [ ] BITCOUNT key [start end [BYTE|BIT]]
 - [ ] BITFIELD key [GET type offset] [SET type offset value] [INCRBY type offset increment]
 - [ ] BITOP AND|OR|XOR|NOT destkey [key ...]
 - [ ] BITPOS key bit [start [end [BYTE|BIT]]]
 
-#### Session 25.4: String Bit Operations
+#### Session 26.4: String Bit Operations
 - [ ] SETBIT key offset value
 - [ ] GETBIT key offset
 - [ ] Comprehensive bit manipulation test suite
@@ -1116,8 +1114,27 @@ Test Coverage:
 
 ### Maybe (If Requested)
 
+- **Full-Text Search (FTS5)** - FT.CREATE, FT.SEARCH, FT.ADD, FT.DEL with auto-sync
 - Lua scripting (EVAL/EVALSHA) - Complex, low priority
 - XAUTOCLAIM (auto-reassign stuck messages)
 - Cluster mode (probably not - use LiteFS instead)
 - ACL system (Redis 6+ access control)
+
+---
+
+## Durability & Replication
+
+**Note:** Redlite intentionally does NOT implement backup/replication commands. Use external tools:
+
+**Recommended: [walsync](https://github.com/russellromney/walsync)**
+- Continuous WAL sync to S3/Tigris
+- Point-in-time recovery
+- Multi-database support (single process, ~12MB RAM)
+- SHA256 integrity verification
+
+**Alternative: [Litestream](https://litestream.io)**
+- Mature, battle-tested
+- S3/GCS/Azure support
+
+SQLite WAL mode provides crash-safe writes. For replication, backups, and disaster recovery, pair redlite with walsync or litestream - they work alongside with zero configuration.
 

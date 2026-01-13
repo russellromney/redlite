@@ -10,7 +10,7 @@ SQLite-backed Redis-compatible embedded key-value store written in Rust.
 - **Disk is cheap** - Persistent storage without Redis's memory constraints
 - **SQLite foundation** - ACID transactions, durability, zero config
 - **Redis compatible** - Existing clients just work (for most operations)
-- **Easy backup** - SQLite WAL files work with [litestream](https://litestream.io)/[walsync](https://litestream.io) or similar tools
+- **Easy backup** - SQLite WAL files work with [litestream](https://litestream.io) or similar tools
 
 ## Differences from Redis
 
@@ -18,7 +18,7 @@ SQLite-backed Redis-compatible embedded key-value store written in Rust.
 
 **Server mode only** features (not available in embedded mode):
 - **Pub/Sub** - At-most-once, fire-and-forget (messages not persisted if no subscribers)
-- **Transactions** - MULTI/EXEC/DISCARD (WATCH/UNWATCH not supported; blocking commands not allowed)
+- **Transactions** - MULTI/EXEC/DISCARD/WATCH/UNWATCH (blocking commands not allowed in transactions)
 - **Blocking reads** - BLPOP, BRPOP, XREAD BLOCK, XREADGROUP BLOCK
 
 **Architectural differences:**
@@ -129,7 +129,7 @@ redis-cli -a secret SET foo bar
 
 **Strings:** `GET`, `SET` (EX, PX, NX, XX), `INCR`, `DECR`, `INCRBY`, `DECRBY`, `INCRBYFLOAT`, `MGET`, `MSET`, `APPEND`, `STRLEN`, `GETRANGE`, `SETRANGE`
 
-**Keys:** `DEL`, `EXISTS`, `TYPE`, `EXPIRE`, `TTL`, `PTTL`, `KEYS`, `SCAN`
+**Keys:** `DEL`, `EXISTS`, `TYPE`, `EXPIRE`, `PERSIST`, `TTL`, `PTTL`, `KEYS`, `SCAN`
 
 **Hashes:** `HSET`, `HGET`, `HSETNX`, `HMGET`, `HGETALL`, `HDEL`, `HEXISTS`, `HKEYS`, `HVALS`, `HLEN`, `HINCRBY`, `HINCRBYFLOAT`
 
@@ -145,7 +145,7 @@ redis-cli -a secret SET foo bar
 
 **Pub/Sub (server mode):** `SUBSCRIBE`, `UNSUBSCRIBE`, `PUBLISH`, `PSUBSCRIBE`, `PUNSUBSCRIBE`
 
-**Transactions:** `MULTI`, `EXEC`, `DISCARD`
+**Transactions:** `MULTI`, `EXEC`, `DISCARD`, `WATCH`, `UNWATCH`
 
 **History Tracking:** `HISTORY ENABLE`, `HISTORY DISABLE`, `HISTORY GET`, `HISTORY GETAT`, `HISTORY STATS`, `HISTORY CLEAR`, `HISTORY PRUNE`, `HISTORY LIST`
 
@@ -241,7 +241,7 @@ println!("Cache: {}MB", db.cache_mb()?);
 **Session 22: Redis Ecosystem Compatibility** ✅
 - Authentication: `--password` flag, AUTH command
 - Backend options: `--backend` (sqlite/turso), `--storage` (file/memory)
-- WATCH/UNWATCH for optimistic locking
+- WATCH/UNWATCH for optimistic locking (check-and-set)
 
 **Session 17: History Tracking & Time-Travel Queries** ✅
 - Track value changes per key with three-tier opt-in
@@ -256,6 +256,28 @@ See [ROADMAP.md](./ROADMAP.md) for detailed plans.
 - **Python** (`redlite-py`) - PyO3 bindings via PyPI
 - **Node.js/Bun** (`redlite-js`) - NAPI-RS bindings via npm
 - **C FFI + Go** - C bindings via cbindgen + Go cgo wrapper
+
+**Session 24: Vector Search**
+- K-NN similarity search via sqlite-vec
+- VADD, VSEARCH, VGET, VDEL commands
+
+**Session 25: Geospatial**
+- R*Tree spatial indexing
+- GEOADD, GEOPOS, GEODIST, GEORADIUS commands
+
+## Durability & Replication
+
+Redlite uses SQLite WAL mode for crash-safe writes. For backups and replication, use external tools:
+
+**Recommended: [walsync](https://github.com/russellromney/walsync)**
+```bash
+walsync watch mydata.db -b s3://backups/redlite
+```
+- Continuous WAL sync to S3/Tigris
+- Point-in-time recovery
+- Multi-database support (~12MB RAM)
+
+**Alternative: [Litestream](https://litestream.io)** - Mature, battle-tested S3/GCS/Azure support.
 
 ## Testing
 
