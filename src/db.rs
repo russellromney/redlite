@@ -6,13 +6,16 @@ use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use tokio::sync::broadcast;
 
 use crate::error::{KvError, Result};
-use crate::types::{ConsumerGroupInfo, ConsumerInfo, KeyInfo, KeyType, PendingEntry, PendingSummary, SetOptions, StreamEntry, StreamId, StreamInfo, ZMember, HistoryEntry, HistoryStats, RetentionType, FtsLevel, FtsResult, FtsStats};
+use crate::types::{
+    ConsumerGroupInfo, ConsumerInfo, FtsLevel, FtsResult, FtsStats, HistoryEntry, HistoryStats,
+    KeyInfo, KeyType, PendingEntry, PendingSummary, RetentionType, SetOptions, StreamEntry,
+    StreamId, StreamInfo, ZMember,
+};
 #[cfg(feature = "vectors")]
-use crate::types::{VectorLevel, VectorEntry, VectorSearchResult, VectorStats, DistanceMetric};
+use crate::types::{DistanceMetric, VectorEntry, VectorLevel, VectorSearchResult, VectorStats};
 
 /// Default autovacuum interval in milliseconds (60 seconds)
 const DEFAULT_AUTOVACUUM_INTERVAL_MS: i64 = 60_000;
-
 
 /// Shared database backend (SQLite connection)
 struct DbCore {
@@ -74,7 +77,8 @@ fn glob_match(pattern: &str, text: &str) -> bool {
                     return true;
                 }
                 // Find next match position
-                let remaining_pattern = std::str::from_utf8(&pattern_bytes[pattern_idx..]).unwrap_or("");
+                let remaining_pattern =
+                    std::str::from_utf8(&pattern_bytes[pattern_idx..]).unwrap_or("");
                 while text_idx <= text_bytes.len() {
                     if glob_match(remaining_pattern, &text[text_idx..]) {
                         return true;
@@ -242,7 +246,11 @@ impl Db {
         let conn = self.core.conn.lock().unwrap_or_else(|e| e.into_inner());
         let cache_size: i64 = conn.query_row("PRAGMA cache_size", [], |r| r.get(0))?;
         // Negative means KB
-        Ok(if cache_size < 0 { -cache_size / 1000 } else { cache_size * 4 / 1000 })
+        Ok(if cache_size < 0 {
+            -cache_size / 1000
+        } else {
+            cache_size * 4 / 1000
+        })
     }
 
     /// Create a new session sharing the same database backend.
@@ -260,6 +268,7 @@ impl Db {
         conn.execute_batch(include_str!("schema.sql"))?;
         conn.execute_batch(include_str!("schema_history.sql"))?;
         conn.execute_batch(include_str!("schema_fts.sql"))?;
+        conn.execute_batch(include_str!("schema_ft.sql"))?; // RediSearch-compatible indexes
         #[cfg(feature = "vectors")]
         conn.execute_batch(include_str!("schema_vectors.sql"))?;
 
@@ -299,7 +308,9 @@ impl Db {
 
     /// Enable or disable autovacuum (automatic cleanup of expired keys)
     pub fn set_autovacuum(&self, enabled: bool) {
-        self.core.autovacuum_enabled.store(enabled, Ordering::Relaxed);
+        self.core
+            .autovacuum_enabled
+            .store(enabled, Ordering::Relaxed);
     }
 
     /// Check if autovacuum is enabled
@@ -562,7 +573,7 @@ impl Db {
 
         match result {
             Ok(Some(expire_at)) => Ok((expire_at - now) / 1000),
-            Ok(None) => Ok(-1), // No expiry
+            Ok(None) => Ok(-1),                                  // No expiry
             Err(rusqlite::Error::QueryReturnedNoRows) => Ok(-2), // Key not found
             Err(e) => Err(e.into()),
         }
@@ -584,7 +595,7 @@ impl Db {
 
         match result {
             Ok(Some(expire_at)) => Ok(expire_at - now),
-            Ok(None) => Ok(-1), // No expiry
+            Ok(None) => Ok(-1),                                  // No expiry
             Err(rusqlite::Error::QueryReturnedNoRows) => Ok(-2), // Key not found
             Err(e) => Err(e.into()),
         }
@@ -716,17 +727,17 @@ impl Db {
 
         let rows: Vec<String> = match pattern {
             Some(p) => {
-                let iter = stmt.query_map(
-                    params![db, now, p, count as i64, cursor as i64],
-                    |row| row.get(0),
-                )?;
+                let iter = stmt
+                    .query_map(params![db, now, p, count as i64, cursor as i64], |row| {
+                        row.get(0)
+                    })?;
                 iter.filter_map(|r| r.ok()).collect()
             }
             None => {
-                let iter = stmt.query_map(
-                    params![db, now, count as i64, cursor as i64],
-                    |row| row.get(0),
-                )?;
+                let iter = stmt
+                    .query_map(params![db, now, count as i64, cursor as i64], |row| {
+                        row.get(0)
+                    })?;
                 iter.filter_map(|r| r.ok()).collect()
             }
         };
@@ -943,9 +954,7 @@ impl Db {
 
     /// MGET key [key ...] - get multiple keys
     pub fn mget(&self, keys: &[&str]) -> Vec<Option<Vec<u8>>> {
-        keys.iter()
-            .map(|k| self.get(k).unwrap_or(None))
-            .collect()
+        keys.iter().map(|k| self.get(k).unwrap_or(None)).collect()
     }
 
     /// MSET key value [key value ...] - set multiple key-value pairs atomically
@@ -1603,9 +1612,8 @@ impl Db {
     /// Reassigns all positions starting from 0 with fresh gaps
     fn rebalance_list(&self, conn: &Connection, key_id: i64) -> Result<()> {
         // Get all values in order
-        let mut stmt = conn.prepare(
-            "SELECT pos, value FROM lists WHERE key_id = ?1 ORDER BY pos ASC",
-        )?;
+        let mut stmt =
+            conn.prepare("SELECT pos, value FROM lists WHERE key_id = ?1 ORDER BY pos ASC")?;
         let rows = stmt.query_map(params![key_id], |row| {
             Ok((row.get::<_, i64>(0)?, row.get::<_, Vec<u8>>(1)?))
         })?;
@@ -1867,9 +1875,8 @@ impl Db {
         let count = count.unwrap_or(1);
 
         // Get elements from head (lowest positions)
-        let mut stmt = conn.prepare(
-            "SELECT pos, value FROM lists WHERE key_id = ?1 ORDER BY pos ASC LIMIT ?2",
-        )?;
+        let mut stmt = conn
+            .prepare("SELECT pos, value FROM lists WHERE key_id = ?1 ORDER BY pos ASC LIMIT ?2")?;
         let rows = stmt.query_map(params![key_id, count as i64], |row| {
             Ok((row.get::<_, i64>(0)?, row.get::<_, Vec<u8>>(1)?))
         })?;
@@ -1923,9 +1930,8 @@ impl Db {
         let count = count.unwrap_or(1);
 
         // Get elements from tail (highest positions)
-        let mut stmt = conn.prepare(
-            "SELECT pos, value FROM lists WHERE key_id = ?1 ORDER BY pos DESC LIMIT ?2",
-        )?;
+        let mut stmt = conn
+            .prepare("SELECT pos, value FROM lists WHERE key_id = ?1 ORDER BY pos DESC LIMIT ?2")?;
         let rows = stmt.query_map(params![key_id, count as i64], |row| {
             Ok((row.get::<_, i64>(0)?, row.get::<_, Vec<u8>>(1)?))
         })?;
@@ -2004,7 +2010,7 @@ impl Db {
             )?
         } else {
             // For positive indices, we can skip the COUNT and rely on LIMIT/OFFSET
-            -1i64  // sentinel value indicating COUNT was not needed
+            -1i64 // sentinel value indicating COUNT was not needed
         };
 
         // Convert negative indices to positive (only if len was queried)
@@ -2042,7 +2048,9 @@ impl Db {
         let mut stmt = conn.prepare(
             "SELECT value FROM lists WHERE key_id = ?1 ORDER BY pos ASC LIMIT ?2 OFFSET ?3",
         )?;
-        let rows = stmt.query_map(params![key_id, count, start], |row| row.get::<_, Vec<u8>>(0))?;
+        let rows = stmt.query_map(params![key_id, count, start], |row| {
+            row.get::<_, Vec<u8>>(0)
+        })?;
 
         let mut results = Vec::new();
         for row in rows {
@@ -2189,9 +2197,7 @@ impl Db {
         }
 
         // Get positions to keep
-        let mut stmt = conn.prepare(
-            "SELECT pos FROM lists WHERE key_id = ?1 ORDER BY pos ASC",
-        )?;
+        let mut stmt = conn.prepare("SELECT pos FROM lists WHERE key_id = ?1 ORDER BY pos ASC")?;
         let rows = stmt.query_map(params![key_id], |row| row.get::<_, i64>(0))?;
 
         let positions: Vec<i64> = rows.filter_map(|r| r.ok()).collect();
@@ -2247,9 +2253,7 @@ impl Db {
         };
 
         // Get all list entries to find matching positions
-        let mut stmt = conn.prepare(
-            "SELECT pos FROM lists WHERE key_id = ?1 ORDER BY pos ASC",
-        )?;
+        let mut stmt = conn.prepare("SELECT pos FROM lists WHERE key_id = ?1 ORDER BY pos ASC")?;
         let rows = stmt.query_map(params![key_id], |row| row.get::<_, i64>(0))?;
 
         let all_positions: Vec<i64> = rows.filter_map(|r| r.ok()).collect();
@@ -2352,9 +2356,7 @@ impl Db {
         };
 
         // Find the position of the pivot element
-        let mut stmt = conn.prepare(
-            "SELECT pos FROM lists WHERE key_id = ?1 ORDER BY pos ASC",
-        )?;
+        let mut stmt = conn.prepare("SELECT pos FROM lists WHERE key_id = ?1 ORDER BY pos ASC")?;
         let rows = stmt.query_map(params![key_id], |row| row.get::<_, i64>(0))?;
 
         let positions: Vec<i64> = rows.filter_map(|r| r.ok()).collect();
@@ -2394,19 +2396,21 @@ impl Db {
                     // Need to rebalance
                     self.rebalance_list(&conn, key_id)?;
                     // Re-find pivot and positions after rebalancing
-                    let mut stmt = conn.prepare(
-                        "SELECT pos FROM lists WHERE key_id = ?1 ORDER BY pos ASC",
-                    )?;
+                    let mut stmt =
+                        conn.prepare("SELECT pos FROM lists WHERE key_id = ?1 ORDER BY pos ASC")?;
                     let rows = stmt.query_map(params![key_id], |row| row.get::<_, i64>(0))?;
                     let new_positions: Vec<i64> = rows.filter_map(|r| r.ok()).collect();
-                    let prev_idx = new_positions.iter().position(|&p| {
-                        let v: std::result::Result<Vec<u8>, _> = conn.query_row(
-                            "SELECT value FROM lists WHERE key_id = ?1 AND pos = ?2",
-                            params![key_id, p],
-                            |row| row.get(0),
-                        );
-                        v.ok().as_ref() == Some(&pivot.to_vec())
-                    }).unwrap_or(0);
+                    let prev_idx = new_positions
+                        .iter()
+                        .position(|&p| {
+                            let v: std::result::Result<Vec<u8>, _> = conn.query_row(
+                                "SELECT value FROM lists WHERE key_id = ?1 AND pos = ?2",
+                                params![key_id, p],
+                                |row| row.get(0),
+                            );
+                            v.ok().as_ref() == Some(&pivot.to_vec())
+                        })
+                        .unwrap_or(0);
                     if prev_idx == 0 {
                         new_positions[0] - Self::LIST_GAP
                     } else {
@@ -2432,19 +2436,21 @@ impl Db {
                     // Need to rebalance
                     self.rebalance_list(&conn, key_id)?;
                     // Re-find pivot and positions after rebalancing
-                    let mut stmt = conn.prepare(
-                        "SELECT pos FROM lists WHERE key_id = ?1 ORDER BY pos ASC",
-                    )?;
+                    let mut stmt =
+                        conn.prepare("SELECT pos FROM lists WHERE key_id = ?1 ORDER BY pos ASC")?;
                     let rows = stmt.query_map(params![key_id], |row| row.get::<_, i64>(0))?;
                     let new_positions: Vec<i64> = rows.filter_map(|r| r.ok()).collect();
-                    let pivot_idx = new_positions.iter().position(|&p| {
-                        let v: std::result::Result<Vec<u8>, _> = conn.query_row(
-                            "SELECT value FROM lists WHERE key_id = ?1 AND pos = ?2",
-                            params![key_id, p],
-                            |row| row.get(0),
-                        );
-                        v.ok().as_ref() == Some(&pivot.to_vec())
-                    }).unwrap_or(0);
+                    let pivot_idx = new_positions
+                        .iter()
+                        .position(|&p| {
+                            let v: std::result::Result<Vec<u8>, _> = conn.query_row(
+                                "SELECT value FROM lists WHERE key_id = ?1 AND pos = ?2",
+                                params![key_id, p],
+                                |row| row.get(0),
+                            );
+                            v.ok().as_ref() == Some(&pivot.to_vec())
+                        })
+                        .unwrap_or(0);
                     if pivot_idx == new_positions.len() - 1 {
                         new_positions[pivot_idx] + Self::LIST_GAP
                     } else {
@@ -2656,9 +2662,7 @@ impl Db {
             None => return Ok(vec![]),
         };
 
-        let mut stmt = conn.prepare(
-            "SELECT member FROM sets WHERE key_id = ?1",
-        )?;
+        let mut stmt = conn.prepare("SELECT member FROM sets WHERE key_id = ?1")?;
 
         let rows = stmt.query_map(params![key_id], |row| row.get::<_, Vec<u8>>(0))?;
 
@@ -2781,9 +2785,7 @@ impl Db {
         if allow_repeats {
             // With negative count, we may need to return duplicates
             // Get all members and sample with replacement
-            let mut stmt = conn.prepare(
-                "SELECT member FROM sets WHERE key_id = ?1",
-            )?;
+            let mut stmt = conn.prepare("SELECT member FROM sets WHERE key_id = ?1")?;
             let rows = stmt.query_map(params![key_id], |row| row.get::<_, Vec<u8>>(0))?;
 
             let all_members: Vec<Vec<u8>> = rows.filter_map(|r| r.ok()).collect();
@@ -2806,9 +2808,8 @@ impl Db {
             Ok(results)
         } else {
             // Positive count: distinct elements
-            let mut stmt = conn.prepare(
-                "SELECT member FROM sets WHERE key_id = ?1 ORDER BY RANDOM() LIMIT ?2",
-            )?;
+            let mut stmt = conn
+                .prepare("SELECT member FROM sets WHERE key_id = ?1 ORDER BY RANDOM() LIMIT ?2")?;
             let rows = stmt.query_map(params![key_id, limit], |row| row.get::<_, Vec<u8>>(0))?;
 
             let mut results = Vec::new();
@@ -2883,10 +2884,10 @@ impl Db {
         };
 
         // Check if member exists in source
-        let mut stmt = conn.prepare(
-            "SELECT 1 FROM sets WHERE key_id = ?1 AND member = ?2 LIMIT 1",
-        )?;
-        let exists: std::result::Result<i32, _> = stmt.query_row(params![source_key_id, member], |_| Ok(1));
+        let mut stmt =
+            conn.prepare("SELECT 1 FROM sets WHERE key_id = ?1 AND member = ?2 LIMIT 1")?;
+        let exists: std::result::Result<i32, _> =
+            stmt.query_row(params![source_key_id, member], |_| Ok(1));
 
         if exists.is_err() {
             return Ok(0); // Member not in source
@@ -2946,7 +2947,10 @@ impl Db {
         let diff_result = self.sdiff(keys)?;
 
         // Clear destination if it exists
-        if let Some(dest_key_id) = self.get_set_key_id(&self.core.conn.lock().unwrap_or_else(|e| e.into_inner()), destination)? {
+        if let Some(dest_key_id) = self.get_set_key_id(
+            &self.core.conn.lock().unwrap_or_else(|e| e.into_inner()),
+            destination,
+        )? {
             let conn = self.core.conn.lock().unwrap_or_else(|e| e.into_inner());
             conn.execute("DELETE FROM sets WHERE key_id = ?1", params![dest_key_id])?;
             conn.execute("DELETE FROM keys WHERE id = ?1", params![dest_key_id])?;
@@ -2989,7 +2993,10 @@ impl Db {
         let inter_result = self.sinter(keys)?;
 
         // Clear destination if it exists
-        if let Some(dest_key_id) = self.get_set_key_id(&self.core.conn.lock().unwrap_or_else(|e| e.into_inner()), destination)? {
+        if let Some(dest_key_id) = self.get_set_key_id(
+            &self.core.conn.lock().unwrap_or_else(|e| e.into_inner()),
+            destination,
+        )? {
             let conn = self.core.conn.lock().unwrap_or_else(|e| e.into_inner());
             conn.execute("DELETE FROM sets WHERE key_id = ?1", params![dest_key_id])?;
             conn.execute("DELETE FROM keys WHERE id = ?1", params![dest_key_id])?;
@@ -3032,7 +3039,10 @@ impl Db {
         let union_result = self.sunion(keys)?;
 
         // Clear destination if it exists
-        if let Some(dest_key_id) = self.get_set_key_id(&self.core.conn.lock().unwrap_or_else(|e| e.into_inner()), destination)? {
+        if let Some(dest_key_id) = self.get_set_key_id(
+            &self.core.conn.lock().unwrap_or_else(|e| e.into_inner()),
+            destination,
+        )? {
             let conn = self.core.conn.lock().unwrap_or_else(|e| e.into_inner());
             conn.execute("DELETE FROM sets WHERE key_id = ?1", params![dest_key_id])?;
             conn.execute("DELETE FROM keys WHERE id = ?1", params![dest_key_id])?;
@@ -3337,7 +3347,13 @@ impl Db {
     }
 
     /// ZRANGE key start stop [WITHSCORES] - get members by rank range (ascending)
-    pub fn zrange(&self, key: &str, start: i64, stop: i64, with_scores: bool) -> Result<Vec<ZMember>> {
+    pub fn zrange(
+        &self,
+        key: &str,
+        start: i64,
+        stop: i64,
+        with_scores: bool,
+    ) -> Result<Vec<ZMember>> {
         self.maybe_autovacuum();
         let conn = self.core.conn.lock().unwrap_or_else(|e| e.into_inner());
 
@@ -3415,7 +3431,13 @@ impl Db {
     }
 
     /// ZREVRANGE key start stop [WITHSCORES] - get members by rank range (descending)
-    pub fn zrevrange(&self, key: &str, start: i64, stop: i64, with_scores: bool) -> Result<Vec<ZMember>> {
+    pub fn zrevrange(
+        &self,
+        key: &str,
+        start: i64,
+        stop: i64,
+        with_scores: bool,
+    ) -> Result<Vec<ZMember>> {
         let conn = self.core.conn.lock().unwrap_or_else(|e| e.into_inner());
 
         let key_id = match self.get_zset_key_id(&conn, key)? {
@@ -3895,7 +3917,7 @@ impl Db {
     pub fn xadd(
         &self,
         key: &str,
-        id: Option<StreamId>,  // None means auto-generate with *
+        id: Option<StreamId>, // None means auto-generate with *
         fields: &[(&[u8], &[u8])],
         nomkstream: bool,
         maxlen: Option<i64>,
@@ -4312,11 +4334,13 @@ impl Db {
         };
 
         // Check if group already exists
-        let exists: bool = conn.query_row(
-            "SELECT 1 FROM stream_groups WHERE key_id = ?1 AND name = ?2",
-            params![key_id, group],
-            |_| Ok(true),
-        ).unwrap_or(false);
+        let exists: bool = conn
+            .query_row(
+                "SELECT 1 FROM stream_groups WHERE key_id = ?1 AND name = ?2",
+                params![key_id, group],
+                |_| Ok(true),
+            )
+            .unwrap_or(false);
 
         if exists {
             return Err(KvError::BusyGroup);
@@ -4373,12 +4397,7 @@ impl Db {
 
     /// XGROUP CREATECONSUMER key groupname consumername
     /// Creates a consumer in a consumer group
-    pub fn xgroup_createconsumer(
-        &self,
-        key: &str,
-        group: &str,
-        consumer: &str,
-    ) -> Result<bool> {
+    pub fn xgroup_createconsumer(&self, key: &str, group: &str, consumer: &str) -> Result<bool> {
         let conn = self.core.conn.lock().unwrap_or_else(|e| e.into_inner());
         let now = Self::now_ms();
 
@@ -4398,11 +4417,13 @@ impl Db {
         };
 
         // Check if consumer exists
-        let exists: bool = conn.query_row(
-            "SELECT 1 FROM stream_consumers WHERE group_id = ?1 AND name = ?2",
-            params![group_id, consumer],
-            |_| Ok(true),
-        ).unwrap_or(false);
+        let exists: bool = conn
+            .query_row(
+                "SELECT 1 FROM stream_consumers WHERE group_id = ?1 AND name = ?2",
+                params![group_id, consumer],
+                |_| Ok(true),
+            )
+            .unwrap_or(false);
 
         if exists {
             return Ok(false); // Consumer already exists
@@ -4420,12 +4441,7 @@ impl Db {
     /// XGROUP DELCONSUMER key groupname consumername
     /// Deletes a consumer from a consumer group
     /// Returns the number of pending entries that were deleted
-    pub fn xgroup_delconsumer(
-        &self,
-        key: &str,
-        group: &str,
-        consumer: &str,
-    ) -> Result<i64> {
+    pub fn xgroup_delconsumer(&self, key: &str, group: &str, consumer: &str) -> Result<i64> {
         let conn = self.core.conn.lock().unwrap_or_else(|e| e.into_inner());
 
         let key_id = match self.get_stream_key_id(&conn, key)? {
@@ -4444,11 +4460,13 @@ impl Db {
         };
 
         // Count pending entries for this consumer
-        let pending_count: i64 = conn.query_row(
-            "SELECT COUNT(*) FROM stream_pending WHERE group_id = ?1 AND consumer = ?2",
-            params![group_id, consumer],
-            |row| row.get(0),
-        ).unwrap_or(0);
+        let pending_count: i64 = conn
+            .query_row(
+                "SELECT COUNT(*) FROM stream_pending WHERE group_id = ?1 AND consumer = ?2",
+                params![group_id, consumer],
+                |row| row.get(0),
+            )
+            .unwrap_or(0);
 
         // Delete pending entries for this consumer
         conn.execute(
@@ -4466,7 +4484,12 @@ impl Db {
     }
 
     /// Helper: Get or create a consumer in a group
-    fn get_or_create_consumer(&self, conn: &Connection, group_id: i64, consumer: &str) -> Result<i64> {
+    fn get_or_create_consumer(
+        &self,
+        conn: &Connection,
+        group_id: i64,
+        consumer: &str,
+    ) -> Result<i64> {
         let now = Self::now_ms();
 
         // Try to get existing consumer
@@ -4497,7 +4520,12 @@ impl Db {
     }
 
     /// Helper: Get group info (id, last_ms, last_seq) for a stream
-    fn get_group_info(&self, conn: &Connection, key_id: i64, group: &str) -> Result<Option<(i64, i64, i64)>> {
+    fn get_group_info(
+        &self,
+        conn: &Connection,
+        key_id: i64,
+        group: &str,
+    ) -> Result<Option<(i64, i64, i64)>> {
         let result = conn.query_row(
             "SELECT id, last_ms, last_seq FROM stream_groups WHERE key_id = ?1 AND name = ?2",
             params![key_id, group],
@@ -4512,12 +4540,18 @@ impl Db {
     }
 
     /// Helper: Get stream entry by stream_id (ms, seq)
-    fn get_stream_entry_id(&self, conn: &Connection, key_id: i64, stream_id: &StreamId) -> Option<i64> {
+    fn get_stream_entry_id(
+        &self,
+        conn: &Connection,
+        key_id: i64,
+        stream_id: &StreamId,
+    ) -> Option<i64> {
         conn.query_row(
             "SELECT id FROM streams WHERE key_id = ?1 AND entry_ms = ?2 AND entry_seq = ?3",
             params![key_id, stream_id.ms, stream_id.seq],
             |row| row.get(0),
-        ).ok()
+        )
+        .ok()
     }
 
     /// XREADGROUP GROUP group consumer [COUNT count] [NOACK] STREAMS key [key ...] id [id ...]
@@ -4527,7 +4561,7 @@ impl Db {
         group: &str,
         consumer: &str,
         keys: &[&str],
-        ids: &[&str],  // ">" means new, other IDs mean pending
+        ids: &[&str], // ">" means new, other IDs mean pending
         count: Option<i64>,
         noack: bool,
     ) -> Result<Vec<(String, Vec<StreamEntry>)>> {
@@ -4573,19 +4607,19 @@ impl Db {
                 )?;
 
                 let entries: Vec<(i64, StreamEntry)> = stmt
-                    .query_map(
-                        params![key_id, start.ms, start.seq, limit],
-                        |row| {
-                            let db_id: i64 = row.get(0)?;
-                            let ms: i64 = row.get(1)?;
-                            let seq: i64 = row.get(2)?;
-                            let data: Vec<u8> = row.get(3)?;
-                            Ok((db_id, StreamEntry::new(
+                    .query_map(params![key_id, start.ms, start.seq, limit], |row| {
+                        let db_id: i64 = row.get(0)?;
+                        let ms: i64 = row.get(1)?;
+                        let seq: i64 = row.get(2)?;
+                        let data: Vec<u8> = row.get(3)?;
+                        Ok((
+                            db_id,
+                            StreamEntry::new(
                                 StreamId::new(ms, seq),
                                 Self::decode_stream_fields(&data),
-                            )))
-                        },
-                    )?
+                            ),
+                        ))
+                    })?
                     .filter_map(|r| r.ok())
                     .collect();
 
@@ -4643,10 +4677,14 @@ impl Db {
                             let seq: i64 = row.get(2)?;
                             let data: Vec<u8> = row.get(3)?;
                             let pending_id: i64 = row.get(4)?;
-                            Ok((db_id, StreamEntry::new(
-                                StreamId::new(ms, seq),
-                                Self::decode_stream_fields(&data),
-                            ), pending_id))
+                            Ok((
+                                db_id,
+                                StreamEntry::new(
+                                    StreamId::new(ms, seq),
+                                    Self::decode_stream_fields(&data),
+                                ),
+                                pending_id,
+                            ))
                         },
                     )?
                     .filter_map(|r| r.ok())
@@ -4716,12 +4754,14 @@ impl Db {
 
         let key_id = match self.get_stream_key_id(&conn, key)? {
             Some(id) => id,
-            None => return Ok(PendingSummary {
-                count: 0,
-                smallest_id: None,
-                largest_id: None,
-                consumers: vec![],
-            }),
+            None => {
+                return Ok(PendingSummary {
+                    count: 0,
+                    smallest_id: None,
+                    largest_id: None,
+                    consumers: vec![],
+                })
+            }
         };
 
         let group_id: i64 = match conn.query_row(
@@ -4750,24 +4790,28 @@ impl Db {
         }
 
         // Get smallest ID
-        let smallest_id: Option<StreamId> = conn.query_row(
-            "SELECT s.entry_ms, s.entry_seq FROM stream_pending sp
+        let smallest_id: Option<StreamId> = conn
+            .query_row(
+                "SELECT s.entry_ms, s.entry_seq FROM stream_pending sp
              JOIN streams s ON s.id = sp.entry_id
              WHERE sp.group_id = ?1
              ORDER BY s.entry_ms ASC, s.entry_seq ASC LIMIT 1",
-            params![group_id],
-            |row| Ok(StreamId::new(row.get(0)?, row.get(1)?)),
-        ).ok();
+                params![group_id],
+                |row| Ok(StreamId::new(row.get(0)?, row.get(1)?)),
+            )
+            .ok();
 
         // Get largest ID
-        let largest_id: Option<StreamId> = conn.query_row(
-            "SELECT s.entry_ms, s.entry_seq FROM stream_pending sp
+        let largest_id: Option<StreamId> = conn
+            .query_row(
+                "SELECT s.entry_ms, s.entry_seq FROM stream_pending sp
              JOIN streams s ON s.id = sp.entry_id
              WHERE sp.group_id = ?1
              ORDER BY s.entry_ms DESC, s.entry_seq DESC LIMIT 1",
-            params![group_id],
-            |row| Ok(StreamId::new(row.get(0)?, row.get(1)?)),
-        ).ok();
+                params![group_id],
+                |row| Ok(StreamId::new(row.get(0)?, row.get(1)?)),
+            )
+            .ok();
 
         // Get per-consumer counts
         let mut stmt = conn.prepare(
@@ -4816,10 +4860,11 @@ impl Db {
         };
 
         // Build query based on options
-        let (sql, params_vec): (String, Vec<Box<dyn rusqlite::ToSql>>) = if let Some(c) = consumer {
-            if let Some(idle) = idle_time {
-                let idle_cutoff = now - idle;
-                (
+        let (sql, params_vec): (String, Vec<Box<dyn rusqlite::ToSql>>) =
+            if let Some(c) = consumer {
+                if let Some(idle) = idle_time {
+                    let idle_cutoff = now - idle;
+                    (
                     "SELECT s.entry_ms, s.entry_seq, sp.consumer, sp.delivered_at, sp.delivery_count
                      FROM stream_pending sp
                      JOIN streams s ON s.id = sp.entry_id
@@ -4839,8 +4884,8 @@ impl Db {
                         Box::new(count),
                     ],
                 )
-            } else {
-                (
+                } else {
+                    (
                     "SELECT s.entry_ms, s.entry_seq, sp.consumer, sp.delivered_at, sp.delivery_count
                      FROM stream_pending sp
                      JOIN streams s ON s.id = sp.entry_id
@@ -4859,10 +4904,10 @@ impl Db {
                         Box::new(count),
                     ],
                 )
-            }
-        } else if let Some(idle) = idle_time {
-            let idle_cutoff = now - idle;
-            (
+                }
+            } else if let Some(idle) = idle_time {
+                let idle_cutoff = now - idle;
+                (
                 "SELECT s.entry_ms, s.entry_seq, sp.consumer, sp.delivered_at, sp.delivery_count
                  FROM stream_pending sp
                  JOIN streams s ON s.id = sp.entry_id
@@ -4881,8 +4926,8 @@ impl Db {
                     Box::new(count),
                 ],
             )
-        } else {
-            (
+            } else {
+                (
                 "SELECT s.entry_ms, s.entry_seq, sp.consumer, sp.delivered_at, sp.delivery_count
                  FROM stream_pending sp
                  JOIN streams s ON s.id = sp.entry_id
@@ -4900,10 +4945,11 @@ impl Db {
                     Box::new(count),
                 ],
             )
-        };
+            };
 
         let mut stmt = conn.prepare(&sql)?;
-        let params_refs: Vec<&dyn rusqlite::ToSql> = params_vec.iter().map(|p| p.as_ref()).collect();
+        let params_refs: Vec<&dyn rusqlite::ToSql> =
+            params_vec.iter().map(|p| p.as_ref()).collect();
 
         let entries: Vec<PendingEntry> = stmt
             .query_map(params_refs.as_slice(), |row| {
@@ -4984,12 +5030,14 @@ impl Db {
             };
 
             // Check if entry is in pending list and meets idle requirement
-            let pending_info: Option<(i64, i64, i64)> = conn.query_row(
-                "SELECT id, delivered_at, delivery_count FROM stream_pending
+            let pending_info: Option<(i64, i64, i64)> = conn
+                .query_row(
+                    "SELECT id, delivered_at, delivery_count FROM stream_pending
                  WHERE group_id = ?1 AND entry_id = ?2",
-                params![group_id, entry_id],
-                |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
-            ).ok();
+                    params![group_id, entry_id],
+                    |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+                )
+                .ok();
 
             match pending_info {
                 Some((pending_id, delivered_at, old_count)) => {
@@ -5055,18 +5103,22 @@ impl Db {
         let mut result = Vec::new();
         for (group_id, name, last_ms, last_seq) in groups {
             // Count consumers
-            let consumers: i64 = conn.query_row(
-                "SELECT COUNT(*) FROM stream_consumers WHERE group_id = ?1",
-                params![group_id],
-                |row| row.get(0),
-            ).unwrap_or(0);
+            let consumers: i64 = conn
+                .query_row(
+                    "SELECT COUNT(*) FROM stream_consumers WHERE group_id = ?1",
+                    params![group_id],
+                    |row| row.get(0),
+                )
+                .unwrap_or(0);
 
             // Count pending
-            let pending: i64 = conn.query_row(
-                "SELECT COUNT(*) FROM stream_pending WHERE group_id = ?1",
-                params![group_id],
-                |row| row.get(0),
-            ).unwrap_or(0);
+            let pending: i64 = conn
+                .query_row(
+                    "SELECT COUNT(*) FROM stream_pending WHERE group_id = ?1",
+                    params![group_id],
+                    |row| row.get(0),
+                )
+                .unwrap_or(0);
 
             result.push(ConsumerGroupInfo {
                 name,
@@ -5104,20 +5156,20 @@ impl Db {
         )?;
 
         let consumers: Vec<(String, i64)> = stmt
-            .query_map(params![group_id], |row| {
-                Ok((row.get(0)?, row.get(1)?))
-            })?
+            .query_map(params![group_id], |row| Ok((row.get(0)?, row.get(1)?)))?
             .filter_map(|r| r.ok())
             .collect();
 
         let mut result = Vec::new();
         for (name, seen_time) in consumers {
             // Count pending for this consumer
-            let pending: i64 = conn.query_row(
-                "SELECT COUNT(*) FROM stream_pending WHERE group_id = ?1 AND consumer = ?2",
-                params![group_id, name],
-                |row| row.get(0),
-            ).unwrap_or(0);
+            let pending: i64 = conn
+                .query_row(
+                    "SELECT COUNT(*) FROM stream_pending WHERE group_id = ?1 AND consumer = ?2",
+                    params![group_id, name],
+                    |row| row.get(0),
+                )
+                .unwrap_or(0);
 
             result.push(ConsumerInfo {
                 name: name.clone(),
@@ -5167,10 +5219,7 @@ impl Db {
     }
 
     /// Attach notifier to database for server mode
-    pub fn with_notifier(
-        &self,
-        notifier: Arc<RwLock<HashMap<String, broadcast::Sender<()>>>>,
-    ) {
+    pub fn with_notifier(&self, notifier: Arc<RwLock<HashMap<String, broadcast::Sender<()>>>>) {
         *self.core.notifier.write().unwrap() = Some(notifier);
     }
 
@@ -5214,52 +5263,46 @@ impl Db {
 
             if let Some(rx0) = rx_iter.next() {
                 match rx_iter.next() {
-                    Some(rx1) => {
-                        match rx_iter.next() {
-                            Some(rx2) => {
-                                match rx_iter.next() {
-                                    Some(rx3) => {
-                                        match rx_iter.next() {
-                                            Some(rx4) => {
-                                                tokio::select! {
-                                                    _ = rx0.recv() => {},
-                                                    _ = rx1.recv() => {},
-                                                    _ = rx2.recv() => {},
-                                                    _ = rx3.recv() => {},
-                                                    _ = rx4.recv() => {},
-                                                    _ = tokio::time::sleep(wait_duration) => {},
-                                                }
-                                            }
-                                            None => {
-                                                tokio::select! {
-                                                    _ = rx0.recv() => {},
-                                                    _ = rx1.recv() => {},
-                                                    _ = rx2.recv() => {},
-                                                    _ = rx3.recv() => {},
-                                                    _ = tokio::time::sleep(wait_duration) => {},
-                                                }
-                                            }
-                                        }
-                                    }
-                                    None => {
-                                        tokio::select! {
-                                            _ = rx0.recv() => {},
-                                            _ = rx1.recv() => {},
-                                            _ = rx2.recv() => {},
-                                            _ = tokio::time::sleep(wait_duration) => {},
-                                        }
+                    Some(rx1) => match rx_iter.next() {
+                        Some(rx2) => match rx_iter.next() {
+                            Some(rx3) => match rx_iter.next() {
+                                Some(rx4) => {
+                                    tokio::select! {
+                                        _ = rx0.recv() => {},
+                                        _ = rx1.recv() => {},
+                                        _ = rx2.recv() => {},
+                                        _ = rx3.recv() => {},
+                                        _ = rx4.recv() => {},
+                                        _ = tokio::time::sleep(wait_duration) => {},
                                     }
                                 }
-                            }
+                                None => {
+                                    tokio::select! {
+                                        _ = rx0.recv() => {},
+                                        _ = rx1.recv() => {},
+                                        _ = rx2.recv() => {},
+                                        _ = rx3.recv() => {},
+                                        _ = tokio::time::sleep(wait_duration) => {},
+                                    }
+                                }
+                            },
                             None => {
                                 tokio::select! {
                                     _ = rx0.recv() => {},
                                     _ = rx1.recv() => {},
+                                    _ = rx2.recv() => {},
                                     _ = tokio::time::sleep(wait_duration) => {},
                                 }
                             }
+                        },
+                        None => {
+                            tokio::select! {
+                                _ = rx0.recv() => {},
+                                _ = rx1.recv() => {},
+                                _ = tokio::time::sleep(wait_duration) => {},
+                            }
                         }
-                    }
+                    },
                     None => {
                         tokio::select! {
                             _ = rx0.recv() => {},
@@ -5316,52 +5359,46 @@ impl Db {
 
             if let Some(rx0) = rx_iter.next() {
                 match rx_iter.next() {
-                    Some(rx1) => {
-                        match rx_iter.next() {
-                            Some(rx2) => {
-                                match rx_iter.next() {
-                                    Some(rx3) => {
-                                        match rx_iter.next() {
-                                            Some(rx4) => {
-                                                tokio::select! {
-                                                    _ = rx0.recv() => {},
-                                                    _ = rx1.recv() => {},
-                                                    _ = rx2.recv() => {},
-                                                    _ = rx3.recv() => {},
-                                                    _ = rx4.recv() => {},
-                                                    _ = tokio::time::sleep(wait_duration) => {},
-                                                }
-                                            }
-                                            None => {
-                                                tokio::select! {
-                                                    _ = rx0.recv() => {},
-                                                    _ = rx1.recv() => {},
-                                                    _ = rx2.recv() => {},
-                                                    _ = rx3.recv() => {},
-                                                    _ = tokio::time::sleep(wait_duration) => {},
-                                                }
-                                            }
-                                        }
-                                    }
-                                    None => {
-                                        tokio::select! {
-                                            _ = rx0.recv() => {},
-                                            _ = rx1.recv() => {},
-                                            _ = rx2.recv() => {},
-                                            _ = tokio::time::sleep(wait_duration) => {},
-                                        }
+                    Some(rx1) => match rx_iter.next() {
+                        Some(rx2) => match rx_iter.next() {
+                            Some(rx3) => match rx_iter.next() {
+                                Some(rx4) => {
+                                    tokio::select! {
+                                        _ = rx0.recv() => {},
+                                        _ = rx1.recv() => {},
+                                        _ = rx2.recv() => {},
+                                        _ = rx3.recv() => {},
+                                        _ = rx4.recv() => {},
+                                        _ = tokio::time::sleep(wait_duration) => {},
                                     }
                                 }
-                            }
+                                None => {
+                                    tokio::select! {
+                                        _ = rx0.recv() => {},
+                                        _ = rx1.recv() => {},
+                                        _ = rx2.recv() => {},
+                                        _ = rx3.recv() => {},
+                                        _ = tokio::time::sleep(wait_duration) => {},
+                                    }
+                                }
+                            },
                             None => {
                                 tokio::select! {
                                     _ = rx0.recv() => {},
                                     _ = rx1.recv() => {},
+                                    _ = rx2.recv() => {},
                                     _ = tokio::time::sleep(wait_duration) => {},
                                 }
                             }
+                        },
+                        None => {
+                            tokio::select! {
+                                _ = rx0.recv() => {},
+                                _ = rx1.recv() => {},
+                                _ = tokio::time::sleep(wait_duration) => {},
+                            }
                         }
-                    }
+                    },
                     None => {
                         tokio::select! {
                             _ = rx0.recv() => {},
@@ -5422,52 +5459,46 @@ impl Db {
 
             if let Some(rx0) = rx_iter.next() {
                 match rx_iter.next() {
-                    Some(rx1) => {
-                        match rx_iter.next() {
-                            Some(rx2) => {
-                                match rx_iter.next() {
-                                    Some(rx3) => {
-                                        match rx_iter.next() {
-                                            Some(rx4) => {
-                                                tokio::select! {
-                                                    _ = rx0.recv() => {},
-                                                    _ = rx1.recv() => {},
-                                                    _ = rx2.recv() => {},
-                                                    _ = rx3.recv() => {},
-                                                    _ = rx4.recv() => {},
-                                                    _ = tokio::time::sleep(wait_duration) => {},
-                                                }
-                                            }
-                                            None => {
-                                                tokio::select! {
-                                                    _ = rx0.recv() => {},
-                                                    _ = rx1.recv() => {},
-                                                    _ = rx2.recv() => {},
-                                                    _ = rx3.recv() => {},
-                                                    _ = tokio::time::sleep(wait_duration) => {},
-                                                }
-                                            }
-                                        }
-                                    }
-                                    None => {
-                                        tokio::select! {
-                                            _ = rx0.recv() => {},
-                                            _ = rx1.recv() => {},
-                                            _ = rx2.recv() => {},
-                                            _ = tokio::time::sleep(wait_duration) => {},
-                                        }
+                    Some(rx1) => match rx_iter.next() {
+                        Some(rx2) => match rx_iter.next() {
+                            Some(rx3) => match rx_iter.next() {
+                                Some(rx4) => {
+                                    tokio::select! {
+                                        _ = rx0.recv() => {},
+                                        _ = rx1.recv() => {},
+                                        _ = rx2.recv() => {},
+                                        _ = rx3.recv() => {},
+                                        _ = rx4.recv() => {},
+                                        _ = tokio::time::sleep(wait_duration) => {},
                                     }
                                 }
-                            }
+                                None => {
+                                    tokio::select! {
+                                        _ = rx0.recv() => {},
+                                        _ = rx1.recv() => {},
+                                        _ = rx2.recv() => {},
+                                        _ = rx3.recv() => {},
+                                        _ = tokio::time::sleep(wait_duration) => {},
+                                    }
+                                }
+                            },
                             None => {
                                 tokio::select! {
                                     _ = rx0.recv() => {},
                                     _ = rx1.recv() => {},
+                                    _ = rx2.recv() => {},
                                     _ = tokio::time::sleep(wait_duration) => {},
                                 }
                             }
+                        },
+                        None => {
+                            tokio::select! {
+                                _ = rx0.recv() => {},
+                                _ = rx1.recv() => {},
+                                _ = tokio::time::sleep(wait_duration) => {},
+                            }
                         }
-                    }
+                    },
                     None => {
                         tokio::select! {
                             _ = rx0.recv() => {},
@@ -5531,52 +5562,46 @@ impl Db {
 
             if let Some(rx0) = rx_iter.next() {
                 match rx_iter.next() {
-                    Some(rx1) => {
-                        match rx_iter.next() {
-                            Some(rx2) => {
-                                match rx_iter.next() {
-                                    Some(rx3) => {
-                                        match rx_iter.next() {
-                                            Some(rx4) => {
-                                                tokio::select! {
-                                                    _ = rx0.recv() => {},
-                                                    _ = rx1.recv() => {},
-                                                    _ = rx2.recv() => {},
-                                                    _ = rx3.recv() => {},
-                                                    _ = rx4.recv() => {},
-                                                    _ = tokio::time::sleep(wait_duration) => {},
-                                                }
-                                            }
-                                            None => {
-                                                tokio::select! {
-                                                    _ = rx0.recv() => {},
-                                                    _ = rx1.recv() => {},
-                                                    _ = rx2.recv() => {},
-                                                    _ = rx3.recv() => {},
-                                                    _ = tokio::time::sleep(wait_duration) => {},
-                                                }
-                                            }
-                                        }
-                                    }
-                                    None => {
-                                        tokio::select! {
-                                            _ = rx0.recv() => {},
-                                            _ = rx1.recv() => {},
-                                            _ = rx2.recv() => {},
-                                            _ = tokio::time::sleep(wait_duration) => {},
-                                        }
+                    Some(rx1) => match rx_iter.next() {
+                        Some(rx2) => match rx_iter.next() {
+                            Some(rx3) => match rx_iter.next() {
+                                Some(rx4) => {
+                                    tokio::select! {
+                                        _ = rx0.recv() => {},
+                                        _ = rx1.recv() => {},
+                                        _ = rx2.recv() => {},
+                                        _ = rx3.recv() => {},
+                                        _ = rx4.recv() => {},
+                                        _ = tokio::time::sleep(wait_duration) => {},
                                     }
                                 }
-                            }
+                                None => {
+                                    tokio::select! {
+                                        _ = rx0.recv() => {},
+                                        _ = rx1.recv() => {},
+                                        _ = rx2.recv() => {},
+                                        _ = rx3.recv() => {},
+                                        _ = tokio::time::sleep(wait_duration) => {},
+                                    }
+                                }
+                            },
                             None => {
                                 tokio::select! {
                                     _ = rx0.recv() => {},
                                     _ = rx1.recv() => {},
+                                    _ = rx2.recv() => {},
                                     _ = tokio::time::sleep(wait_duration) => {},
                                 }
                             }
+                        },
+                        None => {
+                            tokio::select! {
+                                _ = rx0.recv() => {},
+                                _ = rx1.recv() => {},
+                                _ = tokio::time::sleep(wait_duration) => {},
+                            }
                         }
-                    }
+                    },
                     None => {
                         tokio::select! {
                             _ = rx0.recv() => {},
@@ -6052,9 +6077,7 @@ impl Db {
         if let Some(pat) = pattern {
             query.push_str(" AND key GLOB ?");
             let mut stmt = conn.prepare(&query)?;
-            let keys = stmt.query_map(params![self.selected_db, pat], |row| {
-                row.get(0)
-            })?;
+            let keys = stmt.query_map(params![self.selected_db, pat], |row| row.get(0))?;
 
             let mut results = Vec::new();
             for key in keys {
@@ -6063,9 +6086,7 @@ impl Db {
             Ok(results)
         } else {
             let mut stmt = conn.prepare(&query)?;
-            let keys = stmt.query_map(params![self.selected_db], |row| {
-                row.get(0)
-            })?;
+            let keys = stmt.query_map(params![self.selected_db], |row| row.get(0))?;
 
             let mut results = Vec::new();
             for key in keys {
@@ -6244,7 +6265,7 @@ impl Db {
 
         // 2. Check pattern-level configs (match glob patterns)
         let mut stmt = conn.prepare(
-            "SELECT target, enabled FROM fts_settings WHERE level = 'pattern' AND target LIKE ?"
+            "SELECT target, enabled FROM fts_settings WHERE level = 'pattern' AND target LIKE ?",
         )?;
         let db_prefix = format!("{}:%", self.selected_db);
         let patterns: Vec<(String, bool)> = stmt
@@ -6369,7 +6390,12 @@ impl Db {
     }
 
     /// Search FTS index
-    pub fn fts_search(&self, query: &str, limit: Option<i64>, highlight: bool) -> Result<Vec<FtsResult>> {
+    pub fn fts_search(
+        &self,
+        query: &str,
+        limit: Option<i64>,
+        highlight: bool,
+    ) -> Result<Vec<FtsResult>> {
         let conn = self.core.conn.lock().unwrap_or_else(|e| e.into_inner());
         let limit = limit.unwrap_or(10);
 
@@ -6465,11 +6491,13 @@ impl Db {
         let total_tokens: i64 = 0; // Placeholder - would need custom implementation
 
         // Get storage bytes (approximate)
-        let storage_bytes: i64 = conn.query_row(
-            "SELECT page_count * page_size FROM pragma_page_count(), pragma_page_size()",
-            [],
-            |row| row.get(0),
-        ).unwrap_or(0);
+        let storage_bytes: i64 = conn
+            .query_row(
+                "SELECT page_count * page_size FROM pragma_page_count(), pragma_page_size()",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap_or(0);
 
         let mut stats = FtsStats::new(indexed_keys, total_tokens, storage_bytes);
 
@@ -6509,6 +6537,987 @@ impl Db {
 
         stats.configs = configs;
         Ok(stats)
+    }
+
+    // ============================================================================
+    // RediSearch-Compatible Methods (Session 23)
+    // ============================================================================
+
+    /// Create a RediSearch-compatible index
+    /// FT.CREATE index ON HASH|JSON PREFIX n prefix... SCHEMA field type...
+    pub fn ft_create(
+        &self,
+        name: &str,
+        on_type: crate::types::FtOnType,
+        prefixes: &[&str],
+        schema: &[crate::types::FtField],
+    ) -> Result<()> {
+        use crate::types::FtFieldType;
+
+        let conn = self.core.conn.lock().unwrap_or_else(|e| e.into_inner());
+
+        // Check if index already exists
+        let exists: bool = conn
+            .query_row(
+                "SELECT 1 FROM ft_indexes WHERE name = ? LIMIT 1",
+                params![name],
+                |_| Ok(true),
+            )
+            .optional()?
+            .unwrap_or(false);
+
+        if exists {
+            return Err(KvError::Other(format!("Index already exists: {}", name)));
+        }
+
+        // Serialize prefixes and schema to JSON
+        let prefixes_json =
+            serde_json::to_string(&prefixes.iter().map(|s| s.to_string()).collect::<Vec<_>>())
+                .map_err(|e| KvError::Other(e.to_string()))?;
+
+        let schema_json: Vec<serde_json::Value> = schema
+            .iter()
+            .map(|f| {
+                serde_json::json!({
+                    "name": f.name,
+                    "type": f.field_type.as_str(),
+                    "sortable": f.sortable,
+                    "noindex": f.noindex,
+                    "nostem": f.nostem,
+                    "weight": f.weight,
+                    "separator": f.separator.to_string(),
+                    "case_sensitive": f.case_sensitive,
+                })
+            })
+            .collect();
+        let schema_str =
+            serde_json::to_string(&schema_json).map_err(|e| KvError::Other(e.to_string()))?;
+
+        // Insert index definition
+        conn.execute(
+            "INSERT INTO ft_indexes (name, on_type, prefixes, schema, language, created_at)
+             VALUES (?, ?, ?, ?, 'english', ?)",
+            params![
+                name,
+                on_type.as_str(),
+                prefixes_json,
+                schema_str,
+                Self::now_ms()
+            ],
+        )?;
+
+        let index_id = conn.last_insert_rowid();
+
+        // Create dynamic FTS5 table for this index's TEXT fields
+        let text_fields: Vec<&str> = schema
+            .iter()
+            .filter(|f| matches!(f.field_type, FtFieldType::Text))
+            .map(|f| f.name.as_str())
+            .collect();
+
+        if !text_fields.is_empty() {
+            // Create FTS5 table with columns for each TEXT field
+            let columns: Vec<String> = text_fields.iter().map(|f| format!("\"{}\"", f)).collect();
+            let create_fts = format!(
+                "CREATE VIRTUAL TABLE IF NOT EXISTS fts_idx_{} USING fts5({}, content='', contentless_delete=1, tokenize='porter unicode61')",
+                index_id,
+                columns.join(", ")
+            );
+            conn.execute(&create_fts, [])?;
+        }
+
+        Ok(())
+    }
+
+    /// Drop a RediSearch index
+    /// FT.DROPINDEX index [DD]
+    pub fn ft_dropindex(&self, name: &str, delete_docs: bool) -> Result<bool> {
+        let conn = self.core.conn.lock().unwrap_or_else(|e| e.into_inner());
+
+        // Get index ID
+        let index_id: Option<i64> = conn
+            .query_row(
+                "SELECT id FROM ft_indexes WHERE name = ? LIMIT 1",
+                params![name],
+                |row| row.get(0),
+            )
+            .optional()?;
+
+        let index_id = match index_id {
+            Some(id) => id,
+            None => return Ok(false),
+        };
+
+        // Drop the dynamic FTS5 table if it exists
+        let drop_fts = format!("DROP TABLE IF EXISTS fts_idx_{}", index_id);
+        conn.execute(&drop_fts, [])?;
+
+        // Delete indexed docs if DD flag is set
+        if delete_docs {
+            // Get all keys that were indexed
+            let mut stmt = conn.prepare(
+                "SELECT k.key FROM ft_indexed_docs d
+                 JOIN keys k ON d.key_id = k.id
+                 WHERE d.index_id = ?",
+            )?;
+            let keys: Vec<String> = stmt
+                .query_map(params![index_id], |row| row.get(0))?
+                .filter_map(|r| r.ok())
+                .collect();
+
+            // Delete the keys
+            for key in &keys {
+                self.del(&[key.as_str()])?;
+            }
+        }
+
+        // Delete index (cascade deletes ft_indexed_docs, ft_numeric_fields, ft_tag_fields)
+        conn.execute("DELETE FROM ft_indexes WHERE id = ?", params![index_id])?;
+
+        Ok(true)
+    }
+
+    /// List all RediSearch indexes
+    /// FT._LIST
+    pub fn ft_list(&self) -> Result<Vec<String>> {
+        let conn = self.core.conn.lock().unwrap_or_else(|e| e.into_inner());
+
+        let mut stmt = conn.prepare("SELECT name FROM ft_indexes ORDER BY name")?;
+        let names: Vec<String> = stmt
+            .query_map([], |row| row.get(0))?
+            .filter_map(|r| r.ok())
+            .collect();
+
+        Ok(names)
+    }
+
+    /// Get info about a RediSearch index
+    /// FT.INFO index
+    pub fn ft_info(&self, name: &str) -> Result<Option<crate::types::FtIndexInfo>> {
+        use crate::types::{FtField, FtFieldType, FtIndexInfo, FtOnType};
+
+        let conn = self.core.conn.lock().unwrap_or_else(|e| e.into_inner());
+
+        // Get index definition
+        let result: Option<(i64, String, String, String, String, i64)> = conn
+            .query_row(
+                "SELECT id, name, on_type, prefixes, schema, created_at
+                 FROM ft_indexes WHERE name = ? LIMIT 1",
+                params![name],
+                |row| {
+                    Ok((
+                        row.get(0)?,
+                        row.get(1)?,
+                        row.get(2)?,
+                        row.get(3)?,
+                        row.get(4)?,
+                        row.get(5)?,
+                    ))
+                },
+            )
+            .optional()?;
+
+        let (index_id, index_name, on_type_str, prefixes_json, schema_json, _created_at) =
+            match result {
+                Some(r) => r,
+                None => return Ok(None),
+            };
+
+        // Parse on_type
+        let on_type = FtOnType::from_str(&on_type_str).unwrap_or(FtOnType::Hash);
+
+        // Parse prefixes
+        let prefixes: Vec<String> = serde_json::from_str(&prefixes_json).unwrap_or_default();
+
+        // Parse schema
+        let schema_values: Vec<serde_json::Value> =
+            serde_json::from_str(&schema_json).unwrap_or_default();
+        let schema: Vec<FtField> = schema_values
+            .iter()
+            .filter_map(|v| {
+                let name = v.get("name")?.as_str()?;
+                let type_str = v.get("type")?.as_str()?;
+                let field_type = FtFieldType::from_str(type_str)?;
+                let mut field = FtField::new(name, field_type);
+                if let Some(sortable) = v.get("sortable").and_then(|v| v.as_bool()) {
+                    field.sortable = sortable;
+                }
+                if let Some(noindex) = v.get("noindex").and_then(|v| v.as_bool()) {
+                    field.noindex = noindex;
+                }
+                if let Some(nostem) = v.get("nostem").and_then(|v| v.as_bool()) {
+                    field.nostem = nostem;
+                }
+                if let Some(weight) = v.get("weight").and_then(|v| v.as_f64()) {
+                    field.weight = weight;
+                }
+                if let Some(sep) = v
+                    .get("separator")
+                    .and_then(|v| v.as_str())
+                    .and_then(|s| s.chars().next())
+                {
+                    field.separator = sep;
+                }
+                if let Some(case_sensitive) = v.get("case_sensitive").and_then(|v| v.as_bool()) {
+                    field.case_sensitive = case_sensitive;
+                }
+                Some(field)
+            })
+            .collect();
+
+        // Count indexed documents
+        let num_docs: i64 = conn.query_row(
+            "SELECT COUNT(*) FROM ft_indexed_docs WHERE index_id = ?",
+            params![index_id],
+            |row| row.get(0),
+        )?;
+
+        // Get max doc ID
+        let max_doc_id: i64 = conn.query_row(
+            "SELECT COALESCE(MAX(id), 0) FROM ft_indexed_docs WHERE index_id = ?",
+            params![index_id],
+            |row| row.get(0),
+        )?;
+
+        Ok(Some(FtIndexInfo {
+            name: index_name,
+            on_type,
+            prefixes,
+            schema,
+            num_docs,
+            num_terms: 0,   // Would need FTS5 vocab query
+            num_records: 0, // Would need FTS5 metadata
+            inverted_sz_mb: 0.0,
+            total_inverted_index_blocks: 0,
+            max_doc_id,
+        }))
+    }
+
+    /// Add a field to an existing index
+    /// FT.ALTER index SCHEMA ADD field type [options...]
+    pub fn ft_alter(&self, name: &str, field: crate::types::FtField) -> Result<()> {
+        let conn = self.core.conn.lock().unwrap_or_else(|e| e.into_inner());
+
+        // Get index
+        let result: Option<(i64, String)> = conn
+            .query_row(
+                "SELECT id, schema FROM ft_indexes WHERE name = ? LIMIT 1",
+                params![name],
+                |row| Ok((row.get(0)?, row.get(1)?)),
+            )
+            .optional()?;
+
+        let (index_id, schema_json) = match result {
+            Some(r) => r,
+            None => return Err(KvError::Other(format!("Unknown index: {}", name))),
+        };
+
+        // Parse existing schema
+        let mut schema_values: Vec<serde_json::Value> =
+            serde_json::from_str(&schema_json).unwrap_or_default();
+
+        // Check if field already exists
+        let field_exists = schema_values
+            .iter()
+            .any(|v| v.get("name").and_then(|n| n.as_str()) == Some(&field.name));
+
+        if field_exists {
+            return Err(KvError::Other(format!(
+                "Field already exists: {}",
+                field.name
+            )));
+        }
+
+        // Add new field to schema
+        schema_values.push(serde_json::json!({
+            "name": field.name,
+            "type": field.field_type.as_str(),
+            "sortable": field.sortable,
+            "noindex": field.noindex,
+            "nostem": field.nostem,
+            "weight": field.weight,
+            "separator": field.separator.to_string(),
+            "case_sensitive": field.case_sensitive,
+        }));
+
+        let new_schema_json =
+            serde_json::to_string(&schema_values).map_err(|e| KvError::Other(e.to_string()))?;
+
+        // Update index schema
+        conn.execute(
+            "UPDATE ft_indexes SET schema = ? WHERE id = ?",
+            params![new_schema_json, index_id],
+        )?;
+
+        // If it's a TEXT field, we need to alter the FTS5 table (SQLite limitation: can't easily add columns to FTS5)
+        // For now, we'll need to recreate the index or handle this differently
+        // This is a known limitation of FTS5
+
+        Ok(())
+    }
+
+    /// Add or update an alias for an index
+    /// FT.ALIASADD alias index
+    pub fn ft_aliasadd(&self, alias: &str, index_name: &str) -> Result<()> {
+        let conn = self.core.conn.lock().unwrap_or_else(|e| e.into_inner());
+
+        // Get index ID
+        let index_id: Option<i64> = conn
+            .query_row(
+                "SELECT id FROM ft_indexes WHERE name = ? LIMIT 1",
+                params![index_name],
+                |row| row.get(0),
+            )
+            .optional()?;
+
+        let index_id = match index_id {
+            Some(id) => id,
+            None => return Err(KvError::Other(format!("Unknown index: {}", index_name))),
+        };
+
+        conn.execute(
+            "INSERT OR REPLACE INTO ft_aliases (alias, index_id) VALUES (?, ?)",
+            params![alias, index_id],
+        )?;
+
+        Ok(())
+    }
+
+    /// Delete an alias
+    /// FT.ALIASDEL alias
+    pub fn ft_aliasdel(&self, alias: &str) -> Result<bool> {
+        let conn = self.core.conn.lock().unwrap_or_else(|e| e.into_inner());
+        conn.execute("DELETE FROM ft_aliases WHERE alias = ?", params![alias])?;
+        Ok(conn.changes() > 0)
+    }
+
+    /// Update an alias to point to a different index
+    /// FT.ALIASUPDATE alias index
+    pub fn ft_aliasupdate(&self, alias: &str, index_name: &str) -> Result<()> {
+        // Same as aliasadd (INSERT OR REPLACE)
+        self.ft_aliasadd(alias, index_name)
+    }
+
+    /// Add a synonym group
+    /// FT.SYNUPDATE index group_id term...
+    pub fn ft_synupdate(&self, index_name: &str, group_id: &str, terms: &[&str]) -> Result<()> {
+        let conn = self.core.conn.lock().unwrap_or_else(|e| e.into_inner());
+
+        // Get index ID
+        let index_id: Option<i64> = conn
+            .query_row(
+                "SELECT id FROM ft_indexes WHERE name = ? LIMIT 1",
+                params![index_name],
+                |row| row.get(0),
+            )
+            .optional()?;
+
+        let index_id = match index_id {
+            Some(id) => id,
+            None => return Err(KvError::Other(format!("Unknown index: {}", index_name))),
+        };
+
+        // Insert terms
+        for term in terms {
+            conn.execute(
+                "INSERT OR IGNORE INTO ft_synonyms (index_id, group_id, term) VALUES (?, ?, ?)",
+                params![index_id, group_id, term],
+            )?;
+        }
+
+        Ok(())
+    }
+
+    /// Dump all synonym groups for an index
+    /// FT.SYNDUMP index
+    pub fn ft_syndump(&self, index_name: &str) -> Result<Vec<(String, Vec<String>)>> {
+        let conn = self.core.conn.lock().unwrap_or_else(|e| e.into_inner());
+
+        // Get index ID
+        let index_id: Option<i64> = conn
+            .query_row(
+                "SELECT id FROM ft_indexes WHERE name = ? LIMIT 1",
+                params![index_name],
+                |row| row.get(0),
+            )
+            .optional()?;
+
+        let index_id = match index_id {
+            Some(id) => id,
+            None => return Err(KvError::Other(format!("Unknown index: {}", index_name))),
+        };
+
+        // Get all synonyms grouped by group_id
+        let mut stmt = conn.prepare(
+            "SELECT group_id, term FROM ft_synonyms WHERE index_id = ? ORDER BY group_id, term",
+        )?;
+
+        let rows: Vec<(String, String)> = stmt
+            .query_map(params![index_id], |row| Ok((row.get(0)?, row.get(1)?)))?
+            .filter_map(|r| r.ok())
+            .collect();
+
+        // Group by group_id
+        let mut result: Vec<(String, Vec<String>)> = Vec::new();
+        let mut current_group: Option<String> = None;
+        let mut current_terms: Vec<String> = Vec::new();
+
+        for (group_id, term) in rows {
+            if Some(&group_id) != current_group.as_ref() {
+                if let Some(g) = current_group.take() {
+                    result.push((g, std::mem::take(&mut current_terms)));
+                }
+                current_group = Some(group_id);
+            }
+            current_terms.push(term);
+        }
+
+        if let Some(g) = current_group {
+            result.push((g, current_terms));
+        }
+
+        Ok(result)
+    }
+
+    /// Add a suggestion to an autocomplete dictionary
+    /// FT.SUGADD key string score [PAYLOAD payload]
+    pub fn ft_sugadd(
+        &self,
+        key: &str,
+        string: &str,
+        score: f64,
+        payload: Option<&str>,
+    ) -> Result<i64> {
+        let conn = self.core.conn.lock().unwrap_or_else(|e| e.into_inner());
+
+        conn.execute(
+            "INSERT OR REPLACE INTO ft_suggestions (key, string, score, payload) VALUES (?, ?, ?, ?)",
+            params![key, string, score, payload],
+        )?;
+
+        // Return total count for this key
+        let count: i64 = conn.query_row(
+            "SELECT COUNT(*) FROM ft_suggestions WHERE key = ?",
+            params![key],
+            |row| row.get(0),
+        )?;
+
+        Ok(count)
+    }
+
+    /// Get suggestions from an autocomplete dictionary
+    /// FT.SUGGET key prefix [FUZZY] [WITHSCORES] [WITHPAYLOADS] [MAX n]
+    pub fn ft_sugget(
+        &self,
+        key: &str,
+        prefix: &str,
+        fuzzy: bool,
+        max: i64,
+    ) -> Result<Vec<crate::types::FtSuggestion>> {
+        use crate::types::FtSuggestion;
+
+        let conn = self.core.conn.lock().unwrap_or_else(|e| e.into_inner());
+
+        // For fuzzy matching, we'd need trigrams or Levenshtein distance
+        // For now, implement prefix matching
+        let pattern = if fuzzy {
+            format!("%{}%", prefix) // Simple contains for fuzzy
+        } else {
+            format!("{}%", prefix) // Prefix match
+        };
+
+        let mut stmt = conn.prepare(
+            "SELECT string, score, payload FROM ft_suggestions
+             WHERE key = ? AND string LIKE ?
+             ORDER BY score DESC
+             LIMIT ?",
+        )?;
+
+        let suggestions: Vec<FtSuggestion> = stmt
+            .query_map(params![key, pattern, max], |row| {
+                Ok(FtSuggestion {
+                    string: row.get(0)?,
+                    score: row.get(1)?,
+                    payload: row.get(2)?,
+                })
+            })?
+            .filter_map(|r| r.ok())
+            .collect();
+
+        Ok(suggestions)
+    }
+
+    /// Delete a suggestion from an autocomplete dictionary
+    /// FT.SUGDEL key string
+    pub fn ft_sugdel(&self, key: &str, string: &str) -> Result<bool> {
+        let conn = self.core.conn.lock().unwrap_or_else(|e| e.into_inner());
+        conn.execute(
+            "DELETE FROM ft_suggestions WHERE key = ? AND string = ?",
+            params![key, string],
+        )?;
+        Ok(conn.changes() > 0)
+    }
+
+    /// Get the size of an autocomplete dictionary
+    /// FT.SUGLEN key
+    pub fn ft_suglen(&self, key: &str) -> Result<i64> {
+        let conn = self.core.conn.lock().unwrap_or_else(|e| e.into_inner());
+        let count: i64 = conn.query_row(
+            "SELECT COUNT(*) FROM ft_suggestions WHERE key = ?",
+            params![key],
+            |row| row.get(0),
+        )?;
+        Ok(count)
+    }
+
+    /// Search a RediSearch index
+    /// FT.SEARCH index query [NOCONTENT] [VERBATIM] [NOSTOPWORDS] [WITHSCORES]
+    ///           [WITHPAYLOADS] [LIMIT offset num] [SORTBY field [ASC|DESC]]
+    ///           [RETURN count field ...] [HIGHLIGHT] [SUMMARIZE]
+    pub fn ft_search(
+        &self,
+        index_name: &str,
+        query: &str,
+        options: &crate::types::FtSearchOptions,
+    ) -> Result<(i64, Vec<crate::types::FtSearchResult>)> {
+        use crate::search::{parse_query, NumericBound};
+        use crate::types::{FtField, FtFieldType, FtOnType, FtSearchResult};
+
+        let conn = self.core.conn.lock().unwrap_or_else(|e| e.into_inner());
+
+        // Resolve index name (could be an alias)
+        let index_id: Option<i64> = conn
+            .query_row(
+                "SELECT id FROM ft_indexes WHERE name = ? LIMIT 1",
+                params![index_name],
+                |row| row.get(0),
+            )
+            .optional()?;
+
+        let index_id = match index_id {
+            Some(id) => id,
+            None => {
+                // Try alias
+                let alias_index_id: Option<i64> = conn
+                    .query_row(
+                        "SELECT index_id FROM ft_aliases WHERE alias = ? LIMIT 1",
+                        params![index_name],
+                        |row| row.get(0),
+                    )
+                    .optional()?;
+                match alias_index_id {
+                    Some(id) => id,
+                    None => return Err(KvError::Other(format!("Unknown index: {}", index_name))),
+                }
+            }
+        };
+
+        // Get index definition
+        let (on_type_str, prefixes_json, schema_json): (String, String, String) = conn.query_row(
+            "SELECT on_type, prefixes, schema FROM ft_indexes WHERE id = ?",
+            params![index_id],
+            |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+        )?;
+
+        let _on_type = FtOnType::from_str(&on_type_str).unwrap_or(FtOnType::Hash);
+        let prefixes: Vec<String> = serde_json::from_str(&prefixes_json).unwrap_or_default();
+        let schema_values: Vec<serde_json::Value> =
+            serde_json::from_str(&schema_json).unwrap_or_default();
+
+        // Parse schema to get field names and types
+        let schema: Vec<FtField> = schema_values
+            .iter()
+            .filter_map(|v| {
+                let name = v.get("name")?.as_str()?;
+                let type_str = v.get("type")?.as_str()?;
+                let field_type = FtFieldType::from_str(type_str)?;
+                let mut field = FtField::new(name, field_type);
+                if let Some(sortable) = v.get("sortable").and_then(|v| v.as_bool()) {
+                    field.sortable = sortable;
+                }
+                if let Some(noindex) = v.get("noindex").and_then(|v| v.as_bool()) {
+                    field.noindex = noindex;
+                }
+                if let Some(nostem) = v.get("nostem").and_then(|v| v.as_bool()) {
+                    field.nostem = nostem;
+                }
+                if let Some(weight) = v.get("weight").and_then(|v| v.as_f64()) {
+                    field.weight = weight;
+                }
+                Some(field)
+            })
+            .collect();
+
+        // Get text field names for FTS5
+        let text_fields: Vec<&str> = schema
+            .iter()
+            .filter(|f| matches!(f.field_type, FtFieldType::Text) && !f.noindex)
+            .map(|f| f.name.as_str())
+            .collect();
+
+        // Parse the query
+        let parsed = parse_query(query, options.verbatim)
+            .map_err(|e| KvError::Other(format!("Query parse error: {}", e)))?;
+
+        // Find matching keys with the index prefixes
+        // For now, scan all hashes matching the prefixes
+        let mut all_matching_keys: Vec<(i64, String)> = Vec::new();
+        let db = self.selected_db;
+        let now = Self::now_ms();
+
+        for prefix in &prefixes {
+            let like_pattern = format!("{}%", prefix.replace('%', "\\%").replace('_', "\\_"));
+            let mut stmt = conn.prepare(
+                "SELECT id, key FROM keys WHERE db = ? AND key LIKE ? ESCAPE '\\' AND type = 2
+                 AND (expire_at IS NULL OR expire_at > ?)",
+            )?;
+            let rows = stmt.query_map(params![db, like_pattern, now], |row| {
+                Ok((row.get::<_, i64>(0)?, row.get::<_, String>(1)?))
+            })?;
+            for row in rows {
+                if let Ok((key_id, key_name)) = row {
+                    all_matching_keys.push((key_id, key_name));
+                }
+            }
+        }
+
+        // If no matching keys, return empty
+        if all_matching_keys.is_empty() {
+            return Ok((0, Vec::new()));
+        }
+
+        // For each key, check if it matches the query
+        let mut results: Vec<FtSearchResult> = Vec::new();
+
+        for (key_id, key_name) in &all_matching_keys {
+            // Get all fields for this hash
+            let mut stmt = conn.prepare("SELECT field, value FROM hashes WHERE key_id = ?")?;
+            let field_rows = stmt.query_map(params![key_id], |row| {
+                Ok((row.get::<_, String>(0)?, row.get::<_, Vec<u8>>(1)?))
+            })?;
+
+            let mut fields: HashMap<String, Vec<u8>> = HashMap::new();
+            for row in field_rows {
+                if let Ok((field, value)) = row {
+                    fields.insert(field, value);
+                }
+            }
+
+            // Check numeric filters
+            let mut passes_numeric = true;
+            for filter in &parsed.numeric_filters {
+                if let Some(value_bytes) = fields.get(&filter.field) {
+                    if let Ok(value_str) = std::str::from_utf8(value_bytes) {
+                        if let Ok(value) = value_str.parse::<f64>() {
+                            let min_ok = match &filter.min {
+                                NumericBound::Inclusive(min) => value >= *min,
+                                NumericBound::Exclusive(min) => value > *min,
+                                NumericBound::Unbounded => true,
+                            };
+                            let max_ok = match &filter.max {
+                                NumericBound::Inclusive(max) => value <= *max,
+                                NumericBound::Exclusive(max) => value < *max,
+                                NumericBound::Unbounded => true,
+                            };
+                            if !min_ok || !max_ok {
+                                passes_numeric = false;
+                                break;
+                            }
+                        } else {
+                            passes_numeric = false;
+                            break;
+                        }
+                    } else {
+                        passes_numeric = false;
+                        break;
+                    }
+                } else {
+                    passes_numeric = false;
+                    break;
+                }
+            }
+
+            if !passes_numeric {
+                continue;
+            }
+
+            // Check tag filters
+            let mut passes_tag = true;
+            for filter in &parsed.tag_filters {
+                if let Some(value_bytes) = fields.get(&filter.field) {
+                    if let Ok(value_str) = std::str::from_utf8(value_bytes) {
+                        // Tags are comma-separated by default
+                        let doc_tags: Vec<&str> = value_str.split(',').map(|s| s.trim()).collect();
+                        let matches_any = filter
+                            .tags
+                            .iter()
+                            .any(|t| doc_tags.iter().any(|dt| dt.eq_ignore_ascii_case(t)));
+                        if !matches_any {
+                            passes_tag = false;
+                            break;
+                        }
+                    } else {
+                        passes_tag = false;
+                        break;
+                    }
+                } else {
+                    passes_tag = false;
+                    break;
+                }
+            }
+
+            if !passes_tag {
+                continue;
+            }
+
+            // Check text search (FTS5 or in-memory)
+            let mut passes_text = true;
+            let mut score = 1.0;
+
+            if let Some(fts_query) = &parsed.fts_query {
+                // Try FTS5 search on the index's table
+                let fts_table = format!("fts_idx_{}", index_id);
+
+                // Check if this document is in the FTS5 table by rowid
+                // For now, do in-memory text matching as a fallback
+                // Build searchable content from text fields
+                let mut searchable_content = String::new();
+                for field_name in &text_fields {
+                    if let Some(value_bytes) = fields.get(*field_name) {
+                        if let Ok(value_str) = std::str::from_utf8(value_bytes) {
+                            searchable_content.push_str(value_str);
+                            searchable_content.push(' ');
+                        }
+                    }
+                }
+
+                // Simple in-memory text matching
+                // This is a fallback - proper FTS5 search should be used when documents are indexed
+                passes_text = self.simple_text_match(&searchable_content, fts_query);
+
+                // Calculate a simple score based on term frequency
+                if passes_text {
+                    score = self.calculate_simple_score(&searchable_content, fts_query);
+                }
+            }
+
+            if !passes_text {
+                continue;
+            }
+
+            // Build result
+            let mut result = FtSearchResult::new(key_name.clone(), score);
+
+            if !options.nocontent {
+                // Determine which fields to return
+                let fields_to_return: Vec<&String> = if options.return_fields.is_empty() {
+                    fields.keys().collect()
+                } else {
+                    options
+                        .return_fields
+                        .iter()
+                        .filter(|f| fields.contains_key(*f))
+                        .collect()
+                };
+
+                for field_name in fields_to_return {
+                    if let Some(value) = fields.get(field_name) {
+                        result.fields.push((field_name.clone(), value.clone()));
+                    }
+                }
+            }
+
+            results.push(result);
+        }
+
+        // Sort results
+        if let Some((sort_field, ascending)) = &options.sortby {
+            results.sort_by(|a, b| {
+                let a_val = a
+                    .fields
+                    .iter()
+                    .find(|(f, _)| f == sort_field)
+                    .map(|(_, v)| v);
+                let b_val = b
+                    .fields
+                    .iter()
+                    .find(|(f, _)| f == sort_field)
+                    .map(|(_, v)| v);
+
+                let cmp = match (a_val, b_val) {
+                    (Some(av), Some(bv)) => {
+                        // Try numeric comparison first
+                        let a_num = std::str::from_utf8(av)
+                            .ok()
+                            .and_then(|s| s.parse::<f64>().ok());
+                        let b_num = std::str::from_utf8(bv)
+                            .ok()
+                            .and_then(|s| s.parse::<f64>().ok());
+                        match (a_num, b_num) {
+                            (Some(an), Some(bn)) => {
+                                an.partial_cmp(&bn).unwrap_or(std::cmp::Ordering::Equal)
+                            }
+                            _ => av.cmp(bv),
+                        }
+                    }
+                    (Some(_), None) => std::cmp::Ordering::Less,
+                    (None, Some(_)) => std::cmp::Ordering::Greater,
+                    (None, None) => std::cmp::Ordering::Equal,
+                };
+
+                if *ascending {
+                    cmp
+                } else {
+                    cmp.reverse()
+                }
+            });
+        } else if options.withscores {
+            // Sort by score descending by default
+            results.sort_by(|a, b| {
+                b.score
+                    .partial_cmp(&a.score)
+                    .unwrap_or(std::cmp::Ordering::Equal)
+            });
+        }
+
+        let total_count = results.len() as i64;
+
+        // Apply pagination
+        let offset = options.limit_offset as usize;
+        let limit = options.limit_num as usize;
+        let paginated: Vec<FtSearchResult> = results.into_iter().skip(offset).take(limit).collect();
+
+        Ok((total_count, paginated))
+    }
+
+    /// Simple in-memory text matching for FTS5 queries
+    /// This is a fallback when documents are not indexed in FTS5
+    fn simple_text_match(&self, content: &str, query: &str) -> bool {
+        let content_lower = content.to_lowercase();
+
+        // Simple parsing of FTS5 query patterns
+        // Handle AND, OR, NOT, phrases, and prefixes
+
+        // Remove parentheses for simple matching
+        let query_clean = query.replace('(', " ").replace(')', " ").replace("\"", "");
+
+        // Split into terms
+        let terms: Vec<&str> = query_clean.split_whitespace().collect();
+
+        let mut i = 0;
+        let mut result = true;
+        let mut current_op = "AND";
+
+        while i < terms.len() {
+            let term = terms[i];
+
+            match term.to_uppercase().as_str() {
+                "AND" => {
+                    current_op = "AND";
+                    i += 1;
+                    continue;
+                }
+                "OR" => {
+                    current_op = "OR";
+                    i += 1;
+                    continue;
+                }
+                "NOT" => {
+                    i += 1;
+                    if i < terms.len() {
+                        let not_term = terms[i].to_lowercase();
+                        let not_term_clean = not_term.trim_end_matches('*');
+                        if not_term.ends_with('*') {
+                            // Prefix NOT
+                            if content_lower.contains(not_term_clean) {
+                                return false;
+                            }
+                        } else if content_lower.contains(&not_term) {
+                            return false;
+                        }
+                    }
+                    i += 1;
+                    continue;
+                }
+                _ => {}
+            }
+
+            // Handle field-scoped terms like "field":term
+            let actual_term = if term.contains(':') {
+                term.split(':').last().unwrap_or(term)
+            } else {
+                term
+            };
+
+            let term_lower = actual_term.to_lowercase();
+
+            // Handle prefix search
+            let matches = if term_lower.ends_with('*') {
+                let prefix = term_lower.trim_end_matches('*');
+                content_lower
+                    .split_whitespace()
+                    .any(|w| w.starts_with(prefix))
+            } else {
+                content_lower.contains(&term_lower)
+            };
+
+            match current_op {
+                "AND" => result = result && matches,
+                "OR" => result = result || matches,
+                _ => result = result && matches,
+            }
+
+            current_op = "AND"; // Reset to default
+            i += 1;
+        }
+
+        result
+    }
+
+    /// Calculate a simple relevance score based on term frequency
+    fn calculate_simple_score(&self, content: &str, query: &str) -> f64 {
+        let content_lower = content.to_lowercase();
+        let words: Vec<&str> = content_lower.split_whitespace().collect();
+        let word_count = words.len() as f64;
+
+        if word_count == 0.0 {
+            return 0.0;
+        }
+
+        // Extract terms from query (simplified)
+        let query_clean = query
+            .replace('(', " ")
+            .replace(')', " ")
+            .replace("\"", "")
+            .to_lowercase();
+
+        let terms: Vec<&str> = query_clean
+            .split_whitespace()
+            .filter(|t| {
+                let upper = t.to_uppercase();
+                upper != "AND" && upper != "OR" && upper != "NOT"
+            })
+            .collect();
+
+        let mut total_freq = 0.0;
+        for term in &terms {
+            let term_clean = term.trim_end_matches('*');
+            if term_clean.is_empty() {
+                continue;
+            }
+
+            // Count occurrences
+            let count = if term.ends_with('*') {
+                words.iter().filter(|w| w.starts_with(term_clean)).count()
+            } else {
+                words.iter().filter(|w| **w == term_clean).count()
+            };
+
+            total_freq += count as f64;
+        }
+
+        // Simple TF score
+        total_freq / word_count
     }
 
     // ============================================================================
@@ -6648,7 +7657,11 @@ impl Db {
         let db_prefix = format!("{}:%", self.selected_db);
         let patterns: Vec<(String, bool, i32)> = stmt
             .query_map(params![db_prefix], |row| {
-                Ok((row.get::<_, String>(0)?, row.get::<_, bool>(1)?, row.get::<_, i32>(2)?))
+                Ok((
+                    row.get::<_, String>(0)?,
+                    row.get::<_, bool>(1)?,
+                    row.get::<_, i32>(2)?,
+                ))
             })?
             .filter_map(|r| r.ok())
             .collect();
@@ -6694,11 +7707,21 @@ impl Db {
 
     /// Add a vector to a key
     #[cfg(feature = "vectors")]
-    pub fn vadd(&self, key: &str, vector_id: &str, embedding: &[f32], metadata: Option<&str>) -> Result<bool> {
+    pub fn vadd(
+        &self,
+        key: &str,
+        vector_id: &str,
+        embedding: &[f32],
+        metadata: Option<&str>,
+    ) -> Result<bool> {
         // Check if vectors are enabled for this key
         let dimensions = match self.is_vector_enabled(key)? {
             Some(d) => d,
-            None => return Err(KvError::Other("vectors not enabled for this key".to_string())),
+            None => {
+                return Err(KvError::Other(
+                    "vectors not enabled for this key".to_string(),
+                ))
+            }
         };
 
         // Validate dimensions
@@ -6739,10 +7762,7 @@ impl Db {
         };
 
         // Convert embedding to bytes
-        let embedding_bytes: Vec<u8> = embedding
-            .iter()
-            .flat_map(|f| f.to_le_bytes())
-            .collect();
+        let embedding_bytes: Vec<u8> = embedding.iter().flat_map(|f| f.to_le_bytes()).collect();
 
         // Insert or replace vector
         let rows = conn.execute(
@@ -6828,14 +7848,13 @@ impl Db {
     pub fn vcount(&self, key: &str) -> Result<i64> {
         let conn = self.core.conn.lock().unwrap_or_else(|e| e.into_inner());
 
-        let count: i64 = conn
-            .query_row(
-                "SELECT COUNT(*) FROM vectors v
+        let count: i64 = conn.query_row(
+            "SELECT COUNT(*) FROM vectors v
                  JOIN keys k ON v.key_id = k.id
                  WHERE k.db = ? AND k.key = ?",
-                params![self.selected_db, key],
-                |row| row.get(0),
-            )?;
+            params![self.selected_db, key],
+            |row| row.get(0),
+        )?;
 
         Ok(count)
     }
@@ -6854,7 +7873,11 @@ impl Db {
         // Check if vectors are enabled and get expected dimensions
         let expected_dims = match self.is_vector_enabled(key)? {
             Some(d) => d,
-            None => return Err(KvError::Other("vectors not enabled for this key".to_string())),
+            None => {
+                return Err(KvError::Other(
+                    "vectors not enabled for this key".to_string(),
+                ))
+            }
         };
 
         if query_vector.len() != expected_dims as usize {
@@ -6872,7 +7895,7 @@ impl Db {
             "SELECT v.vector_id, v.embedding, v.metadata
              FROM vectors v
              JOIN keys k ON v.key_id = k.id
-             WHERE k.db = ? AND k.key = ?"
+             WHERE k.db = ? AND k.key = ?",
         )?;
 
         let mut results: Vec<VectorSearchResult> = stmt
@@ -6905,7 +7928,8 @@ impl Db {
                             .zip(embedding.iter())
                             .map(|(a, b)| a * b)
                             .sum();
-                        let norm_a: f32 = query_vector.iter().map(|x| x.powi(2)).sum::<f32>().sqrt();
+                        let norm_a: f32 =
+                            query_vector.iter().map(|x| x.powi(2)).sum::<f32>().sqrt();
                         let norm_b: f32 = embedding.iter().map(|x| x.powi(2)).sum::<f32>().sqrt();
                         if norm_a == 0.0 || norm_b == 0.0 {
                             1.0
@@ -6934,7 +7958,11 @@ impl Db {
             .collect();
 
         // Sort by distance (ascending) and take top k
-        results.sort_by(|a, b| a.distance.partial_cmp(&b.distance).unwrap_or(std::cmp::Ordering::Equal));
+        results.sort_by(|a, b| {
+            a.distance
+                .partial_cmp(&b.distance)
+                .unwrap_or(std::cmp::Ordering::Equal)
+        });
         results.truncate(k as usize);
 
         Ok(results)
@@ -6964,13 +7992,15 @@ impl Db {
         )?;
 
         // Estimate storage bytes
-        let storage_bytes: i64 = conn.query_row(
-            "SELECT COALESCE(SUM(LENGTH(embedding)), 0) FROM vectors v
+        let storage_bytes: i64 = conn
+            .query_row(
+                "SELECT COALESCE(SUM(LENGTH(embedding)), 0) FROM vectors v
              JOIN keys k ON v.key_id = k.id
              WHERE k.db = ?",
-            params![self.selected_db],
-            |row| row.get(0),
-        ).unwrap_or(0);
+                params![self.selected_db],
+                |row| row.get(0),
+            )
+            .unwrap_or(0);
 
         let mut stats = VectorStats::new(total_vectors, total_keys, storage_bytes);
 
@@ -7744,14 +8774,21 @@ mod tests {
         let db = Db::open_memory().unwrap();
 
         // Create a hash key
-        db.hset("myhash", &[("field", b"value".as_slice())]).unwrap();
+        db.hset("myhash", &[("field", b"value".as_slice())])
+            .unwrap();
 
         // String operations on hash should fail with WrongType
         assert!(matches!(db.get("myhash"), Err(KvError::WrongType)));
         assert!(matches!(db.incr("myhash"), Err(KvError::WrongType)));
         assert!(matches!(db.incrby("myhash", 5), Err(KvError::WrongType)));
-        assert!(matches!(db.incrbyfloat("myhash", 1.5), Err(KvError::WrongType)));
-        assert!(matches!(db.append("myhash", b"test"), Err(KvError::WrongType)));
+        assert!(matches!(
+            db.incrbyfloat("myhash", 1.5),
+            Err(KvError::WrongType)
+        ));
+        assert!(matches!(
+            db.append("myhash", b"test"),
+            Err(KvError::WrongType)
+        ));
 
         // Create a list key
         db.lpush("mylist", &[b"a"]).unwrap();
@@ -7759,7 +8796,10 @@ mod tests {
         // String operations on list should fail with WrongType
         assert!(matches!(db.get("mylist"), Err(KvError::WrongType)));
         assert!(matches!(db.incr("mylist"), Err(KvError::WrongType)));
-        assert!(matches!(db.append("mylist", b"test"), Err(KvError::WrongType)));
+        assert!(matches!(
+            db.append("mylist", b"test"),
+            Err(KvError::WrongType)
+        ));
 
         // Create a set key
         db.sadd("myset", &[b"member"]).unwrap();
@@ -7776,7 +8816,9 @@ mod tests {
         let db = Db::open_memory().unwrap();
 
         // HSET creates new fields
-        let count = db.hset("myhash", &[("field1", b"value1".as_slice())]).unwrap();
+        let count = db
+            .hset("myhash", &[("field1", b"value1".as_slice())])
+            .unwrap();
         assert_eq!(count, 1);
 
         // HGET retrieves field
@@ -7797,11 +8839,12 @@ mod tests {
         let db = Db::open_memory().unwrap();
 
         // Set multiple fields at once
-        let count = db.hset("myhash", &[
-            ("f1", b"v1".as_slice()),
-            ("f2", b"v2"),
-            ("f3", b"v3"),
-        ]).unwrap();
+        let count = db
+            .hset(
+                "myhash",
+                &[("f1", b"v1".as_slice()), ("f2", b"v2"), ("f3", b"v3")],
+            )
+            .unwrap();
         assert_eq!(count, 3);
 
         assert_eq!(db.hget("myhash", "f1").unwrap(), Some(b"v1".to_vec()));
@@ -7814,24 +8857,29 @@ mod tests {
         let db = Db::open_memory().unwrap();
 
         // Set initial value
-        let count1 = db.hset("myhash", &[("field", b"value1".as_slice())]).unwrap();
+        let count1 = db
+            .hset("myhash", &[("field", b"value1".as_slice())])
+            .unwrap();
         assert_eq!(count1, 1);
 
         // Update existing field (returns 0 new fields)
-        let count2 = db.hset("myhash", &[("field", b"value2".as_slice())]).unwrap();
+        let count2 = db
+            .hset("myhash", &[("field", b"value2".as_slice())])
+            .unwrap();
         assert_eq!(count2, 0);
 
-        assert_eq!(db.hget("myhash", "field").unwrap(), Some(b"value2".to_vec()));
+        assert_eq!(
+            db.hget("myhash", "field").unwrap(),
+            Some(b"value2".to_vec())
+        );
     }
 
     #[test]
     fn test_hmget() {
         let db = Db::open_memory().unwrap();
 
-        db.hset("myhash", &[
-            ("f1", b"v1".as_slice()),
-            ("f2", b"v2"),
-        ]).unwrap();
+        db.hset("myhash", &[("f1", b"v1".as_slice()), ("f2", b"v2")])
+            .unwrap();
 
         let values = db.hmget("myhash", &["f1", "f2", "f3"]).unwrap();
         assert_eq!(values.len(), 3);
@@ -7854,10 +8902,8 @@ mod tests {
     fn test_hgetall() {
         let db = Db::open_memory().unwrap();
 
-        db.hset("myhash", &[
-            ("f1", b"v1".as_slice()),
-            ("f2", b"v2"),
-        ]).unwrap();
+        db.hset("myhash", &[("f1", b"v1".as_slice()), ("f2", b"v2")])
+            .unwrap();
 
         let all = db.hgetall("myhash").unwrap();
         assert_eq!(all.len(), 2);
@@ -7880,11 +8926,11 @@ mod tests {
     fn test_hdel() {
         let db = Db::open_memory().unwrap();
 
-        db.hset("myhash", &[
-            ("f1", b"v1".as_slice()),
-            ("f2", b"v2"),
-            ("f3", b"v3"),
-        ]).unwrap();
+        db.hset(
+            "myhash",
+            &[("f1", b"v1".as_slice()), ("f2", b"v2"), ("f3", b"v3")],
+        )
+        .unwrap();
 
         // Delete one field
         let count = db.hdel("myhash", &["f1"]).unwrap();
@@ -7900,7 +8946,8 @@ mod tests {
     fn test_hdel_removes_empty_key() {
         let db = Db::open_memory().unwrap();
 
-        db.hset("myhash", &[("field", b"value".as_slice())]).unwrap();
+        db.hset("myhash", &[("field", b"value".as_slice())])
+            .unwrap();
 
         // Verify key exists
         assert_eq!(db.key_type("myhash").unwrap(), Some(KeyType::Hash));
@@ -7924,7 +8971,8 @@ mod tests {
     fn test_hexists() {
         let db = Db::open_memory().unwrap();
 
-        db.hset("myhash", &[("field", b"value".as_slice())]).unwrap();
+        db.hset("myhash", &[("field", b"value".as_slice())])
+            .unwrap();
 
         assert!(db.hexists("myhash", "field").unwrap());
         assert!(!db.hexists("myhash", "nonexistent").unwrap());
@@ -7935,11 +8983,11 @@ mod tests {
     fn test_hkeys() {
         let db = Db::open_memory().unwrap();
 
-        db.hset("myhash", &[
-            ("f1", b"v1".as_slice()),
-            ("f2", b"v2"),
-            ("f3", b"v3"),
-        ]).unwrap();
+        db.hset(
+            "myhash",
+            &[("f1", b"v1".as_slice()), ("f2", b"v2"), ("f3", b"v3")],
+        )
+        .unwrap();
 
         let keys = db.hkeys("myhash").unwrap();
         assert_eq!(keys.len(), 3);
@@ -7960,10 +9008,8 @@ mod tests {
     fn test_hvals() {
         let db = Db::open_memory().unwrap();
 
-        db.hset("myhash", &[
-            ("f1", b"v1".as_slice()),
-            ("f2", b"v2"),
-        ]).unwrap();
+        db.hset("myhash", &[("f1", b"v1".as_slice()), ("f2", b"v2")])
+            .unwrap();
 
         let vals = db.hvals("myhash").unwrap();
         assert_eq!(vals.len(), 2);
@@ -7988,7 +9034,8 @@ mod tests {
         db.hset("myhash", &[("f1", b"v1".as_slice())]).unwrap();
         assert_eq!(db.hlen("myhash").unwrap(), 1);
 
-        db.hset("myhash", &[("f2", b"v2".as_slice()), ("f3", b"v3")]).unwrap();
+        db.hset("myhash", &[("f2", b"v2".as_slice()), ("f3", b"v3")])
+            .unwrap();
         assert_eq!(db.hlen("myhash").unwrap(), 3);
     }
 
@@ -8042,18 +9089,25 @@ mod tests {
 
         // First HSETNX should succeed
         assert!(db.hsetnx("myhash", "field", b"value1").unwrap());
-        assert_eq!(db.hget("myhash", "field").unwrap(), Some(b"value1".to_vec()));
+        assert_eq!(
+            db.hget("myhash", "field").unwrap(),
+            Some(b"value1".to_vec())
+        );
 
         // Second HSETNX should fail
         assert!(!db.hsetnx("myhash", "field", b"value2").unwrap());
-        assert_eq!(db.hget("myhash", "field").unwrap(), Some(b"value1".to_vec()));
+        assert_eq!(
+            db.hget("myhash", "field").unwrap(),
+            Some(b"value1".to_vec())
+        );
     }
 
     #[test]
     fn test_hash_type() {
         let db = Db::open_memory().unwrap();
 
-        db.hset("myhash", &[("field", b"value".as_slice())]).unwrap();
+        db.hset("myhash", &[("field", b"value".as_slice())])
+            .unwrap();
         assert_eq!(db.key_type("myhash").unwrap(), Some(KeyType::Hash));
     }
 
@@ -8065,7 +9119,9 @@ mod tests {
         db.set("mystring", b"value", None).unwrap();
 
         // Try hash operations on string key - should fail
-        assert!(db.hset("mystring", &[("field", b"value".as_slice())]).is_err());
+        assert!(db
+            .hset("mystring", &[("field", b"value".as_slice())])
+            .is_err());
         assert!(db.hget("mystring", "field").is_err());
         assert!(db.hdel("mystring", &["field"]).is_err());
     }
@@ -8077,10 +9133,8 @@ mod tests {
         let path = temp_db_path();
         let db = Db::open(&path).unwrap();
 
-        db.hset("myhash", &[
-            ("f1", b"v1".as_slice()),
-            ("f2", b"v2"),
-        ]).unwrap();
+        db.hset("myhash", &[("f1", b"v1".as_slice()), ("f2", b"v2")])
+            .unwrap();
 
         assert_eq!(db.hget("myhash", "f1").unwrap(), Some(b"v1".to_vec()));
         assert_eq!(db.hget("myhash", "f2").unwrap(), Some(b"v2".to_vec()));
@@ -8094,11 +9148,11 @@ mod tests {
         let path = temp_db_path();
         let db = Db::open(&path).unwrap();
 
-        db.hset("myhash", &[
-            ("f1", b"v1".as_slice()),
-            ("f2", b"v2"),
-            ("f3", b"v3"),
-        ]).unwrap();
+        db.hset(
+            "myhash",
+            &[("f1", b"v1".as_slice()), ("f2", b"v2"), ("f3", b"v3")],
+        )
+        .unwrap();
 
         // HMGET
         let values = db.hmget("myhash", &["f1", "f3", "f4"]).unwrap();
@@ -8118,10 +9172,8 @@ mod tests {
         let path = temp_db_path();
         let db = Db::open(&path).unwrap();
 
-        db.hset("myhash", &[
-            ("f1", b"v1".as_slice()),
-            ("f2", b"v2"),
-        ]).unwrap();
+        db.hset("myhash", &[("f1", b"v1".as_slice()), ("f2", b"v2")])
+            .unwrap();
 
         assert!(db.hexists("myhash", "f1").unwrap());
         assert!(!db.hexists("myhash", "f3").unwrap());
@@ -8139,10 +9191,8 @@ mod tests {
         let path = temp_db_path();
         let db = Db::open(&path).unwrap();
 
-        db.hset("myhash", &[
-            ("f1", b"v1".as_slice()),
-            ("f2", b"v2"),
-        ]).unwrap();
+        db.hset("myhash", &[("f1", b"v1".as_slice()), ("f2", b"v2")])
+            .unwrap();
 
         assert_eq!(db.hlen("myhash").unwrap(), 2);
 
@@ -8174,10 +9224,18 @@ mod tests {
         let path = temp_db_path();
         let db = Db::open(&path).unwrap();
 
-        let r1: f64 = db.hincrbyfloat("myhash", "float", 1.5).unwrap().parse().unwrap();
+        let r1: f64 = db
+            .hincrbyfloat("myhash", "float", 1.5)
+            .unwrap()
+            .parse()
+            .unwrap();
         assert!((r1 - 1.5).abs() < 0.001);
 
-        let r2: f64 = db.hincrbyfloat("myhash", "float", 0.5).unwrap().parse().unwrap();
+        let r2: f64 = db
+            .hincrbyfloat("myhash", "float", 0.5)
+            .unwrap()
+            .parse()
+            .unwrap();
         assert!((r2 - 2.0).abs() < 0.001);
 
         cleanup_db(&path);
@@ -8190,7 +9248,10 @@ mod tests {
 
         assert!(db.hsetnx("myhash", "field", b"value1").unwrap());
         assert!(!db.hsetnx("myhash", "field", b"value2").unwrap());
-        assert_eq!(db.hget("myhash", "field").unwrap(), Some(b"value1".to_vec()));
+        assert_eq!(
+            db.hget("myhash", "field").unwrap(),
+            Some(b"value1".to_vec())
+        );
 
         cleanup_db(&path);
     }
@@ -8208,7 +9269,10 @@ mod tests {
 
         // List should be: d, c, b, a
         let items = db.lrange("mylist", 0, -1).unwrap();
-        assert_eq!(items, vec![b"d".to_vec(), b"c".to_vec(), b"b".to_vec(), b"a".to_vec()]);
+        assert_eq!(
+            items,
+            vec![b"d".to_vec(), b"c".to_vec(), b"b".to_vec(), b"a".to_vec()]
+        );
 
         // RPUSH appends to end
         assert_eq!(db.rpush("mylist", &[b"e", b"f"]).unwrap(), 6);
@@ -8387,7 +9451,10 @@ mod tests {
         // Trim using negative indices
         db.ltrim("mylist", 0, -2).unwrap();
         let items = db.lrange("mylist", 0, -1).unwrap();
-        assert_eq!(items, vec![b"a".to_vec(), b"b".to_vec(), b"c".to_vec(), b"d".to_vec()]);
+        assert_eq!(
+            items,
+            vec![b"a".to_vec(), b"b".to_vec(), b"c".to_vec(), b"d".to_vec()]
+        );
     }
 
     #[test]
@@ -8417,15 +9484,30 @@ mod tests {
         db.set("mystring", b"value", None).unwrap();
 
         // Try list operations on string key - should fail
-        assert!(matches!(db.lpush("mystring", &[b"a"]), Err(KvError::WrongType)));
-        assert!(matches!(db.rpush("mystring", &[b"a"]), Err(KvError::WrongType)));
+        assert!(matches!(
+            db.lpush("mystring", &[b"a"]),
+            Err(KvError::WrongType)
+        ));
+        assert!(matches!(
+            db.rpush("mystring", &[b"a"]),
+            Err(KvError::WrongType)
+        ));
         assert!(matches!(db.lpop("mystring", None), Err(KvError::WrongType)));
         assert!(matches!(db.rpop("mystring", None), Err(KvError::WrongType)));
         assert!(matches!(db.llen("mystring"), Err(KvError::WrongType)));
-        assert!(matches!(db.lrange("mystring", 0, -1), Err(KvError::WrongType)));
+        assert!(matches!(
+            db.lrange("mystring", 0, -1),
+            Err(KvError::WrongType)
+        ));
         assert!(matches!(db.lindex("mystring", 0), Err(KvError::WrongType)));
-        assert!(matches!(db.lset("mystring", 0, b"a"), Err(KvError::WrongType)));
-        assert!(matches!(db.ltrim("mystring", 0, 1), Err(KvError::WrongType)));
+        assert!(matches!(
+            db.lset("mystring", 0, b"a"),
+            Err(KvError::WrongType)
+        ));
+        assert!(matches!(
+            db.ltrim("mystring", 0, 1),
+            Err(KvError::WrongType)
+        ));
     }
 
     #[test]
@@ -8926,7 +10008,8 @@ mod tests {
 
         // Adding duplicate members (updates score) should not increase count
         assert_eq!(
-            db.zadd("myzset", &[ZMember::new(1.5, "a"), ZMember::new(4.0, "d"),]).unwrap(),
+            db.zadd("myzset", &[ZMember::new(1.5, "a"), ZMember::new(4.0, "d"),])
+                .unwrap(),
             1
         );
         assert_eq!(db.zcard("myzset").unwrap(), 4);
@@ -8981,11 +10064,8 @@ mod tests {
     fn test_zscore() {
         let db = Db::open_memory().unwrap();
 
-        db.zadd(
-            "myzset",
-            &[ZMember::new(1.5, "a"), ZMember::new(2.5, "b")],
-        )
-        .unwrap();
+        db.zadd("myzset", &[ZMember::new(1.5, "a"), ZMember::new(2.5, "b")])
+            .unwrap();
 
         assert_eq!(db.zscore("myzset", b"a").unwrap(), Some(1.5));
         assert_eq!(db.zscore("myzset", b"b").unwrap(), Some(2.5));
@@ -9120,7 +10200,9 @@ mod tests {
         assert_eq!(members[1].member, b"c");
 
         // With LIMIT
-        let members = db.zrangebyscore("myzset", 1.0, 4.0, Some(1), Some(2)).unwrap();
+        let members = db
+            .zrangebyscore("myzset", 1.0, 4.0, Some(1), Some(2))
+            .unwrap();
         assert_eq!(members.len(), 2);
         assert_eq!(members[0].member, b"b");
         assert_eq!(members[1].member, b"c");
@@ -9245,9 +10327,18 @@ mod tests {
             Err(KvError::WrongType)
         ));
         assert!(matches!(db.zcard("mystring"), Err(KvError::WrongType)));
-        assert!(matches!(db.zscore("mystring", b"a"), Err(KvError::WrongType)));
-        assert!(matches!(db.zrank("mystring", b"a"), Err(KvError::WrongType)));
-        assert!(matches!(db.zrevrank("mystring", b"a"), Err(KvError::WrongType)));
+        assert!(matches!(
+            db.zscore("mystring", b"a"),
+            Err(KvError::WrongType)
+        ));
+        assert!(matches!(
+            db.zrank("mystring", b"a"),
+            Err(KvError::WrongType)
+        ));
+        assert!(matches!(
+            db.zrevrank("mystring", b"a"),
+            Err(KvError::WrongType)
+        ));
         assert!(matches!(
             db.zrange("mystring", 0, -1, false),
             Err(KvError::WrongType)
@@ -9325,11 +10416,8 @@ mod tests {
         let path = temp_db_path();
         let db = Db::open(&path).unwrap();
 
-        db.zadd(
-            "myzset",
-            &[ZMember::new(1.0, "a"), ZMember::new(2.0, "b")],
-        )
-        .unwrap();
+        db.zadd("myzset", &[ZMember::new(1.0, "a"), ZMember::new(2.0, "b")])
+            .unwrap();
         db.zrem("myzset", &[b"a"]).unwrap();
         assert_eq!(db.zcard("myzset").unwrap(), 1);
 
@@ -9450,14 +10538,8 @@ mod tests {
         // Create sorted set and close
         {
             let db = Db::open(&path).unwrap();
-            db.zadd(
-                "myzset",
-                &[
-                    ZMember::new(1.0, "a"),
-                    ZMember::new(2.0, "b"),
-                ],
-            )
-            .unwrap();
+            db.zadd("myzset", &[ZMember::new(1.0, "a"), ZMember::new(2.0, "b")])
+                .unwrap();
         }
 
         // Reopen and verify
@@ -9495,12 +10577,8 @@ mod tests {
     fn test_dbsize_excludes_expired() {
         let db = Db::open_memory().unwrap();
         db.set("key1", b"value1", None).unwrap();
-        db.set(
-            "key2",
-            b"value2",
-            Some(std::time::Duration::from_millis(1)),
-        )
-        .unwrap();
+        db.set("key2", b"value2", Some(std::time::Duration::from_millis(1)))
+            .unwrap();
         std::thread::sleep(std::time::Duration::from_millis(10));
         assert_eq!(db.dbsize().unwrap(), 1);
     }
@@ -9787,7 +10865,15 @@ mod tests {
         let explicit_id = StreamId::new(1000, 5);
         let fields: Vec<(&[u8], &[u8])> = vec![(b"field1", b"value1")];
         let id = db
-            .xadd("mystream", Some(explicit_id), &fields, false, None, None, false)
+            .xadd(
+                "mystream",
+                Some(explicit_id),
+                &fields,
+                false,
+                None,
+                None,
+                false,
+            )
             .unwrap()
             .unwrap();
 
@@ -9856,12 +10942,17 @@ mod tests {
         let fields2: Vec<(&[u8], &[u8])> = vec![(b"b", b"2")];
         let fields3: Vec<(&[u8], &[u8])> = vec![(b"c", b"3")];
 
-        db.xadd("s", Some(id1), &fields1, false, None, None, false).unwrap();
-        db.xadd("s", Some(id2), &fields2, false, None, None, false).unwrap();
-        db.xadd("s", Some(id3), &fields3, false, None, None, false).unwrap();
+        db.xadd("s", Some(id1), &fields1, false, None, None, false)
+            .unwrap();
+        db.xadd("s", Some(id2), &fields2, false, None, None, false)
+            .unwrap();
+        db.xadd("s", Some(id3), &fields3, false, None, None, false)
+            .unwrap();
 
         // Get all entries
-        let entries = db.xrange("s", StreamId::min(), StreamId::max(), None).unwrap();
+        let entries = db
+            .xrange("s", StreamId::min(), StreamId::max(), None)
+            .unwrap();
         assert_eq!(entries.len(), 3);
         assert_eq!(entries[0].id, id1);
         assert_eq!(entries[1].id, id2);
@@ -9872,7 +10963,9 @@ mod tests {
         assert_eq!(entries.len(), 2);
 
         // Get with count
-        let entries = db.xrange("s", StreamId::min(), StreamId::max(), Some(2)).unwrap();
+        let entries = db
+            .xrange("s", StreamId::min(), StreamId::max(), Some(2))
+            .unwrap();
         assert_eq!(entries.len(), 2);
     }
 
@@ -9886,12 +10979,17 @@ mod tests {
 
         let fields: Vec<(&[u8], &[u8])> = vec![(b"f", b"v")];
 
-        db.xadd("s", Some(id1), &fields, false, None, None, false).unwrap();
-        db.xadd("s", Some(id2), &fields, false, None, None, false).unwrap();
-        db.xadd("s", Some(id3), &fields, false, None, None, false).unwrap();
+        db.xadd("s", Some(id1), &fields, false, None, None, false)
+            .unwrap();
+        db.xadd("s", Some(id2), &fields, false, None, None, false)
+            .unwrap();
+        db.xadd("s", Some(id3), &fields, false, None, None, false)
+            .unwrap();
 
         // Get all entries in reverse
-        let entries = db.xrevrange("s", StreamId::max(), StreamId::min(), None).unwrap();
+        let entries = db
+            .xrevrange("s", StreamId::max(), StreamId::min(), None)
+            .unwrap();
         assert_eq!(entries.len(), 3);
         assert_eq!(entries[0].id, id3);
         assert_eq!(entries[1].id, id2);
@@ -9908,8 +11006,10 @@ mod tests {
         let fields1: Vec<(&[u8], &[u8])> = vec![(b"a", b"1")];
         let fields2: Vec<(&[u8], &[u8])> = vec![(b"b", b"2")];
 
-        db.xadd("s", Some(id1), &fields1, false, None, None, false).unwrap();
-        db.xadd("s", Some(id2), &fields2, false, None, None, false).unwrap();
+        db.xadd("s", Some(id1), &fields1, false, None, None, false)
+            .unwrap();
+        db.xadd("s", Some(id2), &fields2, false, None, None, false)
+            .unwrap();
 
         // Read from beginning
         let results = db.xread(&["s"], &[StreamId::new(0, 0)], None).unwrap();
@@ -9930,7 +11030,16 @@ mod tests {
 
         let fields: Vec<(&[u8], &[u8])> = vec![(b"f", b"v")];
         for i in 1..=5 {
-            db.xadd("s", Some(StreamId::new(i * 1000, 0)), &fields, false, None, None, false).unwrap();
+            db.xadd(
+                "s",
+                Some(StreamId::new(i * 1000, 0)),
+                &fields,
+                false,
+                None,
+                None,
+                false,
+            )
+            .unwrap();
         }
 
         assert_eq!(db.xlen("s").unwrap(), 5);
@@ -9941,7 +11050,9 @@ mod tests {
         assert_eq!(db.xlen("s").unwrap(), 3);
 
         // Verify oldest entries were removed
-        let entries = db.xrange("s", StreamId::min(), StreamId::max(), None).unwrap();
+        let entries = db
+            .xrange("s", StreamId::min(), StreamId::max(), None)
+            .unwrap();
         assert_eq!(entries[0].id.ms, 3000);
     }
 
@@ -9951,11 +11062,22 @@ mod tests {
 
         let fields: Vec<(&[u8], &[u8])> = vec![(b"f", b"v")];
         for i in 1..=5 {
-            db.xadd("s", Some(StreamId::new(i * 1000, 0)), &fields, false, None, None, false).unwrap();
+            db.xadd(
+                "s",
+                Some(StreamId::new(i * 1000, 0)),
+                &fields,
+                false,
+                None,
+                None,
+                false,
+            )
+            .unwrap();
         }
 
         // Trim entries before 3000-0
-        let deleted = db.xtrim("s", None, Some(StreamId::new(3000, 0)), false).unwrap();
+        let deleted = db
+            .xtrim("s", None, Some(StreamId::new(3000, 0)), false)
+            .unwrap();
         assert_eq!(deleted, 2);
         assert_eq!(db.xlen("s").unwrap(), 3);
     }
@@ -9969,9 +11091,12 @@ mod tests {
         let id3 = StreamId::new(3000, 0);
 
         let fields: Vec<(&[u8], &[u8])> = vec![(b"f", b"v")];
-        db.xadd("s", Some(id1), &fields, false, None, None, false).unwrap();
-        db.xadd("s", Some(id2), &fields, false, None, None, false).unwrap();
-        db.xadd("s", Some(id3), &fields, false, None, None, false).unwrap();
+        db.xadd("s", Some(id1), &fields, false, None, None, false)
+            .unwrap();
+        db.xadd("s", Some(id2), &fields, false, None, None, false)
+            .unwrap();
+        db.xadd("s", Some(id3), &fields, false, None, None, false)
+            .unwrap();
 
         // Delete middle entry
         let deleted = db.xdel("s", &[id2]).unwrap();
@@ -9993,8 +11118,10 @@ mod tests {
         let fields1: Vec<(&[u8], &[u8])> = vec![(b"a", b"1")];
         let fields2: Vec<(&[u8], &[u8])> = vec![(b"b", b"2")];
 
-        db.xadd("s", Some(id1), &fields1, false, None, None, false).unwrap();
-        db.xadd("s", Some(id2), &fields2, false, None, None, false).unwrap();
+        db.xadd("s", Some(id1), &fields1, false, None, None, false)
+            .unwrap();
+        db.xadd("s", Some(id2), &fields2, false, None, None, false)
+            .unwrap();
 
         let info = db.xinfo_stream("s").unwrap().unwrap();
         assert_eq!(info.length, 2);
@@ -10011,14 +11138,25 @@ mod tests {
 
         // Add entries with MAXLEN 3
         for i in 1..=5 {
-            db.xadd("s", Some(StreamId::new(i * 1000, 0)), &fields, false, Some(3), None, false).unwrap();
+            db.xadd(
+                "s",
+                Some(StreamId::new(i * 1000, 0)),
+                &fields,
+                false,
+                Some(3),
+                None,
+                false,
+            )
+            .unwrap();
         }
 
         // Should only have 3 entries
         assert_eq!(db.xlen("s").unwrap(), 3);
 
         // Should have the latest 3
-        let entries = db.xrange("s", StreamId::min(), StreamId::max(), None).unwrap();
+        let entries = db
+            .xrange("s", StreamId::min(), StreamId::max(), None)
+            .unwrap();
         assert_eq!(entries[0].id.ms, 3000);
     }
 
@@ -10027,7 +11165,8 @@ mod tests {
         let db = Db::open_memory().unwrap();
 
         let fields: Vec<(&[u8], &[u8])> = vec![(b"f", b"v")];
-        db.xadd("mystream", None, &fields, false, None, None, false).unwrap();
+        db.xadd("mystream", None, &fields, false, None, None, false)
+            .unwrap();
 
         let key_type = db.key_type("mystream").unwrap();
         assert_eq!(key_type, Some(KeyType::Stream));
@@ -10083,9 +11222,12 @@ mod tests {
             (b"field3", b"value3"),
         ];
         let id = StreamId::new(1000, 0);
-        db.xadd("s", Some(id), &fields, false, None, None, false).unwrap();
+        db.xadd("s", Some(id), &fields, false, None, None, false)
+            .unwrap();
 
-        let entries = db.xrange("s", StreamId::min(), StreamId::max(), None).unwrap();
+        let entries = db
+            .xrange("s", StreamId::min(), StreamId::max(), None)
+            .unwrap();
         assert_eq!(entries.len(), 1);
         assert_eq!(entries[0].fields.len(), 3);
         assert_eq!(entries[0].fields[0].0, b"field1");
@@ -10100,7 +11242,16 @@ mod tests {
 
         // Create stream first
         let fields: Vec<(&[u8], &[u8])> = vec![(b"f", b"v")];
-        db.xadd("mystream", Some(StreamId::new(1000, 0)), &fields, false, None, None, false).unwrap();
+        db.xadd(
+            "mystream",
+            Some(StreamId::new(1000, 0)),
+            &fields,
+            false,
+            None,
+            None,
+            false,
+        )
+        .unwrap();
 
         // Create group
         let result = db.xgroup_create("mystream", "mygroup", StreamId::new(0, 0), false);
@@ -10124,8 +11275,18 @@ mod tests {
         let db = Db::open_memory().unwrap();
 
         let fields: Vec<(&[u8], &[u8])> = vec![(b"f", b"v")];
-        db.xadd("mystream", Some(StreamId::new(1000, 0)), &fields, false, None, None, false).unwrap();
-        db.xgroup_create("mystream", "mygroup", StreamId::new(0, 0), false).unwrap();
+        db.xadd(
+            "mystream",
+            Some(StreamId::new(1000, 0)),
+            &fields,
+            false,
+            None,
+            None,
+            false,
+        )
+        .unwrap();
+        db.xgroup_create("mystream", "mygroup", StreamId::new(0, 0), false)
+            .unwrap();
 
         let result = db.xgroup_destroy("mystream", "mygroup");
         assert!(matches!(result, Ok(true)));
@@ -10140,8 +11301,18 @@ mod tests {
         let db = Db::open_memory().unwrap();
 
         let fields: Vec<(&[u8], &[u8])> = vec![(b"f", b"v")];
-        db.xadd("mystream", Some(StreamId::new(1000, 0)), &fields, false, None, None, false).unwrap();
-        db.xgroup_create("mystream", "mygroup", StreamId::new(0, 0), false).unwrap();
+        db.xadd(
+            "mystream",
+            Some(StreamId::new(1000, 0)),
+            &fields,
+            false,
+            None,
+            None,
+            false,
+        )
+        .unwrap();
+        db.xgroup_create("mystream", "mygroup", StreamId::new(0, 0), false)
+            .unwrap();
 
         let result = db.xgroup_setid("mystream", "mygroup", StreamId::new(1000, 0));
         assert!(result.is_ok());
@@ -10160,8 +11331,18 @@ mod tests {
         let db = Db::open_memory().unwrap();
 
         let fields: Vec<(&[u8], &[u8])> = vec![(b"f", b"v")];
-        db.xadd("mystream", Some(StreamId::new(1000, 0)), &fields, false, None, None, false).unwrap();
-        db.xgroup_create("mystream", "mygroup", StreamId::new(0, 0), false).unwrap();
+        db.xadd(
+            "mystream",
+            Some(StreamId::new(1000, 0)),
+            &fields,
+            false,
+            None,
+            None,
+            false,
+        )
+        .unwrap();
+        db.xgroup_create("mystream", "mygroup", StreamId::new(0, 0), false)
+            .unwrap();
 
         // Create consumer
         let result = db.xgroup_createconsumer("mystream", "mygroup", "consumer1");
@@ -10181,9 +11362,20 @@ mod tests {
         let db = Db::open_memory().unwrap();
 
         let fields: Vec<(&[u8], &[u8])> = vec![(b"f", b"v")];
-        db.xadd("mystream", Some(StreamId::new(1000, 0)), &fields, false, None, None, false).unwrap();
-        db.xgroup_create("mystream", "mygroup", StreamId::new(0, 0), false).unwrap();
-        db.xgroup_createconsumer("mystream", "mygroup", "consumer1").unwrap();
+        db.xadd(
+            "mystream",
+            Some(StreamId::new(1000, 0)),
+            &fields,
+            false,
+            None,
+            None,
+            false,
+        )
+        .unwrap();
+        db.xgroup_create("mystream", "mygroup", StreamId::new(0, 0), false)
+            .unwrap();
+        db.xgroup_createconsumer("mystream", "mygroup", "consumer1")
+            .unwrap();
 
         // Delete consumer (returns pending count)
         let result = db.xgroup_delconsumer("mystream", "mygroup", "consumer1");
@@ -10195,12 +11387,33 @@ mod tests {
         let db = Db::open_memory().unwrap();
 
         let fields: Vec<(&[u8], &[u8])> = vec![(b"f", b"v")];
-        db.xadd("mystream", Some(StreamId::new(1000, 0)), &fields, false, None, None, false).unwrap();
-        db.xadd("mystream", Some(StreamId::new(2000, 0)), &fields, false, None, None, false).unwrap();
-        db.xgroup_create("mystream", "mygroup", StreamId::new(0, 0), false).unwrap();
+        db.xadd(
+            "mystream",
+            Some(StreamId::new(1000, 0)),
+            &fields,
+            false,
+            None,
+            None,
+            false,
+        )
+        .unwrap();
+        db.xadd(
+            "mystream",
+            Some(StreamId::new(2000, 0)),
+            &fields,
+            false,
+            None,
+            None,
+            false,
+        )
+        .unwrap();
+        db.xgroup_create("mystream", "mygroup", StreamId::new(0, 0), false)
+            .unwrap();
 
         // Read new messages with >
-        let results = db.xreadgroup("mygroup", "consumer1", &["mystream"], &[">"], None, false).unwrap();
+        let results = db
+            .xreadgroup("mygroup", "consumer1", &["mystream"], &[">"], None, false)
+            .unwrap();
         assert_eq!(results.len(), 1);
         assert_eq!(results[0].0, "mystream");
         assert_eq!(results[0].1.len(), 2);
@@ -10208,7 +11421,9 @@ mod tests {
         assert_eq!(results[0].1[1].id, StreamId::new(2000, 0));
 
         // Reading again should return nothing (all delivered)
-        let results = db.xreadgroup("mygroup", "consumer1", &["mystream"], &[">"], None, false).unwrap();
+        let results = db
+            .xreadgroup("mygroup", "consumer1", &["mystream"], &[">"], None, false)
+            .unwrap();
         assert!(results.is_empty());
     }
 
@@ -10217,15 +11432,37 @@ mod tests {
         let db = Db::open_memory().unwrap();
 
         let fields: Vec<(&[u8], &[u8])> = vec![(b"f", b"v")];
-        db.xadd("mystream", Some(StreamId::new(1000, 0)), &fields, false, None, None, false).unwrap();
-        db.xadd("mystream", Some(StreamId::new(2000, 0)), &fields, false, None, None, false).unwrap();
-        db.xgroup_create("mystream", "mygroup", StreamId::new(0, 0), false).unwrap();
+        db.xadd(
+            "mystream",
+            Some(StreamId::new(1000, 0)),
+            &fields,
+            false,
+            None,
+            None,
+            false,
+        )
+        .unwrap();
+        db.xadd(
+            "mystream",
+            Some(StreamId::new(2000, 0)),
+            &fields,
+            false,
+            None,
+            None,
+            false,
+        )
+        .unwrap();
+        db.xgroup_create("mystream", "mygroup", StreamId::new(0, 0), false)
+            .unwrap();
 
         // First read creates pending entries
-        db.xreadgroup("mygroup", "consumer1", &["mystream"], &[">"], None, false).unwrap();
+        db.xreadgroup("mygroup", "consumer1", &["mystream"], &[">"], None, false)
+            .unwrap();
 
         // Read pending entries with 0
-        let results = db.xreadgroup("mygroup", "consumer1", &["mystream"], &["0"], None, false).unwrap();
+        let results = db
+            .xreadgroup("mygroup", "consumer1", &["mystream"], &["0"], None, false)
+            .unwrap();
         assert_eq!(results.len(), 1);
         assert_eq!(results[0].1.len(), 2);
     }
@@ -10235,11 +11472,22 @@ mod tests {
         let db = Db::open_memory().unwrap();
 
         let fields: Vec<(&[u8], &[u8])> = vec![(b"f", b"v")];
-        db.xadd("mystream", Some(StreamId::new(1000, 0)), &fields, false, None, None, false).unwrap();
-        db.xgroup_create("mystream", "mygroup", StreamId::new(0, 0), false).unwrap();
+        db.xadd(
+            "mystream",
+            Some(StreamId::new(1000, 0)),
+            &fields,
+            false,
+            None,
+            None,
+            false,
+        )
+        .unwrap();
+        db.xgroup_create("mystream", "mygroup", StreamId::new(0, 0), false)
+            .unwrap();
 
         // Read with NOACK - should not add to pending
-        db.xreadgroup("mygroup", "consumer1", &["mystream"], &[">"], None, true).unwrap();
+        db.xreadgroup("mygroup", "consumer1", &["mystream"], &[">"], None, true)
+            .unwrap();
 
         // Check pending is empty
         let summary = db.xpending_summary("mystream", "mygroup").unwrap();
@@ -10251,15 +11499,37 @@ mod tests {
         let db = Db::open_memory().unwrap();
 
         let fields: Vec<(&[u8], &[u8])> = vec![(b"f", b"v")];
-        db.xadd("mystream", Some(StreamId::new(1000, 0)), &fields, false, None, None, false).unwrap();
-        db.xadd("mystream", Some(StreamId::new(2000, 0)), &fields, false, None, None, false).unwrap();
-        db.xgroup_create("mystream", "mygroup", StreamId::new(0, 0), false).unwrap();
+        db.xadd(
+            "mystream",
+            Some(StreamId::new(1000, 0)),
+            &fields,
+            false,
+            None,
+            None,
+            false,
+        )
+        .unwrap();
+        db.xadd(
+            "mystream",
+            Some(StreamId::new(2000, 0)),
+            &fields,
+            false,
+            None,
+            None,
+            false,
+        )
+        .unwrap();
+        db.xgroup_create("mystream", "mygroup", StreamId::new(0, 0), false)
+            .unwrap();
 
         // Read messages to create pending entries
-        db.xreadgroup("mygroup", "consumer1", &["mystream"], &[">"], None, false).unwrap();
+        db.xreadgroup("mygroup", "consumer1", &["mystream"], &[">"], None, false)
+            .unwrap();
 
         // Acknowledge one message
-        let acked = db.xack("mystream", "mygroup", &[StreamId::new(1000, 0)]).unwrap();
+        let acked = db
+            .xack("mystream", "mygroup", &[StreamId::new(1000, 0)])
+            .unwrap();
         assert_eq!(acked, 1);
 
         // Check pending
@@ -10267,7 +11537,9 @@ mod tests {
         assert_eq!(summary.count, 1);
 
         // Acknowledge already acked message returns 0
-        let acked = db.xack("mystream", "mygroup", &[StreamId::new(1000, 0)]).unwrap();
+        let acked = db
+            .xack("mystream", "mygroup", &[StreamId::new(1000, 0)])
+            .unwrap();
         assert_eq!(acked, 0);
     }
 
@@ -10276,12 +11548,32 @@ mod tests {
         let db = Db::open_memory().unwrap();
 
         let fields: Vec<(&[u8], &[u8])> = vec![(b"f", b"v")];
-        db.xadd("mystream", Some(StreamId::new(1000, 0)), &fields, false, None, None, false).unwrap();
-        db.xadd("mystream", Some(StreamId::new(2000, 0)), &fields, false, None, None, false).unwrap();
-        db.xgroup_create("mystream", "mygroup", StreamId::new(0, 0), false).unwrap();
+        db.xadd(
+            "mystream",
+            Some(StreamId::new(1000, 0)),
+            &fields,
+            false,
+            None,
+            None,
+            false,
+        )
+        .unwrap();
+        db.xadd(
+            "mystream",
+            Some(StreamId::new(2000, 0)),
+            &fields,
+            false,
+            None,
+            None,
+            false,
+        )
+        .unwrap();
+        db.xgroup_create("mystream", "mygroup", StreamId::new(0, 0), false)
+            .unwrap();
 
         // Read messages
-        db.xreadgroup("mygroup", "consumer1", &["mystream"], &[">"], None, false).unwrap();
+        db.xreadgroup("mygroup", "consumer1", &["mystream"], &[">"], None, false)
+            .unwrap();
 
         let summary = db.xpending_summary("mystream", "mygroup").unwrap();
         assert_eq!(summary.count, 2);
@@ -10297,13 +11589,43 @@ mod tests {
         let db = Db::open_memory().unwrap();
 
         let fields: Vec<(&[u8], &[u8])> = vec![(b"f", b"v")];
-        db.xadd("mystream", Some(StreamId::new(1000, 0)), &fields, false, None, None, false).unwrap();
-        db.xadd("mystream", Some(StreamId::new(2000, 0)), &fields, false, None, None, false).unwrap();
-        db.xgroup_create("mystream", "mygroup", StreamId::new(0, 0), false).unwrap();
+        db.xadd(
+            "mystream",
+            Some(StreamId::new(1000, 0)),
+            &fields,
+            false,
+            None,
+            None,
+            false,
+        )
+        .unwrap();
+        db.xadd(
+            "mystream",
+            Some(StreamId::new(2000, 0)),
+            &fields,
+            false,
+            None,
+            None,
+            false,
+        )
+        .unwrap();
+        db.xgroup_create("mystream", "mygroup", StreamId::new(0, 0), false)
+            .unwrap();
 
-        db.xreadgroup("mygroup", "consumer1", &["mystream"], &[">"], None, false).unwrap();
+        db.xreadgroup("mygroup", "consumer1", &["mystream"], &[">"], None, false)
+            .unwrap();
 
-        let entries = db.xpending_range("mystream", "mygroup", StreamId::min(), StreamId::max(), 10, None, None).unwrap();
+        let entries = db
+            .xpending_range(
+                "mystream",
+                "mygroup",
+                StreamId::min(),
+                StreamId::max(),
+                10,
+                None,
+                None,
+            )
+            .unwrap();
         assert_eq!(entries.len(), 2);
         assert_eq!(entries[0].id, StreamId::new(1000, 0));
         assert_eq!(entries[0].consumer, "consumer1");
@@ -10315,23 +11637,53 @@ mod tests {
         let db = Db::open_memory().unwrap();
 
         let fields: Vec<(&[u8], &[u8])> = vec![(b"f", b"v")];
-        db.xadd("mystream", Some(StreamId::new(1000, 0)), &fields, false, None, None, false).unwrap();
-        db.xgroup_create("mystream", "mygroup", StreamId::new(0, 0), false).unwrap();
+        db.xadd(
+            "mystream",
+            Some(StreamId::new(1000, 0)),
+            &fields,
+            false,
+            None,
+            None,
+            false,
+        )
+        .unwrap();
+        db.xgroup_create("mystream", "mygroup", StreamId::new(0, 0), false)
+            .unwrap();
 
         // Read message with consumer1
-        db.xreadgroup("mygroup", "consumer1", &["mystream"], &[">"], None, false).unwrap();
+        db.xreadgroup("mygroup", "consumer1", &["mystream"], &[">"], None, false)
+            .unwrap();
 
         // Claim with consumer2 using FORCE (no min-idle-time requirement)
-        let claimed = db.xclaim(
-            "mystream", "mygroup", "consumer2", 0,
-            &[StreamId::new(1000, 0)],
-            None, None, None, true, false
-        ).unwrap();
+        let claimed = db
+            .xclaim(
+                "mystream",
+                "mygroup",
+                "consumer2",
+                0,
+                &[StreamId::new(1000, 0)],
+                None,
+                None,
+                None,
+                true,
+                false,
+            )
+            .unwrap();
         assert_eq!(claimed.len(), 1);
         assert_eq!(claimed[0].id, StreamId::new(1000, 0));
 
         // Check that pending now shows consumer2
-        let entries = db.xpending_range("mystream", "mygroup", StreamId::min(), StreamId::max(), 10, None, None).unwrap();
+        let entries = db
+            .xpending_range(
+                "mystream",
+                "mygroup",
+                StreamId::min(),
+                StreamId::max(),
+                10,
+                None,
+                None,
+            )
+            .unwrap();
         assert_eq!(entries[0].consumer, "consumer2");
     }
 
@@ -10340,17 +11692,37 @@ mod tests {
         let db = Db::open_memory().unwrap();
 
         let fields: Vec<(&[u8], &[u8])> = vec![(b"f", b"v")];
-        db.xadd("mystream", Some(StreamId::new(1000, 0)), &fields, false, None, None, false).unwrap();
-        db.xgroup_create("mystream", "mygroup", StreamId::new(0, 0), false).unwrap();
+        db.xadd(
+            "mystream",
+            Some(StreamId::new(1000, 0)),
+            &fields,
+            false,
+            None,
+            None,
+            false,
+        )
+        .unwrap();
+        db.xgroup_create("mystream", "mygroup", StreamId::new(0, 0), false)
+            .unwrap();
 
-        db.xreadgroup("mygroup", "consumer1", &["mystream"], &[">"], None, false).unwrap();
+        db.xreadgroup("mygroup", "consumer1", &["mystream"], &[">"], None, false)
+            .unwrap();
 
         // Claim with JUSTID - should return empty fields
-        let claimed = db.xclaim(
-            "mystream", "mygroup", "consumer2", 0,
-            &[StreamId::new(1000, 0)],
-            None, None, None, true, true
-        ).unwrap();
+        let claimed = db
+            .xclaim(
+                "mystream",
+                "mygroup",
+                "consumer2",
+                0,
+                &[StreamId::new(1000, 0)],
+                None,
+                None,
+                None,
+                true,
+                true,
+            )
+            .unwrap();
         assert_eq!(claimed.len(), 1);
         assert_eq!(claimed[0].id, StreamId::new(1000, 0));
         assert!(claimed[0].fields.is_empty());
@@ -10361,9 +11733,20 @@ mod tests {
         let db = Db::open_memory().unwrap();
 
         let fields: Vec<(&[u8], &[u8])> = vec![(b"f", b"v")];
-        db.xadd("mystream", Some(StreamId::new(1000, 0)), &fields, false, None, None, false).unwrap();
-        db.xgroup_create("mystream", "group1", StreamId::new(0, 0), false).unwrap();
-        db.xgroup_create("mystream", "group2", StreamId::new(1000, 0), false).unwrap();
+        db.xadd(
+            "mystream",
+            Some(StreamId::new(1000, 0)),
+            &fields,
+            false,
+            None,
+            None,
+            false,
+        )
+        .unwrap();
+        db.xgroup_create("mystream", "group1", StreamId::new(0, 0), false)
+            .unwrap();
+        db.xgroup_create("mystream", "group2", StreamId::new(1000, 0), false)
+            .unwrap();
 
         let groups = db.xinfo_groups("mystream").unwrap();
         assert_eq!(groups.len(), 2);
@@ -10374,10 +11757,22 @@ mod tests {
         let db = Db::open_memory().unwrap();
 
         let fields: Vec<(&[u8], &[u8])> = vec![(b"f", b"v")];
-        db.xadd("mystream", Some(StreamId::new(1000, 0)), &fields, false, None, None, false).unwrap();
-        db.xgroup_create("mystream", "mygroup", StreamId::new(0, 0), false).unwrap();
-        db.xgroup_createconsumer("mystream", "mygroup", "consumer1").unwrap();
-        db.xgroup_createconsumer("mystream", "mygroup", "consumer2").unwrap();
+        db.xadd(
+            "mystream",
+            Some(StreamId::new(1000, 0)),
+            &fields,
+            false,
+            None,
+            None,
+            false,
+        )
+        .unwrap();
+        db.xgroup_create("mystream", "mygroup", StreamId::new(0, 0), false)
+            .unwrap();
+        db.xgroup_createconsumer("mystream", "mygroup", "consumer1")
+            .unwrap();
+        db.xgroup_createconsumer("mystream", "mygroup", "consumer2")
+            .unwrap();
 
         let consumers = db.xinfo_consumers("mystream", "mygroup").unwrap();
         assert_eq!(consumers.len(), 2);
@@ -10409,7 +11804,10 @@ mod tests {
         // In embedded mode, recv() will return Err(Closed) immediately
         // because we don't hold any senders
         let result = rx.recv().await;
-        assert!(matches!(result, Err(tokio::sync::broadcast::error::RecvError::Closed)));
+        assert!(matches!(
+            result,
+            Err(tokio::sync::broadcast::error::RecvError::Closed)
+        ));
     }
 
     #[tokio::test]
@@ -10701,7 +12099,10 @@ mod tests {
             [],
             |row| row.get(0),
         );
-        assert!(result.is_ok() && result.unwrap() > 0, "history_config table should exist");
+        assert!(
+            result.is_ok() && result.unwrap() > 0,
+            "history_config table should exist"
+        );
 
         // Check key_history table exists
         let result: rusqlite::Result<i32> = conn.query_row(
@@ -10709,7 +12110,10 @@ mod tests {
             [],
             |row| row.get(0),
         );
-        assert!(result.is_ok() && result.unwrap() > 0, "key_history table should exist");
+        assert!(
+            result.is_ok() && result.unwrap() > 0,
+            "key_history table should exist"
+        );
 
         // Check history_config indexes
         let result: rusqlite::Result<i32> = conn.query_row(
@@ -10717,7 +12121,10 @@ mod tests {
             [],
             |row| row.get(0),
         );
-        assert!(result.is_ok() && result.unwrap() > 0, "history_config index should exist");
+        assert!(
+            result.is_ok() && result.unwrap() > 0,
+            "history_config index should exist"
+        );
 
         // Check key_history indexes
         let result: rusqlite::Result<i32> = conn.query_row(
@@ -10725,14 +12132,20 @@ mod tests {
             [],
             |row| row.get(0),
         );
-        assert!(result.is_ok() && result.unwrap() > 0, "key_history time index should exist");
+        assert!(
+            result.is_ok() && result.unwrap() > 0,
+            "key_history time index should exist"
+        );
 
         let result: rusqlite::Result<i32> = conn.query_row(
             "SELECT COUNT(*) FROM sqlite_master WHERE type='index' AND name='idx_history_db_key_time'",
             [],
             |row| row.get(0),
         );
-        assert!(result.is_ok() && result.unwrap() > 0, "key_history db_key_time index should exist");
+        assert!(
+            result.is_ok() && result.unwrap() > 0,
+            "key_history db_key_time index should exist"
+        );
     }
 
     #[test]
@@ -10786,5 +12199,687 @@ mod tests {
         assert!(columns.contains(&"timestamp_ms".to_string()));
         assert!(columns.contains(&"data_snapshot".to_string()));
         assert!(columns.contains(&"expire_at".to_string()));
+    }
+
+    // =========================================================================
+    // FT.* RediSearch-compatible tests (Session 23)
+    // =========================================================================
+
+    #[test]
+    fn test_ft_create_basic() {
+        use crate::types::{FtField, FtOnType};
+
+        let db = Db::open_memory().unwrap();
+
+        let schema = vec![FtField::text("title"), FtField::text("body")];
+
+        db.ft_create("idx", FtOnType::Hash, &["doc:"], &schema)
+            .unwrap();
+
+        // Verify index was created
+        let indexes = db.ft_list().unwrap();
+        assert_eq!(indexes, vec!["idx"]);
+    }
+
+    #[test]
+    fn test_ft_create_duplicate_error() {
+        use crate::types::{FtField, FtOnType};
+
+        let db = Db::open_memory().unwrap();
+
+        let schema = vec![FtField::text("title")];
+        db.ft_create("idx", FtOnType::Hash, &["doc:"], &schema)
+            .unwrap();
+
+        // Creating same index again should fail
+        let result = db.ft_create("idx", FtOnType::Hash, &["doc:"], &schema);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_ft_create_with_multiple_field_types() {
+        use crate::types::{FtField, FtFieldType, FtOnType};
+
+        let db = Db::open_memory().unwrap();
+
+        let schema = vec![
+            FtField::text("title").sortable(),
+            FtField::numeric("price"),
+            FtField::tag("category"),
+        ];
+
+        db.ft_create("products", FtOnType::Hash, &["product:"], &schema)
+            .unwrap();
+
+        let info = db.ft_info("products").unwrap().unwrap();
+        assert_eq!(info.name, "products");
+        assert_eq!(info.schema.len(), 3);
+        assert!(info
+            .schema
+            .iter()
+            .any(|f| f.name == "title" && matches!(f.field_type, FtFieldType::Text)));
+        assert!(info
+            .schema
+            .iter()
+            .any(|f| f.name == "price" && matches!(f.field_type, FtFieldType::Numeric)));
+        assert!(info
+            .schema
+            .iter()
+            .any(|f| f.name == "category" && matches!(f.field_type, FtFieldType::Tag)));
+    }
+
+    #[test]
+    fn test_ft_dropindex() {
+        use crate::types::{FtField, FtOnType};
+
+        let db = Db::open_memory().unwrap();
+
+        let schema = vec![FtField::text("title")];
+        db.ft_create("idx", FtOnType::Hash, &["doc:"], &schema)
+            .unwrap();
+
+        assert_eq!(db.ft_list().unwrap().len(), 1);
+
+        let dropped = db.ft_dropindex("idx", false).unwrap();
+        assert!(dropped);
+
+        assert_eq!(db.ft_list().unwrap().len(), 0);
+    }
+
+    #[test]
+    fn test_ft_dropindex_nonexistent() {
+        let db = Db::open_memory().unwrap();
+
+        let dropped = db.ft_dropindex("nonexistent", false).unwrap();
+        assert!(!dropped);
+    }
+
+    #[test]
+    fn test_ft_list_empty() {
+        let db = Db::open_memory().unwrap();
+
+        let indexes = db.ft_list().unwrap();
+        assert!(indexes.is_empty());
+    }
+
+    #[test]
+    fn test_ft_list_multiple() {
+        use crate::types::{FtField, FtOnType};
+
+        let db = Db::open_memory().unwrap();
+
+        let schema = vec![FtField::text("content")];
+        db.ft_create("idx1", FtOnType::Hash, &["a:"], &schema)
+            .unwrap();
+        db.ft_create("idx2", FtOnType::Hash, &["b:"], &schema)
+            .unwrap();
+        db.ft_create("idx3", FtOnType::Json, &["c:"], &schema)
+            .unwrap();
+
+        let indexes = db.ft_list().unwrap();
+        assert_eq!(indexes.len(), 3);
+        assert!(indexes.contains(&"idx1".to_string()));
+        assert!(indexes.contains(&"idx2".to_string()));
+        assert!(indexes.contains(&"idx3".to_string()));
+    }
+
+    #[test]
+    fn test_ft_info() {
+        use crate::types::{FtField, FtOnType};
+
+        let db = Db::open_memory().unwrap();
+
+        let schema = vec![FtField::text("title").sortable(), FtField::text("body")];
+        db.ft_create("myidx", FtOnType::Hash, &["doc:", "article:"], &schema)
+            .unwrap();
+
+        let info = db.ft_info("myidx").unwrap().unwrap();
+        assert_eq!(info.name, "myidx");
+        assert_eq!(info.on_type, FtOnType::Hash);
+        assert_eq!(info.prefixes, vec!["doc:", "article:"]);
+        assert_eq!(info.schema.len(), 2);
+        assert!(info.schema[0].sortable); // title is sortable
+    }
+
+    #[test]
+    fn test_ft_info_nonexistent() {
+        let db = Db::open_memory().unwrap();
+
+        let info = db.ft_info("nonexistent").unwrap();
+        assert!(info.is_none());
+    }
+
+    #[test]
+    fn test_ft_alter_add_field() {
+        use crate::types::{FtField, FtFieldType, FtOnType};
+
+        let db = Db::open_memory().unwrap();
+
+        let schema = vec![FtField::text("title")];
+        db.ft_create("idx", FtOnType::Hash, &["doc:"], &schema)
+            .unwrap();
+
+        // Add a new field
+        db.ft_alter("idx", FtField::numeric("views")).unwrap();
+
+        let info = db.ft_info("idx").unwrap().unwrap();
+        assert_eq!(info.schema.len(), 2);
+        assert!(info
+            .schema
+            .iter()
+            .any(|f| f.name == "views" && matches!(f.field_type, FtFieldType::Numeric)));
+    }
+
+    #[test]
+    fn test_ft_alter_duplicate_field_error() {
+        use crate::types::{FtField, FtOnType};
+
+        let db = Db::open_memory().unwrap();
+
+        let schema = vec![FtField::text("title")];
+        db.ft_create("idx", FtOnType::Hash, &["doc:"], &schema)
+            .unwrap();
+
+        // Adding same field again should fail
+        let result = db.ft_alter("idx", FtField::text("title"));
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_ft_alias_add_del() {
+        use crate::types::{FtField, FtOnType};
+
+        let db = Db::open_memory().unwrap();
+
+        let schema = vec![FtField::text("title")];
+        db.ft_create("myindex", FtOnType::Hash, &["doc:"], &schema)
+            .unwrap();
+
+        // Add alias
+        db.ft_aliasadd("myalias", "myindex").unwrap();
+
+        // Delete alias
+        let deleted = db.ft_aliasdel("myalias").unwrap();
+        assert!(deleted);
+
+        // Delete again should return false
+        let deleted2 = db.ft_aliasdel("myalias").unwrap();
+        assert!(!deleted2);
+    }
+
+    #[test]
+    fn test_ft_alias_update() {
+        use crate::types::{FtField, FtOnType};
+
+        let db = Db::open_memory().unwrap();
+
+        let schema = vec![FtField::text("title")];
+        db.ft_create("idx1", FtOnType::Hash, &["a:"], &schema)
+            .unwrap();
+        db.ft_create("idx2", FtOnType::Hash, &["b:"], &schema)
+            .unwrap();
+
+        db.ft_aliasadd("alias", "idx1").unwrap();
+
+        // Update alias to point to idx2
+        db.ft_aliasupdate("alias", "idx2").unwrap();
+
+        // Should succeed (alias exists and idx2 exists)
+    }
+
+    #[test]
+    fn test_ft_synonyms() {
+        use crate::types::{FtField, FtOnType};
+
+        let db = Db::open_memory().unwrap();
+
+        let schema = vec![FtField::text("content")];
+        db.ft_create("idx", FtOnType::Hash, &["doc:"], &schema)
+            .unwrap();
+
+        // Add synonyms
+        db.ft_synupdate("idx", "grp1", &["happy", "joyful", "glad"])
+            .unwrap();
+        db.ft_synupdate("idx", "grp2", &["sad", "unhappy", "melancholy"])
+            .unwrap();
+
+        // Dump synonyms
+        let groups = db.ft_syndump("idx").unwrap();
+        assert_eq!(groups.len(), 2);
+
+        let grp1 = groups.iter().find(|(id, _)| id == "grp1").unwrap();
+        assert_eq!(grp1.1.len(), 3);
+        assert!(grp1.1.contains(&"happy".to_string()));
+        assert!(grp1.1.contains(&"joyful".to_string()));
+        assert!(grp1.1.contains(&"glad".to_string()));
+    }
+
+    #[test]
+    fn test_ft_suggestions_basic() {
+        let db = Db::open_memory().unwrap();
+
+        // Add suggestions
+        db.ft_sugadd("autocomplete", "hello world", 1.0, None)
+            .unwrap();
+        db.ft_sugadd("autocomplete", "hello there", 2.0, None)
+            .unwrap();
+        db.ft_sugadd("autocomplete", "goodbye", 1.0, None).unwrap();
+
+        // Get suggestions
+        let suggestions = db.ft_sugget("autocomplete", "hel", false, 10).unwrap();
+        assert_eq!(suggestions.len(), 2);
+        // Higher score should come first
+        assert_eq!(suggestions[0].string, "hello there");
+        assert_eq!(suggestions[1].string, "hello world");
+    }
+
+    #[test]
+    fn test_ft_suggestions_fuzzy() {
+        let db = Db::open_memory().unwrap();
+
+        db.ft_sugadd("ac", "hello world", 1.0, None).unwrap();
+        db.ft_sugadd("ac", "world hello", 1.0, None).unwrap();
+
+        // Fuzzy search (contains "ello")
+        let suggestions = db.ft_sugget("ac", "ello", true, 10).unwrap();
+        assert_eq!(suggestions.len(), 2);
+    }
+
+    #[test]
+    fn test_ft_suggestions_with_payload() {
+        let db = Db::open_memory().unwrap();
+
+        db.ft_sugadd("ac", "suggestion1", 1.0, Some("payload1"))
+            .unwrap();
+
+        let suggestions = db.ft_sugget("ac", "sug", false, 10).unwrap();
+        assert_eq!(suggestions.len(), 1);
+        assert_eq!(suggestions[0].payload, Some("payload1".to_string()));
+    }
+
+    #[test]
+    fn test_ft_sugdel() {
+        let db = Db::open_memory().unwrap();
+
+        db.ft_sugadd("ac", "hello", 1.0, None).unwrap();
+        db.ft_sugadd("ac", "world", 1.0, None).unwrap();
+
+        assert_eq!(db.ft_suglen("ac").unwrap(), 2);
+
+        let deleted = db.ft_sugdel("ac", "hello").unwrap();
+        assert!(deleted);
+
+        assert_eq!(db.ft_suglen("ac").unwrap(), 1);
+
+        // Delete non-existent
+        let deleted2 = db.ft_sugdel("ac", "nonexistent").unwrap();
+        assert!(!deleted2);
+    }
+
+    #[test]
+    fn test_ft_suglen() {
+        let db = Db::open_memory().unwrap();
+
+        assert_eq!(db.ft_suglen("ac").unwrap(), 0);
+
+        db.ft_sugadd("ac", "one", 1.0, None).unwrap();
+        assert_eq!(db.ft_suglen("ac").unwrap(), 1);
+
+        db.ft_sugadd("ac", "two", 1.0, None).unwrap();
+        assert_eq!(db.ft_suglen("ac").unwrap(), 2);
+
+        db.ft_sugadd("ac", "three", 1.0, None).unwrap();
+        assert_eq!(db.ft_suglen("ac").unwrap(), 3);
+    }
+
+    #[test]
+    fn test_ft_sugadd_update_score() {
+        let db = Db::open_memory().unwrap();
+
+        // Add with score 1.0
+        db.ft_sugadd("ac", "hello", 1.0, None).unwrap();
+
+        // Add same string with higher score - should update
+        db.ft_sugadd("ac", "hello", 5.0, None).unwrap();
+
+        // Should still be just 1 entry
+        assert_eq!(db.ft_suglen("ac").unwrap(), 1);
+
+        let suggestions = db.ft_sugget("ac", "hel", false, 10).unwrap();
+        assert_eq!(suggestions[0].score, 5.0);
+    }
+
+    #[test]
+    fn test_ft_create_json_type() {
+        use crate::types::{FtField, FtOnType};
+
+        let db = Db::open_memory().unwrap();
+
+        let schema = vec![FtField::text("$.name"), FtField::numeric("$.price")];
+
+        db.ft_create("jsonidx", FtOnType::Json, &["product:"], &schema)
+            .unwrap();
+
+        let info = db.ft_info("jsonidx").unwrap().unwrap();
+        assert_eq!(info.on_type, FtOnType::Json);
+    }
+
+    #[test]
+    fn test_ft_field_options() {
+        use crate::types::{FtField, FtOnType};
+
+        let db = Db::open_memory().unwrap();
+
+        let mut tag_field = FtField::tag("tags");
+        tag_field.separator = ';';
+        tag_field.case_sensitive = true;
+
+        let mut text_field = FtField::text("content");
+        text_field.nostem = true;
+        text_field.weight = 2.0;
+
+        let schema = vec![tag_field, text_field];
+        db.ft_create("idx", FtOnType::Hash, &["doc:"], &schema)
+            .unwrap();
+
+        let info = db.ft_info("idx").unwrap().unwrap();
+        let tag = info.schema.iter().find(|f| f.name == "tags").unwrap();
+        assert_eq!(tag.separator, ';');
+        assert!(tag.case_sensitive);
+
+        let text = info.schema.iter().find(|f| f.name == "content").unwrap();
+        assert!(text.nostem);
+        assert_eq!(text.weight, 2.0);
+    }
+
+    // =========================================================================
+    // FT.SEARCH tests (Session 23.2)
+    // =========================================================================
+
+    #[test]
+    fn test_ft_search_basic() {
+        use crate::types::{FtField, FtOnType, FtSearchOptions};
+
+        let db = Db::open_memory().unwrap();
+
+        // Create index
+        let schema = vec![FtField::text("title"), FtField::text("body")];
+        db.ft_create("idx", FtOnType::Hash, &["doc:"], &schema)
+            .unwrap();
+
+        // Create some documents
+        db.hset("doc:1", &[("title", b"Hello World"), ("body", b"This is a test document")])
+            .unwrap();
+        db.hset("doc:2", &[("title", b"Goodbye World"), ("body", b"Another document here")])
+            .unwrap();
+        db.hset("doc:3", &[("title", b"Testing Search"), ("body", b"Search functionality test")])
+            .unwrap();
+
+        // Search for "Hello"
+        let options = FtSearchOptions::new();
+        let (total, results) = db.ft_search("idx", "Hello", &options).unwrap();
+
+        assert_eq!(total, 1);
+        assert_eq!(results.len(), 1);
+        assert_eq!(results[0].key, "doc:1");
+    }
+
+    #[test]
+    fn test_ft_search_multiple_results() {
+        use crate::types::{FtField, FtOnType, FtSearchOptions};
+
+        let db = Db::open_memory().unwrap();
+
+        let schema = vec![FtField::text("title"), FtField::text("body")];
+        db.ft_create("idx", FtOnType::Hash, &["doc:"], &schema)
+            .unwrap();
+
+        db.hset("doc:1", &[("title", b"Hello World"), ("body", b"Test document")])
+            .unwrap();
+        db.hset("doc:2", &[("title", b"World News"), ("body", b"World events today")])
+            .unwrap();
+        db.hset("doc:3", &[("title", b"Local News"), ("body", b"Local events")])
+            .unwrap();
+
+        // Search for "World" - should match doc:1 and doc:2
+        let options = FtSearchOptions::new();
+        let (total, results) = db.ft_search("idx", "World", &options).unwrap();
+
+        assert_eq!(total, 2);
+        let keys: Vec<&str> = results.iter().map(|r| r.key.as_str()).collect();
+        assert!(keys.contains(&"doc:1"));
+        assert!(keys.contains(&"doc:2"));
+    }
+
+    #[test]
+    fn test_ft_search_nocontent() {
+        use crate::types::{FtField, FtOnType, FtSearchOptions};
+
+        let db = Db::open_memory().unwrap();
+
+        let schema = vec![FtField::text("title")];
+        db.ft_create("idx", FtOnType::Hash, &["doc:"], &schema)
+            .unwrap();
+
+        db.hset("doc:1", &[("title", b"Hello World")])
+            .unwrap();
+
+        let mut options = FtSearchOptions::new();
+        options.nocontent = true;
+
+        let (total, results) = db.ft_search("idx", "Hello", &options).unwrap();
+
+        assert_eq!(total, 1);
+        assert!(results[0].fields.is_empty()); // No content returned
+    }
+
+    #[test]
+    fn test_ft_search_numeric_range() {
+        use crate::types::{FtField, FtFieldType, FtOnType, FtSearchOptions};
+
+        let db = Db::open_memory().unwrap();
+
+        let schema = vec![
+            FtField::text("title"),
+            FtField::new("price", FtFieldType::Numeric),
+        ];
+        db.ft_create("idx", FtOnType::Hash, &["product:"], &schema)
+            .unwrap();
+
+        db.hset("product:1", &[("title", b"Cheap Item"), ("price", b"10")])
+            .unwrap();
+        db.hset("product:2", &[("title", b"Medium Item"), ("price", b"50")])
+            .unwrap();
+        db.hset("product:3", &[("title", b"Expensive Item"), ("price", b"100")])
+            .unwrap();
+
+        // Search for items with price between 20 and 80
+        let options = FtSearchOptions::new();
+        let (total, results) = db.ft_search("idx", "@price:[20 80]", &options).unwrap();
+
+        assert_eq!(total, 1);
+        assert_eq!(results[0].key, "product:2");
+    }
+
+    #[test]
+    fn test_ft_search_tag_filter() {
+        use crate::types::{FtField, FtFieldType, FtOnType, FtSearchOptions};
+
+        let db = Db::open_memory().unwrap();
+
+        let schema = vec![
+            FtField::text("title"),
+            FtField::new("category", FtFieldType::Tag),
+        ];
+        db.ft_create("idx", FtOnType::Hash, &["item:"], &schema)
+            .unwrap();
+
+        db.hset("item:1", &[("title", b"Phone"), ("category", b"electronics")])
+            .unwrap();
+        db.hset("item:2", &[("title", b"Book"), ("category", b"books")])
+            .unwrap();
+        db.hset("item:3", &[("title", b"Laptop"), ("category", b"electronics")])
+            .unwrap();
+
+        // Search for electronics
+        let options = FtSearchOptions::new();
+        let (total, results) = db.ft_search("idx", "@category:{electronics}", &options).unwrap();
+
+        assert_eq!(total, 2);
+        let keys: Vec<&str> = results.iter().map(|r| r.key.as_str()).collect();
+        assert!(keys.contains(&"item:1"));
+        assert!(keys.contains(&"item:3"));
+    }
+
+    #[test]
+    fn test_ft_search_prefix() {
+        use crate::types::{FtField, FtOnType, FtSearchOptions};
+
+        let db = Db::open_memory().unwrap();
+
+        let schema = vec![FtField::text("title")];
+        db.ft_create("idx", FtOnType::Hash, &["doc:"], &schema)
+            .unwrap();
+
+        db.hset("doc:1", &[("title", b"testing search")])
+            .unwrap();
+        db.hset("doc:2", &[("title", b"testable code")])
+            .unwrap();
+        db.hset("doc:3", &[("title", b"other content")])
+            .unwrap();
+
+        // Prefix search for "test*"
+        let options = FtSearchOptions::new();
+        let (total, results) = db.ft_search("idx", "test*", &options).unwrap();
+
+        assert_eq!(total, 2);
+        let keys: Vec<&str> = results.iter().map(|r| r.key.as_str()).collect();
+        assert!(keys.contains(&"doc:1"));
+        assert!(keys.contains(&"doc:2"));
+    }
+
+    #[test]
+    fn test_ft_search_pagination() {
+        use crate::types::{FtField, FtOnType, FtSearchOptions};
+
+        let db = Db::open_memory().unwrap();
+
+        let schema = vec![FtField::text("title")];
+        db.ft_create("idx", FtOnType::Hash, &["doc:"], &schema)
+            .unwrap();
+
+        // Create 10 documents
+        for i in 1..=10 {
+            db.hset(&format!("doc:{}", i), &[("title", format!("Test document {}", i).as_bytes())])
+                .unwrap();
+        }
+
+        // Get first page (3 results)
+        let mut options = FtSearchOptions::new();
+        options.limit_offset = 0;
+        options.limit_num = 3;
+
+        let (total, results) = db.ft_search("idx", "Test", &options).unwrap();
+
+        assert_eq!(total, 10); // Total count includes all matches
+        assert_eq!(results.len(), 3); // But only 3 returned
+
+        // Get second page
+        options.limit_offset = 3;
+        let (total2, results2) = db.ft_search("idx", "Test", &options).unwrap();
+
+        assert_eq!(total2, 10);
+        assert_eq!(results2.len(), 3);
+
+        // Ensure no overlap
+        let page1_keys: Vec<&str> = results.iter().map(|r| r.key.as_str()).collect();
+        let page2_keys: Vec<&str> = results2.iter().map(|r| r.key.as_str()).collect();
+        for key in &page1_keys {
+            assert!(!page2_keys.contains(key));
+        }
+    }
+
+    #[test]
+    fn test_ft_search_return_fields() {
+        use crate::types::{FtField, FtOnType, FtSearchOptions};
+
+        let db = Db::open_memory().unwrap();
+
+        let schema = vec![FtField::text("title"), FtField::text("body"), FtField::text("author")];
+        db.ft_create("idx", FtOnType::Hash, &["doc:"], &schema)
+            .unwrap();
+
+        db.hset("doc:1", &[("title", b"Hello"), ("body", b"World content"), ("author", b"John")])
+            .unwrap();
+
+        // Only return title field
+        let mut options = FtSearchOptions::new();
+        options.return_fields = vec!["title".to_string()];
+
+        let (_, results) = db.ft_search("idx", "Hello", &options).unwrap();
+
+        assert_eq!(results.len(), 1);
+        assert_eq!(results[0].fields.len(), 1);
+        assert_eq!(results[0].fields[0].0, "title");
+    }
+
+    #[test]
+    fn test_ft_search_match_all() {
+        use crate::types::{FtField, FtOnType, FtSearchOptions};
+
+        let db = Db::open_memory().unwrap();
+
+        let schema = vec![FtField::text("title")];
+        db.ft_create("idx", FtOnType::Hash, &["doc:"], &schema)
+            .unwrap();
+
+        db.hset("doc:1", &[("title", b"First")])
+            .unwrap();
+        db.hset("doc:2", &[("title", b"Second")])
+            .unwrap();
+        db.hset("doc:3", &[("title", b"Third")])
+            .unwrap();
+
+        // Match all with *
+        let options = FtSearchOptions::new();
+        let (total, _) = db.ft_search("idx", "*", &options).unwrap();
+
+        assert_eq!(total, 3);
+    }
+
+    #[test]
+    fn test_ft_search_via_alias() {
+        use crate::types::{FtField, FtOnType, FtSearchOptions};
+
+        let db = Db::open_memory().unwrap();
+
+        let schema = vec![FtField::text("title")];
+        db.ft_create("myindex", FtOnType::Hash, &["doc:"], &schema)
+            .unwrap();
+
+        // Create an alias
+        db.ft_aliasadd("idx", "myindex").unwrap();
+
+        db.hset("doc:1", &[("title", b"Hello World")])
+            .unwrap();
+
+        // Search via alias
+        let options = FtSearchOptions::new();
+        let (total, results) = db.ft_search("idx", "Hello", &options).unwrap();
+
+        assert_eq!(total, 1);
+        assert_eq!(results[0].key, "doc:1");
+    }
+
+    #[test]
+    fn test_ft_search_nonexistent_index() {
+        use crate::types::FtSearchOptions;
+
+        let db = Db::open_memory().unwrap();
+
+        let options = FtSearchOptions::new();
+        let result = db.ft_search("nonexistent", "hello", &options);
+
+        assert!(result.is_err());
     }
 }

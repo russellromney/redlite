@@ -3,6 +3,7 @@ use clap::Parser;
 mod db;
 mod error;
 mod resp;
+mod search;
 mod server;
 mod types;
 
@@ -37,6 +38,11 @@ struct Args {
     /// Storage type: file or memory
     #[arg(long, default_value = "file")]
     storage: String,
+
+    /// Cache size in MB (default: 64). Larger = faster reads.
+    /// Set to available RAM for best performance (e.g., 1024 for 1GB).
+    #[arg(long, default_value = "64")]
+    cache: i64,
 }
 
 #[tokio::main]
@@ -52,12 +58,18 @@ async fn main() -> anyhow::Result<()> {
         "sqlite" => {
             let db = match storage.as_str() {
                 "memory" => {
-                    tracing::info!("Using SQLite in-memory database");
-                    Db::open_memory()?
+                    tracing::info!("Using SQLite in-memory database (cache: {}MB)", args.cache);
+                    let db = Db::open_memory()?;
+                    db.set_cache_mb(args.cache)?;
+                    db
                 }
                 "file" => {
-                    tracing::info!("Using SQLite file database: {}", args.db);
-                    Db::open(&args.db)?
+                    tracing::info!(
+                        "Using SQLite file database: {} (cache: {}MB)",
+                        args.db,
+                        args.cache
+                    );
+                    Db::open_with_cache(&args.db, args.cache)?
                 }
                 _ => {
                     anyhow::bail!("Invalid storage type: {}. Use 'file' or 'memory'", storage);

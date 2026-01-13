@@ -1,7 +1,7 @@
 use std::collections::HashMap;
 use std::net::SocketAddr;
-use std::sync::{Arc, RwLock};
 use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::{Arc, RwLock};
 use std::time::Duration;
 use tokio::io::AsyncWriteExt;
 use tokio::net::{TcpListener, TcpStream};
@@ -16,9 +16,8 @@ mod connection;
 mod pubsub;
 use connection::{ConnectionInfo, ConnectionPool, ConnectionType};
 use pubsub::{
-    cmd_publish, cmd_subscribe, cmd_unsubscribe, cmd_psubscribe, cmd_punsubscribe,
-    cmd_watch, cmd_unwatch,
-    receive_pubsub_message, ConnectionState, PubSubMessage, QueuedCommand,
+    cmd_psubscribe, cmd_publish, cmd_punsubscribe, cmd_subscribe, cmd_unsubscribe, cmd_unwatch,
+    cmd_watch, receive_pubsub_message, ConnectionState, PubSubMessage, QueuedCommand,
 };
 
 /// Global pause state for CLIENT PAUSE
@@ -56,7 +55,8 @@ impl PauseState {
         let until = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
             .unwrap_or_default()
-            .as_millis() as i64 + ms;
+            .as_millis() as i64
+            + ms;
         *self.pause_until_ms.lock().unwrap() = until;
         self.paused.store(true, Ordering::SeqCst);
     }
@@ -111,7 +111,9 @@ impl Server {
                     pool,
                     pause_state,
                     peer_addr,
-                ).await {
+                )
+                .await
+                {
                     tracing::error!("Connection error: {}", e);
                 }
             });
@@ -148,7 +150,10 @@ async fn handle_connection(
             tracing::debug!("Connection {} unregistered", self.id);
         }
     }
-    let _guard = ConnectionGuard { pool: &pool, id: conn_id };
+    let _guard = ConnectionGuard {
+        pool: &pool,
+        id: conn_id,
+    };
 
     let (reader, mut writer) = socket.into_split();
     let mut reader = RespReader::new(reader);
@@ -231,7 +236,8 @@ async fn handle_connection(
                         &conn_handle,
                         &pool,
                         &pause_state,
-                    ).await;
+                    )
+                    .await;
                     writer.write_all(&response.encode()).await?;
                     writer.flush().await?;
 
@@ -293,7 +299,9 @@ async fn execute_normal_command(
             "DISCARD" => return execute_transaction_command(state, None, &cmd, cmd_args).await,
             "EXEC" => return execute_transaction_command(state, Some(db), &cmd, cmd_args).await,
             "WATCH" | "UNWATCH" => return RespValue::error("ERR WATCH not allowed in transaction"),
-            "BLPOP" | "BRPOP" | "BRPOPLPUSH" => return RespValue::error("ERR blocking commands not allowed in transaction"),
+            "BLPOP" | "BRPOP" | "BRPOPLPUSH" => {
+                return RespValue::error("ERR blocking commands not allowed in transaction")
+            }
             "SUBSCRIBE" | "PSUBSCRIBE" | "UNSUBSCRIBE" | "PUNSUBSCRIBE" => {
                 return RespValue::error("ERR pub/sub commands not allowed in transaction")
             }
@@ -473,6 +481,23 @@ async fn execute_command(
         "AUTOVACUUM" => cmd_autovacuum(db, cmd_args),
         "HISTORY" => cmd_history(db, cmd_args),
         "FTS" => cmd_fts(db, cmd_args),
+        // RediSearch-compatible commands (Session 23)
+        "FT.CREATE" => cmd_ft_create(db, cmd_args),
+        "FT.DROPINDEX" => cmd_ft_dropindex(db, cmd_args),
+        "FT._LIST" => cmd_ft_list(db),
+        "FT.INFO" => cmd_ft_info(db, cmd_args),
+        "FT.ALTER" => cmd_ft_alter(db, cmd_args),
+        "FT.SEARCH" => cmd_ft_search(db, cmd_args),
+        "FT.AGGREGATE" => cmd_ft_aggregate(db, cmd_args),
+        "FT.ALIASADD" => cmd_ft_aliasadd(db, cmd_args),
+        "FT.ALIASDEL" => cmd_ft_aliasdel(db, cmd_args),
+        "FT.ALIASUPDATE" => cmd_ft_aliasupdate(db, cmd_args),
+        "FT.SYNUPDATE" => cmd_ft_synupdate(db, cmd_args),
+        "FT.SYNDUMP" => cmd_ft_syndump(db, cmd_args),
+        "FT.SUGADD" => cmd_ft_sugadd(db, cmd_args),
+        "FT.SUGGET" => cmd_ft_sugget(db, cmd_args),
+        "FT.SUGDEL" => cmd_ft_sugdel(db, cmd_args),
+        "FT.SUGLEN" => cmd_ft_suglen(db, cmd_args),
         // Vector commands (Session 24.2)
         "VECTOR" => cmd_vector(db, cmd_args),
         "VADD" => cmd_vadd(db, cmd_args),
@@ -648,11 +673,15 @@ fn cmd_client(
             }
             let name = match std::str::from_utf8(&args[1]) {
                 Ok(s) => s.to_string(),
-                Err(_) => return RespValue::error("ERR Client names cannot contain spaces, newlines or other special characters"),
+                Err(_) => return RespValue::error(
+                    "ERR Client names cannot contain spaces, newlines or other special characters",
+                ),
             };
             // Validate name: no spaces or special characters
             if name.contains(' ') || name.contains('\n') || name.contains('\r') {
-                return RespValue::error("ERR Client names cannot contain spaces, newlines or other special characters");
+                return RespValue::error(
+                    "ERR Client names cannot contain spaces, newlines or other special characters",
+                );
             }
             if let Ok(mut info) = conn_handle.write() {
                 info.name = if name.is_empty() { None } else { Some(name) };
@@ -691,7 +720,12 @@ fn cmd_client(
                             "PUBSUB" => Some(ConnectionType::PubSub),
                             "MASTER" => Some(ConnectionType::Master),
                             "REPLICA" | "SLAVE" => Some(ConnectionType::Replica),
-                            _ => return RespValue::error(format!("ERR Unknown client type '{}' in CLIENT LIST TYPE", type_str)),
+                            _ => {
+                                return RespValue::error(format!(
+                                    "ERR Unknown client type '{}' in CLIENT LIST TYPE",
+                                    type_str
+                                ))
+                            }
                         };
                         i += 2;
                     }
@@ -721,7 +755,11 @@ fn cmd_client(
 
             let list = pool.format_list(filter_type, filter_ids.as_deref());
             // Add trailing newline for Redis compatibility
-            let output = if list.is_empty() { String::new() } else { format!("{}\n", list) };
+            let output = if list.is_empty() {
+                String::new()
+            } else {
+                format!("{}\n", list)
+            };
             RespValue::BulkString(Some(output.into_bytes()))
         }
         "ID" => {
@@ -791,7 +829,10 @@ fn cmd_client(
             // Stub for compatibility - always ON
             RespValue::ok()
         }
-        _ => RespValue::error(format!("ERR Unknown subcommand or wrong number of arguments for '{}'", subcommand)),
+        _ => RespValue::error(format!(
+            "ERR Unknown subcommand or wrong number of arguments for '{}'",
+            subcommand
+        )),
     }
 }
 
@@ -1791,12 +1832,10 @@ async fn cmd_blpop(db: &Db, args: &[Vec<u8>]) -> RespValue {
     };
 
     match db.blpop(&key_strs, timeout).await {
-        Ok(Some((key, value))) => {
-            RespValue::Array(Some(vec![
-                RespValue::BulkString(Some(key.into_bytes())),
-                RespValue::BulkString(Some(value)),
-            ]))
-        }
+        Ok(Some((key, value))) => RespValue::Array(Some(vec![
+            RespValue::BulkString(Some(key.into_bytes())),
+            RespValue::BulkString(Some(value)),
+        ])),
         Ok(None) => RespValue::null(),
         Err(KvError::WrongType) => RespValue::wrong_type(),
         Err(e) => RespValue::error(e.to_string()),
@@ -1830,12 +1869,10 @@ async fn cmd_brpop(db: &Db, args: &[Vec<u8>]) -> RespValue {
     };
 
     match db.brpop(&key_strs, timeout).await {
-        Ok(Some((key, value))) => {
-            RespValue::Array(Some(vec![
-                RespValue::BulkString(Some(key.into_bytes())),
-                RespValue::BulkString(Some(value)),
-            ]))
-        }
+        Ok(Some((key, value))) => RespValue::Array(Some(vec![
+            RespValue::BulkString(Some(key.into_bytes())),
+            RespValue::BulkString(Some(value)),
+        ])),
         Ok(None) => RespValue::null(),
         Err(KvError::WrongType) => RespValue::wrong_type(),
         Err(e) => RespValue::error(e.to_string()),
@@ -2543,12 +2580,18 @@ fn cmd_zrange(db: &Db, args: &[Vec<u8>]) -> RespValue {
         Err(_) => return RespValue::error("invalid key"),
     };
 
-    let start: i64 = match std::str::from_utf8(&args[1]).ok().and_then(|s| s.parse().ok()) {
+    let start: i64 = match std::str::from_utf8(&args[1])
+        .ok()
+        .and_then(|s| s.parse().ok())
+    {
         Some(v) => v,
         None => return RespValue::error("value is not an integer or out of range"),
     };
 
-    let stop: i64 = match std::str::from_utf8(&args[2]).ok().and_then(|s| s.parse().ok()) {
+    let stop: i64 = match std::str::from_utf8(&args[2])
+        .ok()
+        .and_then(|s| s.parse().ok())
+    {
         Some(v) => v,
         None => return RespValue::error("value is not an integer or out of range"),
     };
@@ -2564,7 +2607,9 @@ fn cmd_zrange(db: &Db, args: &[Vec<u8>]) -> RespValue {
                 let mut result = Vec::new();
                 for m in members {
                     result.push(RespValue::BulkString(Some(m.member)));
-                    result.push(RespValue::BulkString(Some(m.score.to_string().into_bytes())));
+                    result.push(RespValue::BulkString(Some(
+                        m.score.to_string().into_bytes(),
+                    )));
                 }
                 RespValue::Array(Some(result))
             } else {
@@ -2591,12 +2636,18 @@ fn cmd_zrevrange(db: &Db, args: &[Vec<u8>]) -> RespValue {
         Err(_) => return RespValue::error("invalid key"),
     };
 
-    let start: i64 = match std::str::from_utf8(&args[1]).ok().and_then(|s| s.parse().ok()) {
+    let start: i64 = match std::str::from_utf8(&args[1])
+        .ok()
+        .and_then(|s| s.parse().ok())
+    {
         Some(v) => v,
         None => return RespValue::error("value is not an integer or out of range"),
     };
 
-    let stop: i64 = match std::str::from_utf8(&args[2]).ok().and_then(|s| s.parse().ok()) {
+    let stop: i64 = match std::str::from_utf8(&args[2])
+        .ok()
+        .and_then(|s| s.parse().ok())
+    {
         Some(v) => v,
         None => return RespValue::error("value is not an integer or out of range"),
     };
@@ -2612,7 +2663,9 @@ fn cmd_zrevrange(db: &Db, args: &[Vec<u8>]) -> RespValue {
                 let mut result = Vec::new();
                 for m in members {
                     result.push(RespValue::BulkString(Some(m.member)));
-                    result.push(RespValue::BulkString(Some(m.score.to_string().into_bytes())));
+                    result.push(RespValue::BulkString(Some(
+                        m.score.to_string().into_bytes(),
+                    )));
                 }
                 RespValue::Array(Some(result))
             } else {
@@ -2681,11 +2734,17 @@ fn cmd_zrangebyscore(db: &Db, args: &[Vec<u8>]) -> RespValue {
             if i + 2 >= args.len() {
                 return RespValue::error("syntax error");
             }
-            offset = match std::str::from_utf8(&args[i + 1]).ok().and_then(|s| s.parse().ok()) {
+            offset = match std::str::from_utf8(&args[i + 1])
+                .ok()
+                .and_then(|s| s.parse().ok())
+            {
                 Some(v) => Some(v),
                 None => return RespValue::error("value is not an integer or out of range"),
             };
-            count = match std::str::from_utf8(&args[i + 2]).ok().and_then(|s| s.parse().ok()) {
+            count = match std::str::from_utf8(&args[i + 2])
+                .ok()
+                .and_then(|s| s.parse().ok())
+            {
                 Some(v) => Some(v),
                 None => return RespValue::error("value is not an integer or out of range"),
             };
@@ -2762,7 +2821,10 @@ fn cmd_zincrby(db: &Db, args: &[Vec<u8>]) -> RespValue {
         Err(_) => return RespValue::error("invalid key"),
     };
 
-    let increment: f64 = match std::str::from_utf8(&args[1]).ok().and_then(|s| s.parse().ok()) {
+    let increment: f64 = match std::str::from_utf8(&args[1])
+        .ok()
+        .and_then(|s| s.parse().ok())
+    {
         Some(v) => v,
         None => return RespValue::error("value is not a valid float"),
     };
@@ -2784,12 +2846,18 @@ fn cmd_zremrangebyrank(db: &Db, args: &[Vec<u8>]) -> RespValue {
         Err(_) => return RespValue::error("invalid key"),
     };
 
-    let start: i64 = match std::str::from_utf8(&args[1]).ok().and_then(|s| s.parse().ok()) {
+    let start: i64 = match std::str::from_utf8(&args[1])
+        .ok()
+        .and_then(|s| s.parse().ok())
+    {
         Some(v) => v,
         None => return RespValue::error("value is not an integer or out of range"),
     };
 
-    let stop: i64 = match std::str::from_utf8(&args[2]).ok().and_then(|s| s.parse().ok()) {
+    let stop: i64 = match std::str::from_utf8(&args[2])
+        .ok()
+        .and_then(|s| s.parse().ok())
+    {
         Some(v) => v,
         None => return RespValue::error("value is not an integer or out of range"),
     };
@@ -2985,7 +3053,9 @@ fn cmd_history(db: &Db, args: &[Vec<u8>]) -> RespValue {
                 }
                 "DATABASE" => {
                     if args.len() < 3 {
-                        return RespValue::error("HISTORY ENABLE DATABASE requires database number");
+                        return RespValue::error(
+                            "HISTORY ENABLE DATABASE requires database number",
+                        );
                     }
                     let db_num: i32 = match std::str::from_utf8(&args[2])
                         .ok()
@@ -3034,7 +3104,9 @@ fn cmd_history(db: &Db, args: &[Vec<u8>]) -> RespValue {
                 }
                 "DATABASE" => {
                     if args.len() < 3 {
-                        return RespValue::error("HISTORY DISABLE DATABASE requires database number");
+                        return RespValue::error(
+                            "HISTORY DISABLE DATABASE requires database number",
+                        );
                     }
                     let db_num: i32 = match std::str::from_utf8(&args[2])
                         .ok()
@@ -3074,7 +3146,9 @@ fn cmd_history(db: &Db, args: &[Vec<u8>]) -> RespValue {
             };
 
             let limit = if let Some(idx) = args.iter().position(|a| {
-                std::str::from_utf8(a).map(|s| s.to_uppercase() == "LIMIT").unwrap_or(false)
+                std::str::from_utf8(a)
+                    .map(|s| s.to_uppercase() == "LIMIT")
+                    .unwrap_or(false)
             }) {
                 if idx + 1 < args.len() {
                     std::str::from_utf8(&args[idx + 1])
@@ -3240,7 +3314,9 @@ fn cmd_fts(db: &Db, args: &[Vec<u8>]) -> RespValue {
         }
         "DISABLE" => {
             if args.len() < 2 {
-                return RespValue::error("FTS DISABLE requires level (GLOBAL|DATABASE|PATTERN|KEY)");
+                return RespValue::error(
+                    "FTS DISABLE requires level (GLOBAL|DATABASE|PATTERN|KEY)",
+                );
             }
 
             let level = match std::str::from_utf8(&args[1]) {
@@ -3353,7 +3429,8 @@ fn cmd_fts(db: &Db, args: &[Vec<u8>]) -> RespValue {
                             ];
                             if let Some(snippet) = r.snippet {
                                 entry.push(RespValue::BulkString(Some(b"snippet".to_vec())));
-                                entry.push(RespValue::BulkString(Some(snippet.as_bytes().to_vec())));
+                                entry
+                                    .push(RespValue::BulkString(Some(snippet.as_bytes().to_vec())));
                             }
                             RespValue::Array(Some(entry))
                         })
@@ -3363,36 +3440,34 @@ fn cmd_fts(db: &Db, args: &[Vec<u8>]) -> RespValue {
                 Err(e) => RespValue::error(format!("FTS search failed: {}", e)),
             }
         }
-        "INFO" => {
-            match db.fts_info() {
-                Ok(stats) => {
-                    let configs: Vec<RespValue> = stats
-                        .configs
-                        .iter()
-                        .map(|c| {
-                            RespValue::Array(Some(vec![
-                                RespValue::BulkString(Some(b"level".to_vec())),
-                                RespValue::BulkString(Some(c.level.as_str().as_bytes().to_vec())),
-                                RespValue::BulkString(Some(b"target".to_vec())),
-                                RespValue::BulkString(Some(c.target.as_bytes().to_vec())),
-                                RespValue::BulkString(Some(b"enabled".to_vec())),
-                                RespValue::Integer(if c.enabled { 1 } else { 0 }),
-                            ]))
-                        })
-                        .collect();
+        "INFO" => match db.fts_info() {
+            Ok(stats) => {
+                let configs: Vec<RespValue> = stats
+                    .configs
+                    .iter()
+                    .map(|c| {
+                        RespValue::Array(Some(vec![
+                            RespValue::BulkString(Some(b"level".to_vec())),
+                            RespValue::BulkString(Some(c.level.as_str().as_bytes().to_vec())),
+                            RespValue::BulkString(Some(b"target".to_vec())),
+                            RespValue::BulkString(Some(c.target.as_bytes().to_vec())),
+                            RespValue::BulkString(Some(b"enabled".to_vec())),
+                            RespValue::Integer(if c.enabled { 1 } else { 0 }),
+                        ]))
+                    })
+                    .collect();
 
-                    RespValue::Array(Some(vec![
-                        RespValue::BulkString(Some(b"indexed_keys".to_vec())),
-                        RespValue::Integer(stats.indexed_keys),
-                        RespValue::BulkString(Some(b"storage_bytes".to_vec())),
-                        RespValue::Integer(stats.storage_bytes),
-                        RespValue::BulkString(Some(b"configs".to_vec())),
-                        RespValue::Array(Some(configs)),
-                    ]))
-                }
-                Err(e) => RespValue::error(format!("FTS info failed: {}", e)),
+                RespValue::Array(Some(vec![
+                    RespValue::BulkString(Some(b"indexed_keys".to_vec())),
+                    RespValue::Integer(stats.indexed_keys),
+                    RespValue::BulkString(Some(b"storage_bytes".to_vec())),
+                    RespValue::Integer(stats.storage_bytes),
+                    RespValue::BulkString(Some(b"configs".to_vec())),
+                    RespValue::Array(Some(configs)),
+                ]))
             }
-        }
+            Err(e) => RespValue::error(format!("FTS info failed: {}", e)),
+        },
         "REINDEX" => {
             if args.len() < 2 {
                 return RespValue::error("FTS REINDEX requires key");
@@ -3413,7 +3488,811 @@ fn cmd_fts(db: &Db, args: &[Vec<u8>]) -> RespValue {
                 Err(e) => RespValue::error(format!("FTS reindex failed: {}", e)),
             }
         }
-        _ => RespValue::error(format!("unknown FTS subcommand '{}'. Use ENABLE|DISABLE|SEARCH|INFO|REINDEX", subcommand)),
+        _ => RespValue::error(format!(
+            "unknown FTS subcommand '{}'. Use ENABLE|DISABLE|SEARCH|INFO|REINDEX",
+            subcommand
+        )),
+    }
+}
+
+// --- Session 23: RediSearch-compatible FT.* command handlers ---
+
+use crate::types::{FtField, FtFieldType, FtOnType, FtSearchOptions};
+
+/// FT.CREATE index ON HASH|JSON PREFIX n prefix... SCHEMA field type...
+fn cmd_ft_create(db: &Db, args: &[Vec<u8>]) -> RespValue {
+    // FT.CREATE index ON HASH|JSON [PREFIX count prefix...] SCHEMA field type [SORTABLE] ...
+    if args.len() < 5 {
+        return RespValue::error("wrong number of arguments for 'FT.CREATE' command");
+    }
+
+    let name = match std::str::from_utf8(&args[0]) {
+        Ok(n) => n,
+        Err(_) => return RespValue::error("invalid index name"),
+    };
+
+    // Parse ON HASH|JSON
+    let on_keyword = match std::str::from_utf8(&args[1]) {
+        Ok(s) => s.to_uppercase(),
+        Err(_) => return RespValue::error("invalid ON keyword"),
+    };
+    if on_keyword != "ON" {
+        return RespValue::error("expected ON keyword");
+    }
+
+    let on_type = match std::str::from_utf8(&args[2]) {
+        Ok(s) => match FtOnType::from_str(s) {
+            Some(t) => t,
+            None => return RespValue::error("ON type must be HASH or JSON"),
+        },
+        Err(_) => return RespValue::error("invalid ON type"),
+    };
+
+    // Parse remaining args for PREFIX and SCHEMA
+    let mut i = 3;
+    let mut prefixes: Vec<&str> = Vec::new();
+    let mut schema: Vec<FtField> = Vec::new();
+    let mut in_schema = false;
+
+    while i < args.len() {
+        let arg = match std::str::from_utf8(&args[i]) {
+            Ok(s) => s.to_uppercase(),
+            Err(_) => {
+                i += 1;
+                continue;
+            }
+        };
+
+        if arg == "PREFIX" {
+            // PREFIX count prefix1 prefix2 ...
+            i += 1;
+            if i >= args.len() {
+                return RespValue::error("PREFIX requires count");
+            }
+            let count: usize = match std::str::from_utf8(&args[i])
+                .ok()
+                .and_then(|s| s.parse().ok())
+            {
+                Some(c) => c,
+                None => return RespValue::error("PREFIX count must be an integer"),
+            };
+            i += 1;
+            for _ in 0..count {
+                if i >= args.len() {
+                    return RespValue::error("not enough prefix values");
+                }
+                match std::str::from_utf8(&args[i]) {
+                    Ok(p) => prefixes.push(p),
+                    Err(_) => return RespValue::error("invalid prefix"),
+                };
+                i += 1;
+            }
+        } else if arg == "SCHEMA" {
+            in_schema = true;
+            i += 1;
+        } else if in_schema {
+            // Parse field definition: name type [SORTABLE] [NOINDEX] ...
+            let field_name = match std::str::from_utf8(&args[i]) {
+                Ok(n) => n,
+                Err(_) => return RespValue::error("invalid field name"),
+            };
+            i += 1;
+            if i >= args.len() {
+                return RespValue::error("field type required");
+            }
+            let field_type = match std::str::from_utf8(&args[i]) {
+                Ok(s) => match FtFieldType::from_str(s) {
+                    Some(t) => t,
+                    None => return RespValue::error(format!("unknown field type: {}", s)),
+                },
+                Err(_) => return RespValue::error("invalid field type"),
+            };
+            i += 1;
+
+            let mut field = FtField::new(field_name, field_type);
+
+            // Parse field options
+            while i < args.len() {
+                let opt = match std::str::from_utf8(&args[i]) {
+                    Ok(s) => s.to_uppercase(),
+                    Err(_) => break,
+                };
+                match opt.as_str() {
+                    "SORTABLE" => {
+                        field.sortable = true;
+                        i += 1;
+                    }
+                    "NOINDEX" => {
+                        field.noindex = true;
+                        i += 1;
+                    }
+                    "NOSTEM" => {
+                        field.nostem = true;
+                        i += 1;
+                    }
+                    "WEIGHT" => {
+                        i += 1;
+                        if i < args.len() {
+                            if let Some(w) = std::str::from_utf8(&args[i])
+                                .ok()
+                                .and_then(|s| s.parse::<f64>().ok())
+                            {
+                                field.weight = w;
+                            }
+                            i += 1;
+                        }
+                    }
+                    "SEPARATOR" => {
+                        i += 1;
+                        if i < args.len() {
+                            if let Some(c) = std::str::from_utf8(&args[i])
+                                .ok()
+                                .and_then(|s| s.chars().next())
+                            {
+                                field.separator = c;
+                            }
+                            i += 1;
+                        }
+                    }
+                    "CASESENSITIVE" => {
+                        field.case_sensitive = true;
+                        i += 1;
+                    }
+                    // If we hit another field type keyword, it's the next field
+                    _ if FtFieldType::from_str(&opt).is_some()
+                        || opt == "AS"
+                        || opt == "PREFIX" =>
+                    {
+                        break
+                    }
+                    // If this looks like a new field name (next word after type), break
+                    _ => break,
+                }
+            }
+            schema.push(field);
+        } else {
+            i += 1;
+        }
+    }
+
+    if schema.is_empty() {
+        return RespValue::error("SCHEMA required with at least one field");
+    }
+
+    match db.ft_create(name, on_type, &prefixes, &schema) {
+        Ok(()) => RespValue::ok(),
+        Err(e) => RespValue::error(e.to_string()),
+    }
+}
+
+/// FT.DROPINDEX index [DD]
+fn cmd_ft_dropindex(db: &Db, args: &[Vec<u8>]) -> RespValue {
+    if args.is_empty() {
+        return RespValue::error("wrong number of arguments for 'FT.DROPINDEX' command");
+    }
+
+    let name = match std::str::from_utf8(&args[0]) {
+        Ok(n) => n,
+        Err(_) => return RespValue::error("invalid index name"),
+    };
+
+    let delete_docs = args
+        .get(1)
+        .and_then(|a| std::str::from_utf8(a).ok())
+        .map(|s| s.to_uppercase() == "DD")
+        .unwrap_or(false);
+
+    match db.ft_dropindex(name, delete_docs) {
+        Ok(true) => RespValue::ok(),
+        Ok(false) => RespValue::error("Unknown index name"),
+        Err(e) => RespValue::error(e.to_string()),
+    }
+}
+
+/// FT._LIST
+fn cmd_ft_list(db: &Db) -> RespValue {
+    match db.ft_list() {
+        Ok(indexes) => {
+            let resp: Vec<RespValue> = indexes
+                .into_iter()
+                .map(|name| RespValue::BulkString(Some(name.into_bytes())))
+                .collect();
+            RespValue::Array(Some(resp))
+        }
+        Err(e) => RespValue::error(e.to_string()),
+    }
+}
+
+/// FT.INFO index
+fn cmd_ft_info(db: &Db, args: &[Vec<u8>]) -> RespValue {
+    if args.is_empty() {
+        return RespValue::error("wrong number of arguments for 'FT.INFO' command");
+    }
+
+    let name = match std::str::from_utf8(&args[0]) {
+        Ok(n) => n,
+        Err(_) => return RespValue::error("invalid index name"),
+    };
+
+    match db.ft_info(name) {
+        Ok(Some(info)) => {
+            let schema_resp: Vec<RespValue> = info
+                .schema
+                .iter()
+                .flat_map(|f| {
+                    let mut field_info = vec![
+                        RespValue::BulkString(Some(f.name.as_bytes().to_vec())),
+                        RespValue::BulkString(Some(b"type".to_vec())),
+                        RespValue::BulkString(Some(f.field_type.as_str().as_bytes().to_vec())),
+                    ];
+                    if f.sortable {
+                        field_info.push(RespValue::BulkString(Some(b"SORTABLE".to_vec())));
+                    }
+                    if f.noindex {
+                        field_info.push(RespValue::BulkString(Some(b"NOINDEX".to_vec())));
+                    }
+                    field_info
+                })
+                .collect();
+
+            let prefixes_resp: Vec<RespValue> = info
+                .prefixes
+                .iter()
+                .map(|p| RespValue::BulkString(Some(p.as_bytes().to_vec())))
+                .collect();
+
+            RespValue::Array(Some(vec![
+                RespValue::BulkString(Some(b"index_name".to_vec())),
+                RespValue::BulkString(Some(info.name.into_bytes())),
+                RespValue::BulkString(Some(b"index_options".to_vec())),
+                RespValue::Array(Some(vec![])),
+                RespValue::BulkString(Some(b"index_definition".to_vec())),
+                RespValue::Array(Some(vec![
+                    RespValue::BulkString(Some(b"key_type".to_vec())),
+                    RespValue::BulkString(Some(info.on_type.as_str().as_bytes().to_vec())),
+                    RespValue::BulkString(Some(b"prefixes".to_vec())),
+                    RespValue::Array(Some(prefixes_resp)),
+                ])),
+                RespValue::BulkString(Some(b"attributes".to_vec())),
+                RespValue::Array(Some(schema_resp)),
+                RespValue::BulkString(Some(b"num_docs".to_vec())),
+                RespValue::Integer(info.num_docs),
+                RespValue::BulkString(Some(b"num_terms".to_vec())),
+                RespValue::Integer(info.num_terms),
+                RespValue::BulkString(Some(b"num_records".to_vec())),
+                RespValue::Integer(info.num_records),
+            ]))
+        }
+        Ok(None) => RespValue::error("Unknown index name"),
+        Err(e) => RespValue::error(e.to_string()),
+    }
+}
+
+/// FT.ALTER index ADD field type [options]
+fn cmd_ft_alter(db: &Db, args: &[Vec<u8>]) -> RespValue {
+    // FT.ALTER index [SKIPINITIALSCAN] SCHEMA ADD field type [options]
+    if args.len() < 4 {
+        return RespValue::error("wrong number of arguments for 'FT.ALTER' command");
+    }
+
+    let name = match std::str::from_utf8(&args[0]) {
+        Ok(n) => n,
+        Err(_) => return RespValue::error("invalid index name"),
+    };
+
+    // Find SCHEMA ADD
+    let mut i = 1;
+    while i < args.len() {
+        let arg = match std::str::from_utf8(&args[i]) {
+            Ok(s) => s.to_uppercase(),
+            Err(_) => {
+                i += 1;
+                continue;
+            }
+        };
+        if arg == "SCHEMA" {
+            break;
+        }
+        i += 1;
+    }
+
+    i += 1; // skip SCHEMA
+    if i >= args.len() {
+        return RespValue::error("expected ADD after SCHEMA");
+    }
+
+    let add_keyword = match std::str::from_utf8(&args[i]) {
+        Ok(s) => s.to_uppercase(),
+        Err(_) => return RespValue::error("invalid ADD keyword"),
+    };
+    if add_keyword != "ADD" {
+        return RespValue::error("expected ADD after SCHEMA");
+    }
+    i += 1;
+
+    if i + 1 >= args.len() {
+        return RespValue::error("field name and type required");
+    }
+
+    let field_name = match std::str::from_utf8(&args[i]) {
+        Ok(n) => n,
+        Err(_) => return RespValue::error("invalid field name"),
+    };
+    i += 1;
+
+    let field_type = match std::str::from_utf8(&args[i]) {
+        Ok(s) => match FtFieldType::from_str(s) {
+            Some(t) => t,
+            None => return RespValue::error(format!("unknown field type: {}", s)),
+        },
+        Err(_) => return RespValue::error("invalid field type"),
+    };
+    i += 1;
+
+    let mut field = FtField::new(field_name, field_type);
+
+    // Parse optional field modifiers
+    while i < args.len() {
+        let opt = match std::str::from_utf8(&args[i]) {
+            Ok(s) => s.to_uppercase(),
+            Err(_) => break,
+        };
+        match opt.as_str() {
+            "SORTABLE" => field.sortable = true,
+            "NOINDEX" => field.noindex = true,
+            "NOSTEM" => field.nostem = true,
+            "CASESENSITIVE" => field.case_sensitive = true,
+            _ => {}
+        }
+        i += 1;
+    }
+
+    match db.ft_alter(name, field) {
+        Ok(()) => RespValue::ok(),
+        Err(e) => RespValue::error(e.to_string()),
+    }
+}
+
+/// FT.SEARCH index query [options]
+fn cmd_ft_search(db: &Db, args: &[Vec<u8>]) -> RespValue {
+    if args.len() < 2 {
+        return RespValue::error("wrong number of arguments for 'FT.SEARCH' command");
+    }
+
+    let index_name = match std::str::from_utf8(&args[0]) {
+        Ok(n) => n,
+        Err(_) => return RespValue::error("invalid index name"),
+    };
+
+    let query = match std::str::from_utf8(&args[1]) {
+        Ok(q) => q,
+        Err(_) => return RespValue::error("invalid query"),
+    };
+
+    // Parse options
+    let mut options = FtSearchOptions::new();
+    let mut i = 2;
+    while i < args.len() {
+        let opt = match std::str::from_utf8(&args[i]) {
+            Ok(s) => s.to_uppercase(),
+            Err(_) => {
+                i += 1;
+                continue;
+            }
+        };
+        match opt.as_str() {
+            "NOCONTENT" => options.nocontent = true,
+            "VERBATIM" => options.verbatim = true,
+            "NOSTOPWORDS" => options.nostopwords = true,
+            "WITHSCORES" => options.withscores = true,
+            "WITHPAYLOADS" => options.withpayloads = true,
+            "LIMIT" => {
+                if i + 2 < args.len() {
+                    options.limit_offset = std::str::from_utf8(&args[i + 1])
+                        .ok()
+                        .and_then(|s| s.parse().ok())
+                        .unwrap_or(0);
+                    options.limit_num = std::str::from_utf8(&args[i + 2])
+                        .ok()
+                        .and_then(|s| s.parse().ok())
+                        .unwrap_or(10);
+                    i += 2;
+                }
+            }
+            "SORTBY" => {
+                if i + 1 < args.len() {
+                    let field = std::str::from_utf8(&args[i + 1]).unwrap_or("");
+                    let asc = args
+                        .get(i + 2)
+                        .and_then(|a| std::str::from_utf8(a).ok())
+                        .map(|s| s.to_uppercase() != "DESC")
+                        .unwrap_or(true);
+                    options.sortby = Some((field.to_string(), asc));
+                    i += 2;
+                }
+            }
+            "RETURN" => {
+                if i + 1 < args.len() {
+                    let count: usize = std::str::from_utf8(&args[i + 1])
+                        .ok()
+                        .and_then(|s| s.parse().ok())
+                        .unwrap_or(0);
+                    i += 2;
+                    for _ in 0..count {
+                        if i < args.len() {
+                            if let Ok(f) = std::str::from_utf8(&args[i]) {
+                                options.return_fields.push(f.to_string());
+                            }
+                            i += 1;
+                        }
+                    }
+                    continue;
+                }
+            }
+            "INKEYS" => {
+                if i + 1 < args.len() {
+                    let count: usize = std::str::from_utf8(&args[i + 1])
+                        .ok()
+                        .and_then(|s| s.parse().ok())
+                        .unwrap_or(0);
+                    i += 2;
+                    for _ in 0..count {
+                        if i < args.len() {
+                            if let Ok(k) = std::str::from_utf8(&args[i]) {
+                                options.inkeys.push(k.to_string());
+                            }
+                            i += 1;
+                        }
+                    }
+                    continue;
+                }
+            }
+            "INFIELDS" => {
+                if i + 1 < args.len() {
+                    let count: usize = std::str::from_utf8(&args[i + 1])
+                        .ok()
+                        .and_then(|s| s.parse().ok())
+                        .unwrap_or(0);
+                    i += 2;
+                    for _ in 0..count {
+                        if i < args.len() {
+                            if let Ok(f) = std::str::from_utf8(&args[i]) {
+                                options.infields.push(f.to_string());
+                            }
+                            i += 1;
+                        }
+                    }
+                    continue;
+                }
+            }
+            _ => {}
+        }
+        i += 1;
+    }
+
+    // Execute the search
+    match db.ft_search(index_name, query, &options) {
+        Ok((total, results)) => {
+            let mut response = Vec::new();
+            response.push(RespValue::Integer(total));
+
+            for result in results {
+                // Add key name
+                response.push(RespValue::from_string(result.key.clone()));
+
+                // Add score if requested
+                if options.withscores {
+                    response.push(RespValue::from_string(result.score.to_string()));
+                }
+
+                // Add fields if not NOCONTENT
+                if !options.nocontent {
+                    let mut field_values: Vec<RespValue> = Vec::new();
+                    for (field_name, field_value) in &result.fields {
+                        field_values.push(RespValue::from_string(field_name.clone()));
+                        field_values.push(RespValue::BulkString(Some(field_value.clone())));
+                    }
+                    response.push(RespValue::Array(Some(field_values)));
+                }
+            }
+
+            RespValue::Array(Some(response))
+        }
+        Err(e) => RespValue::error(&e.to_string()),
+    }
+}
+
+/// FT.AGGREGATE index query [options]
+fn cmd_ft_aggregate(db: &Db, args: &[Vec<u8>]) -> RespValue {
+    if args.len() < 2 {
+        return RespValue::error("wrong number of arguments for 'FT.AGGREGATE' command");
+    }
+
+    // FT.AGGREGATE is a placeholder until search.rs is implemented
+    // For now, return an empty result set
+    RespValue::Array(Some(vec![
+        RespValue::Integer(0), // Total count
+    ]))
+}
+
+/// FT.ALIASADD alias index
+fn cmd_ft_aliasadd(db: &Db, args: &[Vec<u8>]) -> RespValue {
+    if args.len() < 2 {
+        return RespValue::error("wrong number of arguments for 'FT.ALIASADD' command");
+    }
+
+    let alias = match std::str::from_utf8(&args[0]) {
+        Ok(a) => a,
+        Err(_) => return RespValue::error("invalid alias"),
+    };
+
+    let index_name = match std::str::from_utf8(&args[1]) {
+        Ok(n) => n,
+        Err(_) => return RespValue::error("invalid index name"),
+    };
+
+    match db.ft_aliasadd(alias, index_name) {
+        Ok(()) => RespValue::ok(),
+        Err(e) => RespValue::error(e.to_string()),
+    }
+}
+
+/// FT.ALIASDEL alias
+fn cmd_ft_aliasdel(db: &Db, args: &[Vec<u8>]) -> RespValue {
+    if args.is_empty() {
+        return RespValue::error("wrong number of arguments for 'FT.ALIASDEL' command");
+    }
+
+    let alias = match std::str::from_utf8(&args[0]) {
+        Ok(a) => a,
+        Err(_) => return RespValue::error("invalid alias"),
+    };
+
+    match db.ft_aliasdel(alias) {
+        Ok(true) => RespValue::ok(),
+        Ok(false) => RespValue::error("Alias does not exist"),
+        Err(e) => RespValue::error(e.to_string()),
+    }
+}
+
+/// FT.ALIASUPDATE alias index
+fn cmd_ft_aliasupdate(db: &Db, args: &[Vec<u8>]) -> RespValue {
+    if args.len() < 2 {
+        return RespValue::error("wrong number of arguments for 'FT.ALIASUPDATE' command");
+    }
+
+    let alias = match std::str::from_utf8(&args[0]) {
+        Ok(a) => a,
+        Err(_) => return RespValue::error("invalid alias"),
+    };
+
+    let index_name = match std::str::from_utf8(&args[1]) {
+        Ok(n) => n,
+        Err(_) => return RespValue::error("invalid index name"),
+    };
+
+    match db.ft_aliasupdate(alias, index_name) {
+        Ok(()) => RespValue::ok(),
+        Err(e) => RespValue::error(e.to_string()),
+    }
+}
+
+/// FT.SYNUPDATE index group_id term [term ...]
+fn cmd_ft_synupdate(db: &Db, args: &[Vec<u8>]) -> RespValue {
+    if args.len() < 3 {
+        return RespValue::error("wrong number of arguments for 'FT.SYNUPDATE' command");
+    }
+
+    let index_name = match std::str::from_utf8(&args[0]) {
+        Ok(n) => n,
+        Err(_) => return RespValue::error("invalid index name"),
+    };
+
+    let group_id = match std::str::from_utf8(&args[1]) {
+        Ok(g) => g,
+        Err(_) => return RespValue::error("invalid group id"),
+    };
+
+    let terms: Vec<&str> = match args[2..]
+        .iter()
+        .map(|t| std::str::from_utf8(t))
+        .collect::<std::result::Result<Vec<_>, _>>()
+    {
+        Ok(t) => t,
+        Err(_) => return RespValue::error("invalid term"),
+    };
+
+    match db.ft_synupdate(index_name, group_id, &terms) {
+        Ok(()) => RespValue::ok(),
+        Err(e) => RespValue::error(e.to_string()),
+    }
+}
+
+/// FT.SYNDUMP index
+fn cmd_ft_syndump(db: &Db, args: &[Vec<u8>]) -> RespValue {
+    if args.is_empty() {
+        return RespValue::error("wrong number of arguments for 'FT.SYNDUMP' command");
+    }
+
+    let index_name = match std::str::from_utf8(&args[0]) {
+        Ok(n) => n,
+        Err(_) => return RespValue::error("invalid index name"),
+    };
+
+    match db.ft_syndump(index_name) {
+        Ok(groups) => {
+            let mut resp: Vec<RespValue> = Vec::new();
+            for (group_id, terms) in groups {
+                resp.push(RespValue::BulkString(Some(group_id.into_bytes())));
+                let terms_resp: Vec<RespValue> = terms
+                    .into_iter()
+                    .map(|t| RespValue::BulkString(Some(t.into_bytes())))
+                    .collect();
+                resp.push(RespValue::Array(Some(terms_resp)));
+            }
+            RespValue::Array(Some(resp))
+        }
+        Err(e) => RespValue::error(e.to_string()),
+    }
+}
+
+/// FT.SUGADD key string score [PAYLOAD payload]
+fn cmd_ft_sugadd(db: &Db, args: &[Vec<u8>]) -> RespValue {
+    if args.len() < 3 {
+        return RespValue::error("wrong number of arguments for 'FT.SUGADD' command");
+    }
+
+    let key = match std::str::from_utf8(&args[0]) {
+        Ok(k) => k,
+        Err(_) => return RespValue::error("invalid key"),
+    };
+
+    let string = match std::str::from_utf8(&args[1]) {
+        Ok(s) => s,
+        Err(_) => return RespValue::error("invalid string"),
+    };
+
+    let score: f64 = match std::str::from_utf8(&args[2])
+        .ok()
+        .and_then(|s| s.parse().ok())
+    {
+        Some(s) => s,
+        None => return RespValue::error("score must be a number"),
+    };
+
+    // Parse optional PAYLOAD
+    let mut payload: Option<&str> = None;
+    let mut i = 3;
+    while i < args.len() {
+        let opt = match std::str::from_utf8(&args[i]) {
+            Ok(s) => s.to_uppercase(),
+            Err(_) => {
+                i += 1;
+                continue;
+            }
+        };
+        if opt == "PAYLOAD" && i + 1 < args.len() {
+            payload = std::str::from_utf8(&args[i + 1]).ok();
+            i += 2;
+        } else {
+            i += 1;
+        }
+    }
+
+    match db.ft_sugadd(key, string, score, payload) {
+        Ok(count) => RespValue::Integer(count),
+        Err(e) => RespValue::error(e.to_string()),
+    }
+}
+
+/// FT.SUGGET key prefix [FUZZY] [WITHSCORES] [WITHPAYLOADS] [MAX num]
+fn cmd_ft_sugget(db: &Db, args: &[Vec<u8>]) -> RespValue {
+    if args.len() < 2 {
+        return RespValue::error("wrong number of arguments for 'FT.SUGGET' command");
+    }
+
+    let key = match std::str::from_utf8(&args[0]) {
+        Ok(k) => k,
+        Err(_) => return RespValue::error("invalid key"),
+    };
+
+    let prefix = match std::str::from_utf8(&args[1]) {
+        Ok(p) => p,
+        Err(_) => return RespValue::error("invalid prefix"),
+    };
+
+    let mut fuzzy = false;
+    let mut with_scores = false;
+    let mut with_payloads = false;
+    let mut max: i64 = 5;
+
+    let mut i = 2;
+    while i < args.len() {
+        let opt = match std::str::from_utf8(&args[i]) {
+            Ok(s) => s.to_uppercase(),
+            Err(_) => {
+                i += 1;
+                continue;
+            }
+        };
+        match opt.as_str() {
+            "FUZZY" => fuzzy = true,
+            "WITHSCORES" => with_scores = true,
+            "WITHPAYLOADS" => with_payloads = true,
+            "MAX" => {
+                if i + 1 < args.len() {
+                    max = std::str::from_utf8(&args[i + 1])
+                        .ok()
+                        .and_then(|s| s.parse().ok())
+                        .unwrap_or(5);
+                    i += 1;
+                }
+            }
+            _ => {}
+        }
+        i += 1;
+    }
+
+    match db.ft_sugget(key, prefix, fuzzy, max) {
+        Ok(suggestions) => {
+            let mut resp: Vec<RespValue> = Vec::new();
+            for sug in suggestions {
+                resp.push(RespValue::BulkString(Some(sug.string.into_bytes())));
+                if with_scores {
+                    resp.push(RespValue::BulkString(Some(
+                        sug.score.to_string().into_bytes(),
+                    )));
+                }
+                if with_payloads {
+                    resp.push(match sug.payload {
+                        Some(p) => RespValue::BulkString(Some(p.into_bytes())),
+                        None => RespValue::null(),
+                    });
+                }
+            }
+            RespValue::Array(Some(resp))
+        }
+        Err(e) => RespValue::error(e.to_string()),
+    }
+}
+
+/// FT.SUGDEL key string
+fn cmd_ft_sugdel(db: &Db, args: &[Vec<u8>]) -> RespValue {
+    if args.len() < 2 {
+        return RespValue::error("wrong number of arguments for 'FT.SUGDEL' command");
+    }
+
+    let key = match std::str::from_utf8(&args[0]) {
+        Ok(k) => k,
+        Err(_) => return RespValue::error("invalid key"),
+    };
+
+    let string = match std::str::from_utf8(&args[1]) {
+        Ok(s) => s,
+        Err(_) => return RespValue::error("invalid string"),
+    };
+
+    match db.ft_sugdel(key, string) {
+        Ok(true) => RespValue::Integer(1),
+        Ok(false) => RespValue::Integer(0),
+        Err(e) => RespValue::error(e.to_string()),
+    }
+}
+
+/// FT.SUGLEN key
+fn cmd_ft_suglen(db: &Db, args: &[Vec<u8>]) -> RespValue {
+    if args.is_empty() {
+        return RespValue::error("wrong number of arguments for 'FT.SUGLEN' command");
+    }
+
+    let key = match std::str::from_utf8(&args[0]) {
+        Ok(k) => k,
+        Err(_) => return RespValue::error("invalid key"),
+    };
+
+    match db.ft_suglen(key) {
+        Ok(count) => RespValue::Integer(count),
+        Err(e) => RespValue::error(e.to_string()),
     }
 }
 
@@ -3433,7 +4312,9 @@ fn cmd_vector(db: &Db, args: &[Vec<u8>]) -> RespValue {
     match subcommand.as_str() {
         "ENABLE" => {
             if args.len() < 3 {
-                return RespValue::error("VECTOR ENABLE requires level (GLOBAL|DATABASE|PATTERN|KEY) and dimensions");
+                return RespValue::error(
+                    "VECTOR ENABLE requires level (GLOBAL|DATABASE|PATTERN|KEY) and dimensions",
+                );
             }
 
             let level = match std::str::from_utf8(&args[1]) {
@@ -3457,7 +4338,9 @@ fn cmd_vector(db: &Db, args: &[Vec<u8>]) -> RespValue {
                 }
                 "DATABASE" => {
                     if args.len() < 4 {
-                        return RespValue::error("VECTOR ENABLE DATABASE requires database number and dimensions");
+                        return RespValue::error(
+                            "VECTOR ENABLE DATABASE requires database number and dimensions",
+                        );
                     }
                     let db_num: i32 = match std::str::from_utf8(&args[2])
                         .ok()
@@ -3480,7 +4363,9 @@ fn cmd_vector(db: &Db, args: &[Vec<u8>]) -> RespValue {
                 }
                 "PATTERN" => {
                     if args.len() < 4 {
-                        return RespValue::error("VECTOR ENABLE PATTERN requires pattern and dimensions");
+                        return RespValue::error(
+                            "VECTOR ENABLE PATTERN requires pattern and dimensions",
+                        );
                     }
                     let pattern = match std::str::from_utf8(&args[2]) {
                         Ok(p) => p,
@@ -3500,7 +4385,9 @@ fn cmd_vector(db: &Db, args: &[Vec<u8>]) -> RespValue {
                 }
                 "KEY" => {
                     if args.len() < 4 {
-                        return RespValue::error("VECTOR ENABLE KEY requires key name and dimensions");
+                        return RespValue::error(
+                            "VECTOR ENABLE KEY requires key name and dimensions",
+                        );
                     }
                     let key = match std::str::from_utf8(&args[2]) {
                         Ok(k) => k,
@@ -3523,7 +4410,9 @@ fn cmd_vector(db: &Db, args: &[Vec<u8>]) -> RespValue {
         }
         "DISABLE" => {
             if args.len() < 2 {
-                return RespValue::error("VECTOR DISABLE requires level (GLOBAL|DATABASE|PATTERN|KEY)");
+                return RespValue::error(
+                    "VECTOR DISABLE requires level (GLOBAL|DATABASE|PATTERN|KEY)",
+                );
             }
 
             let level = match std::str::from_utf8(&args[1]) {
@@ -3540,7 +4429,9 @@ fn cmd_vector(db: &Db, args: &[Vec<u8>]) -> RespValue {
                 }
                 "DATABASE" => {
                     if args.len() < 3 {
-                        return RespValue::error("VECTOR DISABLE DATABASE requires database number");
+                        return RespValue::error(
+                            "VECTOR DISABLE DATABASE requires database number",
+                        );
                     }
                     let db_num: i32 = match std::str::from_utf8(&args[2])
                         .ok()
@@ -3583,41 +4474,42 @@ fn cmd_vector(db: &Db, args: &[Vec<u8>]) -> RespValue {
                 _ => RespValue::error("level must be GLOBAL, DATABASE, PATTERN, or KEY"),
             }
         }
-        "INFO" => {
-            match db.vector_info() {
-                Ok(stats) => {
-                    let configs: Vec<RespValue> = stats
-                        .configs
-                        .iter()
-                        .map(|c| {
-                            RespValue::Array(Some(vec![
-                                RespValue::BulkString(Some(b"level".to_vec())),
-                                RespValue::BulkString(Some(c.level.as_str().as_bytes().to_vec())),
-                                RespValue::BulkString(Some(b"target".to_vec())),
-                                RespValue::BulkString(Some(c.target.as_bytes().to_vec())),
-                                RespValue::BulkString(Some(b"enabled".to_vec())),
-                                RespValue::Integer(if c.enabled { 1 } else { 0 }),
-                                RespValue::BulkString(Some(b"dimensions".to_vec())),
-                                RespValue::Integer(c.dimensions as i64),
-                            ]))
-                        })
-                        .collect();
+        "INFO" => match db.vector_info() {
+            Ok(stats) => {
+                let configs: Vec<RespValue> = stats
+                    .configs
+                    .iter()
+                    .map(|c| {
+                        RespValue::Array(Some(vec![
+                            RespValue::BulkString(Some(b"level".to_vec())),
+                            RespValue::BulkString(Some(c.level.as_str().as_bytes().to_vec())),
+                            RespValue::BulkString(Some(b"target".to_vec())),
+                            RespValue::BulkString(Some(c.target.as_bytes().to_vec())),
+                            RespValue::BulkString(Some(b"enabled".to_vec())),
+                            RespValue::Integer(if c.enabled { 1 } else { 0 }),
+                            RespValue::BulkString(Some(b"dimensions".to_vec())),
+                            RespValue::Integer(c.dimensions as i64),
+                        ]))
+                    })
+                    .collect();
 
-                    RespValue::Array(Some(vec![
-                        RespValue::BulkString(Some(b"total_vectors".to_vec())),
-                        RespValue::Integer(stats.total_vectors),
-                        RespValue::BulkString(Some(b"total_keys".to_vec())),
-                        RespValue::Integer(stats.total_keys),
-                        RespValue::BulkString(Some(b"storage_bytes".to_vec())),
-                        RespValue::Integer(stats.storage_bytes),
-                        RespValue::BulkString(Some(b"configs".to_vec())),
-                        RespValue::Array(Some(configs)),
-                    ]))
-                }
-                Err(e) => RespValue::error(format!("VECTOR info failed: {}", e)),
+                RespValue::Array(Some(vec![
+                    RespValue::BulkString(Some(b"total_vectors".to_vec())),
+                    RespValue::Integer(stats.total_vectors),
+                    RespValue::BulkString(Some(b"total_keys".to_vec())),
+                    RespValue::Integer(stats.total_keys),
+                    RespValue::BulkString(Some(b"storage_bytes".to_vec())),
+                    RespValue::Integer(stats.storage_bytes),
+                    RespValue::BulkString(Some(b"configs".to_vec())),
+                    RespValue::Array(Some(configs)),
+                ]))
             }
-        }
-        _ => RespValue::error(format!("unknown VECTOR subcommand '{}'. Use ENABLE|DISABLE|INFO", subcommand)),
+            Err(e) => RespValue::error(format!("VECTOR info failed: {}", e)),
+        },
+        _ => RespValue::error(format!(
+            "unknown VECTOR subcommand '{}'. Use ENABLE|DISABLE|INFO",
+            subcommand
+        )),
     }
 }
 
@@ -3931,7 +4823,10 @@ fn cmd_xadd(db: &Db, args: &[Vec<u8>]) -> RespValue {
                 if i >= args.len() {
                     return RespValue::error("syntax error");
                 }
-                maxlen = match std::str::from_utf8(&args[i]).ok().and_then(|s| s.parse().ok()) {
+                maxlen = match std::str::from_utf8(&args[i])
+                    .ok()
+                    .and_then(|s| s.parse().ok())
+                {
                     Some(v) => Some(v),
                     None => return RespValue::error("value is not an integer or out of range"),
                 };
@@ -4005,9 +4900,9 @@ fn cmd_xadd(db: &Db, args: &[Vec<u8>]) -> RespValue {
         Ok(Some(entry_id)) => RespValue::BulkString(Some(entry_id.to_string().into_bytes())),
         Ok(None) => RespValue::null(), // NOMKSTREAM and stream doesn't exist
         Err(KvError::WrongType) => RespValue::wrong_type(),
-        Err(KvError::InvalidData) => {
-            RespValue::error("The ID specified in XADD is equal or smaller than the target stream top item")
-        }
+        Err(KvError::InvalidData) => RespValue::error(
+            "The ID specified in XADD is equal or smaller than the target stream top item",
+        ),
         Err(e) => RespValue::error(e.to_string()),
     }
 }
@@ -4067,7 +4962,10 @@ fn cmd_xrange(db: &Db, args: &[Vec<u8>]) -> RespValue {
         if opt != "COUNT" {
             return RespValue::error("syntax error");
         }
-        count = match std::str::from_utf8(&args[4]).ok().and_then(|s| s.parse().ok()) {
+        count = match std::str::from_utf8(&args[4])
+            .ok()
+            .and_then(|s| s.parse().ok())
+        {
             Some(c) => Some(c),
             None => return RespValue::error("value is not an integer or out of range"),
         };
@@ -4118,7 +5016,10 @@ fn cmd_xrevrange(db: &Db, args: &[Vec<u8>]) -> RespValue {
         if opt != "COUNT" {
             return RespValue::error("syntax error");
         }
-        count = match std::str::from_utf8(&args[4]).ok().and_then(|s| s.parse().ok()) {
+        count = match std::str::from_utf8(&args[4])
+            .ok()
+            .and_then(|s| s.parse().ok())
+        {
             Some(c) => Some(c),
             None => return RespValue::error("value is not an integer or out of range"),
         };
@@ -4153,7 +5054,10 @@ async fn cmd_xread(db: &Db, args: &[Vec<u8>]) -> RespValue {
                 if i >= args.len() {
                     return RespValue::error("syntax error");
                 }
-                count = match std::str::from_utf8(&args[i]).ok().and_then(|s| s.parse().ok()) {
+                count = match std::str::from_utf8(&args[i])
+                    .ok()
+                    .and_then(|s| s.parse().ok())
+                {
                     Some(c) => Some(c),
                     None => return RespValue::error("value is not an integer or out of range"),
                 };
@@ -4164,7 +5068,10 @@ async fn cmd_xread(db: &Db, args: &[Vec<u8>]) -> RespValue {
                 if i >= args.len() {
                     return RespValue::error("syntax error");
                 }
-                block_timeout_ms = match std::str::from_utf8(&args[i]).ok().and_then(|s| s.parse().ok()) {
+                block_timeout_ms = match std::str::from_utf8(&args[i])
+                    .ok()
+                    .and_then(|s| s.parse().ok())
+                {
                     Some(t) => Some(t),
                     None => return RespValue::error("value is not an integer or out of range"),
                 };
@@ -4199,15 +5106,19 @@ async fn cmd_xread(db: &Db, args: &[Vec<u8>]) -> RespValue {
         Err(_) => return RespValue::error("invalid key"),
     };
 
-    let ids: Vec<StreamId> = match id_args.iter().map(|id| {
-        let s = std::str::from_utf8(id).ok()?;
-        if s == "$" {
-            // $ means last ID - for non-blocking, this means "nothing new"
-            Some(StreamId::max())
-        } else {
-            StreamId::parse(s)
-        }
-    }).collect::<Option<Vec<_>>>() {
+    let ids: Vec<StreamId> = match id_args
+        .iter()
+        .map(|id| {
+            let s = std::str::from_utf8(id).ok()?;
+            if s == "$" {
+                // $ means last ID - for non-blocking, this means "nothing new"
+                Some(StreamId::max())
+            } else {
+                StreamId::parse(s)
+            }
+        })
+        .collect::<Option<Vec<_>>>()
+    {
         Some(ids) => ids,
         None => return RespValue::error("invalid stream ID"),
     };
@@ -4288,7 +5199,10 @@ fn cmd_xtrim(db: &Db, args: &[Vec<u8>]) -> RespValue {
 
     match strategy.as_str() {
         "MAXLEN" => {
-            let maxlen: i64 = match std::str::from_utf8(&args[i]).ok().and_then(|s| s.parse().ok()) {
+            let maxlen: i64 = match std::str::from_utf8(&args[i])
+                .ok()
+                .and_then(|s| s.parse().ok())
+            {
                 Some(v) => v,
                 None => return RespValue::error("value is not an integer or out of range"),
             };
@@ -4327,10 +5241,14 @@ fn cmd_xdel(db: &Db, args: &[Vec<u8>]) -> RespValue {
         Err(_) => return RespValue::error("invalid key"),
     };
 
-    let ids: Vec<StreamId> = match args[1..].iter().map(|id| {
-        let s = std::str::from_utf8(id).ok()?;
-        StreamId::parse(s)
-    }).collect::<Option<Vec<_>>>() {
+    let ids: Vec<StreamId> = match args[1..]
+        .iter()
+        .map(|id| {
+            let s = std::str::from_utf8(id).ok()?;
+            StreamId::parse(s)
+        })
+        .collect::<Option<Vec<_>>>()
+    {
         Some(ids) => ids,
         None => return RespValue::error("invalid stream ID"),
     };
@@ -4369,7 +5287,9 @@ fn cmd_xinfo(db: &Db, args: &[Vec<u8>]) -> RespValue {
                         RespValue::BulkString(Some(b"radix-tree-nodes".to_vec())),
                         RespValue::Integer(info.radix_tree_nodes),
                         RespValue::BulkString(Some(b"last-generated-id".to_vec())),
-                        RespValue::BulkString(Some(info.last_generated_id.to_string().into_bytes())),
+                        RespValue::BulkString(Some(
+                            info.last_generated_id.to_string().into_bytes(),
+                        )),
                     ];
 
                     // Add first-entry
@@ -4395,10 +5315,11 @@ fn cmd_xinfo(db: &Db, args: &[Vec<u8>]) -> RespValue {
                 Err(e) => RespValue::error(e.to_string()),
             }
         }
-        "GROUPS" => {
-            match db.xinfo_groups(key) {
-                Ok(groups) => {
-                    let arr: Vec<RespValue> = groups.iter().map(|g| {
+        "GROUPS" => match db.xinfo_groups(key) {
+            Ok(groups) => {
+                let arr: Vec<RespValue> = groups
+                    .iter()
+                    .map(|g| {
                         RespValue::Array(Some(vec![
                             RespValue::BulkString(Some(b"name".to_vec())),
                             RespValue::BulkString(Some(g.name.clone().into_bytes())),
@@ -4407,15 +5328,17 @@ fn cmd_xinfo(db: &Db, args: &[Vec<u8>]) -> RespValue {
                             RespValue::BulkString(Some(b"pending".to_vec())),
                             RespValue::Integer(g.pending),
                             RespValue::BulkString(Some(b"last-delivered-id".to_vec())),
-                            RespValue::BulkString(Some(g.last_delivered_id.to_string().into_bytes())),
+                            RespValue::BulkString(Some(
+                                g.last_delivered_id.to_string().into_bytes(),
+                            )),
                         ]))
-                    }).collect();
-                    RespValue::Array(Some(arr))
-                }
-                Err(KvError::WrongType) => RespValue::wrong_type(),
-                Err(e) => RespValue::error(e.to_string()),
+                    })
+                    .collect();
+                RespValue::Array(Some(arr))
             }
-        }
+            Err(KvError::WrongType) => RespValue::wrong_type(),
+            Err(e) => RespValue::error(e.to_string()),
+        },
         "CONSUMERS" => {
             if args.len() < 3 {
                 return RespValue::error("wrong number of arguments for 'xinfo consumers' command");
@@ -4426,16 +5349,19 @@ fn cmd_xinfo(db: &Db, args: &[Vec<u8>]) -> RespValue {
             };
             match db.xinfo_consumers(key, groupname) {
                 Ok(consumers) => {
-                    let arr: Vec<RespValue> = consumers.iter().map(|c| {
-                        RespValue::Array(Some(vec![
-                            RespValue::BulkString(Some(b"name".to_vec())),
-                            RespValue::BulkString(Some(c.name.clone().into_bytes())),
-                            RespValue::BulkString(Some(b"pending".to_vec())),
-                            RespValue::Integer(c.pending),
-                            RespValue::BulkString(Some(b"idle".to_vec())),
-                            RespValue::Integer(c.idle),
-                        ]))
-                    }).collect();
+                    let arr: Vec<RespValue> = consumers
+                        .iter()
+                        .map(|c| {
+                            RespValue::Array(Some(vec![
+                                RespValue::BulkString(Some(b"name".to_vec())),
+                                RespValue::BulkString(Some(c.name.clone().into_bytes())),
+                                RespValue::BulkString(Some(b"pending".to_vec())),
+                                RespValue::Integer(c.pending),
+                                RespValue::BulkString(Some(b"idle".to_vec())),
+                                RespValue::Integer(c.idle),
+                            ]))
+                        })
+                        .collect();
                     RespValue::Array(Some(arr))
                 }
                 Err(KvError::NoSuchKey) => RespValue::error("no such key"),
@@ -4536,8 +5462,12 @@ fn cmd_xgroup(db: &Db, args: &[Vec<u8>]) -> RespValue {
 
             match db.xgroup_create(key, groupname, id, mkstream) {
                 Ok(_) => RespValue::ok(),
-                Err(KvError::NoSuchKey) => RespValue::error("The XGROUP subcommand requires the key to exist"),
-                Err(KvError::BusyGroup) => RespValue::error("BUSYGROUP Consumer Group name already exists"),
+                Err(KvError::NoSuchKey) => {
+                    RespValue::error("The XGROUP subcommand requires the key to exist")
+                }
+                Err(KvError::BusyGroup) => {
+                    RespValue::error("BUSYGROUP Consumer Group name already exists")
+                }
                 Err(KvError::WrongType) => RespValue::wrong_type(),
                 Err(e) => RespValue::error(e.to_string()),
             }
@@ -4604,7 +5534,9 @@ fn cmd_xgroup(db: &Db, args: &[Vec<u8>]) -> RespValue {
         "CREATECONSUMER" => {
             // XGROUP CREATECONSUMER key groupname consumername
             if args.len() < 4 {
-                return RespValue::error("wrong number of arguments for 'xgroup createconsumer' command");
+                return RespValue::error(
+                    "wrong number of arguments for 'xgroup createconsumer' command",
+                );
             }
             let key = match std::str::from_utf8(&args[1]) {
                 Ok(k) => k,
@@ -4630,7 +5562,9 @@ fn cmd_xgroup(db: &Db, args: &[Vec<u8>]) -> RespValue {
         "DELCONSUMER" => {
             // XGROUP DELCONSUMER key groupname consumername
             if args.len() < 4 {
-                return RespValue::error("wrong number of arguments for 'xgroup delconsumer' command");
+                return RespValue::error(
+                    "wrong number of arguments for 'xgroup delconsumer' command",
+                );
             }
             let key = match std::str::from_utf8(&args[1]) {
                 Ok(k) => k,
@@ -4692,7 +5626,9 @@ async fn cmd_xreadgroup(db: &Db, args: &[Vec<u8>]) -> RespValue {
             if i >= args.len() {
                 return RespValue::error("syntax error");
             }
-            count = std::str::from_utf8(&args[i]).ok().and_then(|s| s.parse().ok());
+            count = std::str::from_utf8(&args[i])
+                .ok()
+                .and_then(|s| s.parse().ok());
             if count.is_none() {
                 return RespValue::error("value is not an integer or out of range");
             }
@@ -4705,7 +5641,9 @@ async fn cmd_xreadgroup(db: &Db, args: &[Vec<u8>]) -> RespValue {
             if i >= args.len() {
                 return RespValue::error("syntax error");
             }
-            block_timeout_ms = std::str::from_utf8(&args[i]).ok().and_then(|s| s.parse().ok());
+            block_timeout_ms = std::str::from_utf8(&args[i])
+                .ok()
+                .and_then(|s| s.parse().ok());
             if block_timeout_ms.is_none() {
                 return RespValue::error("value is not an integer or out of range");
             }
@@ -4721,23 +5659,36 @@ async fn cmd_xreadgroup(db: &Db, args: &[Vec<u8>]) -> RespValue {
     // Parse keys and IDs
     let remaining = &args[i..];
     if remaining.is_empty() || remaining.len() % 2 != 0 {
-        return RespValue::error("Unbalanced XREADGROUP list of streams: for each stream key an ID must be specified");
+        return RespValue::error(
+            "Unbalanced XREADGROUP list of streams: for each stream key an ID must be specified",
+        );
     }
 
     let mid = remaining.len() / 2;
-    let keys: Vec<&str> = match remaining[..mid].iter().map(|k| std::str::from_utf8(k)).collect::<std::result::Result<Vec<_>, _>>() {
+    let keys: Vec<&str> = match remaining[..mid]
+        .iter()
+        .map(|k| std::str::from_utf8(k))
+        .collect::<std::result::Result<Vec<_>, _>>()
+    {
         Ok(k) => k,
         Err(_) => return RespValue::error("invalid key"),
     };
 
-    let ids: Vec<&str> = match remaining[mid..].iter().map(|id| std::str::from_utf8(id)).collect::<std::result::Result<Vec<_>, _>>() {
+    let ids: Vec<&str> = match remaining[mid..]
+        .iter()
+        .map(|id| std::str::from_utf8(id))
+        .collect::<std::result::Result<Vec<_>, _>>()
+    {
         Ok(i) => i,
         Err(_) => return RespValue::error("invalid ID"),
     };
 
     // Handle blocking variant
     if let Some(timeout_ms) = block_timeout_ms {
-        match db.xreadgroup_block(group, consumer, &keys, &ids, count, noack, timeout_ms).await {
+        match db
+            .xreadgroup_block(group, consumer, &keys, &ids, count, noack, timeout_ms)
+            .await
+        {
             Ok(results) => {
                 if results.is_empty() {
                     return RespValue::null();
@@ -4800,10 +5751,14 @@ fn cmd_xack(db: &Db, args: &[Vec<u8>]) -> RespValue {
         Err(_) => return RespValue::error("invalid group name"),
     };
 
-    let ids: Vec<StreamId> = match args[2..].iter().map(|id| {
-        let s = std::str::from_utf8(id).ok()?;
-        StreamId::parse(s)
-    }).collect::<Option<Vec<_>>>() {
+    let ids: Vec<StreamId> = match args[2..]
+        .iter()
+        .map(|id| {
+            let s = std::str::from_utf8(id).ok()?;
+            StreamId::parse(s)
+        })
+        .collect::<Option<Vec<_>>>()
+    {
         Some(ids) => ids,
         None => return RespValue::error("invalid stream ID"),
     };
@@ -4843,18 +5798,30 @@ fn cmd_xpending(db: &Db, args: &[Vec<u8>]) -> RespValue {
                         RespValue::null(),
                     ]));
                 }
-                let consumers_arr: Vec<RespValue> = summary.consumers.iter().map(|(name, count)| {
-                    RespValue::Array(Some(vec![
-                        RespValue::BulkString(Some(name.as_bytes().to_vec())),
-                        RespValue::BulkString(Some(count.to_string().into_bytes())),
-                    ]))
-                }).collect();
+                let consumers_arr: Vec<RespValue> = summary
+                    .consumers
+                    .iter()
+                    .map(|(name, count)| {
+                        RespValue::Array(Some(vec![
+                            RespValue::BulkString(Some(name.as_bytes().to_vec())),
+                            RespValue::BulkString(Some(count.to_string().into_bytes())),
+                        ]))
+                    })
+                    .collect();
 
                 RespValue::Array(Some(vec![
                     RespValue::Integer(summary.count),
-                    summary.smallest_id.map_or(RespValue::null(), |id| RespValue::BulkString(Some(id.to_string().into_bytes()))),
-                    summary.largest_id.map_or(RespValue::null(), |id| RespValue::BulkString(Some(id.to_string().into_bytes()))),
-                    if consumers_arr.is_empty() { RespValue::null() } else { RespValue::Array(Some(consumers_arr)) },
+                    summary.smallest_id.map_or(RespValue::null(), |id| {
+                        RespValue::BulkString(Some(id.to_string().into_bytes()))
+                    }),
+                    summary.largest_id.map_or(RespValue::null(), |id| {
+                        RespValue::BulkString(Some(id.to_string().into_bytes()))
+                    }),
+                    if consumers_arr.is_empty() {
+                        RespValue::null()
+                    } else {
+                        RespValue::Array(Some(consumers_arr))
+                    },
                 ]))
             }
             Err(KvError::NoGroup) => RespValue::error("NOGROUP No such consumer group"),
@@ -4873,7 +5840,9 @@ fn cmd_xpending(db: &Db, args: &[Vec<u8>]) -> RespValue {
             if i >= args.len() {
                 return RespValue::error("syntax error");
             }
-            idle_time = std::str::from_utf8(&args[i]).ok().and_then(|s| s.parse().ok());
+            idle_time = std::str::from_utf8(&args[i])
+                .ok()
+                .and_then(|s| s.parse().ok());
             if idle_time.is_none() {
                 return RespValue::error("value is not an integer or out of range");
             }
@@ -4886,7 +5855,10 @@ fn cmd_xpending(db: &Db, args: &[Vec<u8>]) -> RespValue {
 
         let start_str = std::str::from_utf8(&args[i]).unwrap_or("-");
         let end_str = std::str::from_utf8(&args[i + 1]).unwrap_or("+");
-        let count: i64 = match std::str::from_utf8(&args[i + 2]).ok().and_then(|s| s.parse().ok()) {
+        let count: i64 = match std::str::from_utf8(&args[i + 2])
+            .ok()
+            .and_then(|s| s.parse().ok())
+        {
             Some(c) => c,
             None => return RespValue::error("value is not an integer or out of range"),
         };
@@ -4902,14 +5874,17 @@ fn cmd_xpending(db: &Db, args: &[Vec<u8>]) -> RespValue {
 
         match db.xpending_range(key, group, start, end, count, consumer, idle_time) {
             Ok(entries) => {
-                let arr: Vec<RespValue> = entries.iter().map(|e| {
-                    RespValue::Array(Some(vec![
-                        RespValue::BulkString(Some(e.id.to_string().into_bytes())),
-                        RespValue::BulkString(Some(e.consumer.as_bytes().to_vec())),
-                        RespValue::Integer(e.idle),
-                        RespValue::Integer(e.delivery_count),
-                    ]))
-                }).collect();
+                let arr: Vec<RespValue> = entries
+                    .iter()
+                    .map(|e| {
+                        RespValue::Array(Some(vec![
+                            RespValue::BulkString(Some(e.id.to_string().into_bytes())),
+                            RespValue::BulkString(Some(e.consumer.as_bytes().to_vec())),
+                            RespValue::Integer(e.idle),
+                            RespValue::Integer(e.delivery_count),
+                        ]))
+                    })
+                    .collect();
                 RespValue::Array(Some(arr))
             }
             Err(KvError::NoGroup) => RespValue::error("NOGROUP No such consumer group"),
@@ -4940,7 +5915,10 @@ fn cmd_xclaim(db: &Db, args: &[Vec<u8>]) -> RespValue {
         Err(_) => return RespValue::error("invalid consumer name"),
     };
 
-    let min_idle_time: i64 = match std::str::from_utf8(&args[3]).ok().and_then(|s| s.parse().ok()) {
+    let min_idle_time: i64 = match std::str::from_utf8(&args[3])
+        .ok()
+        .and_then(|s| s.parse().ok())
+    {
         Some(t) => t,
         None => return RespValue::error("value is not an integer or out of range"),
     };
@@ -4963,7 +5941,9 @@ fn cmd_xclaim(db: &Db, args: &[Vec<u8>]) -> RespValue {
             if i >= args.len() {
                 return RespValue::error("syntax error");
             }
-            idle_ms = std::str::from_utf8(&args[i]).ok().and_then(|s| s.parse().ok());
+            idle_ms = std::str::from_utf8(&args[i])
+                .ok()
+                .and_then(|s| s.parse().ok());
             if idle_ms.is_none() {
                 return RespValue::error("value is not an integer or out of range");
             }
@@ -4972,7 +5952,9 @@ fn cmd_xclaim(db: &Db, args: &[Vec<u8>]) -> RespValue {
             if i >= args.len() {
                 return RespValue::error("syntax error");
             }
-            time_ms = std::str::from_utf8(&args[i]).ok().and_then(|s| s.parse().ok());
+            time_ms = std::str::from_utf8(&args[i])
+                .ok()
+                .and_then(|s| s.parse().ok());
             if time_ms.is_none() {
                 return RespValue::error("value is not an integer or out of range");
             }
@@ -4981,7 +5963,9 @@ fn cmd_xclaim(db: &Db, args: &[Vec<u8>]) -> RespValue {
             if i >= args.len() {
                 return RespValue::error("syntax error");
             }
-            retry_count = std::str::from_utf8(&args[i]).ok().and_then(|s| s.parse().ok());
+            retry_count = std::str::from_utf8(&args[i])
+                .ok()
+                .and_then(|s| s.parse().ok());
             if retry_count.is_none() {
                 return RespValue::error("value is not an integer or out of range");
             }
@@ -5003,13 +5987,25 @@ fn cmd_xclaim(db: &Db, args: &[Vec<u8>]) -> RespValue {
         return RespValue::error("wrong number of arguments for 'xclaim' command");
     }
 
-    match db.xclaim(key, group, consumer, min_idle_time, &ids, idle_ms, time_ms, retry_count, force, justid) {
+    match db.xclaim(
+        key,
+        group,
+        consumer,
+        min_idle_time,
+        &ids,
+        idle_ms,
+        time_ms,
+        retry_count,
+        force,
+        justid,
+    ) {
         Ok(entries) => {
             if justid {
                 // Return just the IDs
-                let arr: Vec<RespValue> = entries.iter().map(|e| {
-                    RespValue::BulkString(Some(e.id.to_string().into_bytes()))
-                }).collect();
+                let arr: Vec<RespValue> = entries
+                    .iter()
+                    .map(|e| RespValue::BulkString(Some(e.id.to_string().into_bytes())))
+                    .collect();
                 RespValue::Array(Some(arr))
             } else {
                 format_stream_entries(&entries)
@@ -5049,16 +6045,16 @@ fn cmd_multi(state: &mut ConnectionState) -> RespValue {
 /// Returns OK and clears the queue but keeps watched keys
 fn cmd_discard(state: &mut ConnectionState) -> RespValue {
     match state {
-        ConnectionState::Normal { .. } => {
-            RespValue::error("ERR DISCARD without MULTI")
-        }
+        ConnectionState::Normal { .. } => RespValue::error("ERR DISCARD without MULTI"),
         ConnectionState::Subscribed { .. } => {
             RespValue::error("ERR DISCARD not allowed in subscription mode")
         }
         ConnectionState::Transaction { watched_keys, .. } => {
             // Exit transaction mode, keeping watched keys
             let watched = std::mem::take(watched_keys);
-            *state = ConnectionState::Normal { watched_keys: watched };
+            *state = ConnectionState::Normal {
+                watched_keys: watched,
+            };
             RespValue::ok()
         }
     }
@@ -5110,7 +6106,11 @@ async fn execute_transaction_command(
 /// If any watched key has changed, returns null and aborts the transaction
 async fn execute_transaction(state: &mut ConnectionState, db: &mut Db) -> RespValue {
     // Extract queue and watched keys from transaction state
-    let (queue, watched_keys) = if let ConnectionState::Transaction { queue, watched_keys } = state {
+    let (queue, watched_keys) = if let ConnectionState::Transaction {
+        queue,
+        watched_keys,
+    } = state
+    {
         (std::mem::take(queue), std::mem::take(watched_keys))
     } else {
         return RespValue::error("ERR not in transaction");
@@ -5166,7 +6166,10 @@ async fn execute_command_in_transaction(db: &mut Db, args: &[Vec<u8>]) -> RespVa
                 "GETNAME" => RespValue::null(),
                 "ID" => RespValue::Integer(0),
                 "LIST" => RespValue::BulkString(Some(Vec::new())),
-                _ => RespValue::error(format!("ERR Unknown subcommand or wrong number of arguments for '{}'", subcommand)),
+                _ => RespValue::error(format!(
+                    "ERR Unknown subcommand or wrong number of arguments for '{}'",
+                    subcommand
+                )),
             }
         }
         // Server commands
@@ -5261,6 +6264,23 @@ async fn execute_command_in_transaction(db: &mut Db, args: &[Vec<u8>]) -> RespVa
         "KEYINFO" => cmd_keyinfo(db, cmd_args),
         "HISTORY" => cmd_history(db, cmd_args),
         "FTS" => cmd_fts(db, cmd_args),
+        // RediSearch-compatible commands (Session 23)
+        "FT.CREATE" => cmd_ft_create(db, cmd_args),
+        "FT.DROPINDEX" => cmd_ft_dropindex(db, cmd_args),
+        "FT._LIST" => cmd_ft_list(db),
+        "FT.INFO" => cmd_ft_info(db, cmd_args),
+        "FT.ALTER" => cmd_ft_alter(db, cmd_args),
+        "FT.SEARCH" => cmd_ft_search(db, cmd_args),
+        "FT.AGGREGATE" => cmd_ft_aggregate(db, cmd_args),
+        "FT.ALIASADD" => cmd_ft_aliasadd(db, cmd_args),
+        "FT.ALIASDEL" => cmd_ft_aliasdel(db, cmd_args),
+        "FT.ALIASUPDATE" => cmd_ft_aliasupdate(db, cmd_args),
+        "FT.SYNUPDATE" => cmd_ft_synupdate(db, cmd_args),
+        "FT.SYNDUMP" => cmd_ft_syndump(db, cmd_args),
+        "FT.SUGADD" => cmd_ft_sugadd(db, cmd_args),
+        "FT.SUGGET" => cmd_ft_sugget(db, cmd_args),
+        "FT.SUGDEL" => cmd_ft_sugdel(db, cmd_args),
+        "FT.SUGLEN" => cmd_ft_suglen(db, cmd_args),
         // Vector commands (Session 24.2)
         "VECTOR" => cmd_vector(db, cmd_args),
         "VADD" => cmd_vadd(db, cmd_args),
