@@ -184,9 +184,50 @@ The benchmark suite is now production-ready:
 
 ---
 
-## Phase 7: Dashboard & Visualization (Next Session)
+## Phase 7: Comprehensive Testing + Dashboard (Next Session)
 
-### Objectives
+### Objectives (Priority Order)
+1. **CRITICAL**: Run comprehensive validation tests to ensure benchmarks are correct
+2. **IMPORTANT**: Fix any bugs or issues found in validation
+3. **NICE-TO-HAVE**: Create HTML dashboard for visualization
+
+### Phase 7.1: Comprehensive Testing & Validation (DO THIS FIRST)
+**Why**: Before adding visualizations, need to ensure benchmarks aren't buggy
+
+**Testing Tasks**:
+- Run full 32-scenario suite with detailed logging
+- Validate scenario setup creates expected key counts
+- Verify operation distribution matches scenario weights (within 2%)
+- Check latency measurement sanity (P50 < P95 < P99, no negatives)
+- Confirm throughput calculation (ops / duration_secs) is correct
+- Validate percentile calculations (use sorted list method, spot-check manually)
+- Test edge cases: empty datasets, missing backends, connection failures
+- Verify error handling and recovery (don't crash on single op failure)
+- Run with different iteration/dataset combinations to find limits
+- Spot-check JSON output structure and values
+- Verify markdown report matches JSON data
+
+**Validation Checklist**:
+- [ ] All 32 scenarios run without crashes
+- [ ] Setup statistics match expected key counts (±5%)
+- [ ] Operation weights align with scenario definition (±2%)
+- [ ] Latency P50 < P95 < P99 for all scenarios
+- [ ] No negative or zero latency values
+- [ ] Throughput numbers are sensible (>100 ops/sec, <1M ops/sec)
+- [ ] Error rates tracked and reported correctly
+- [ ] JSON output is valid and complete
+- [ ] Markdown report renders without corruption
+- [ ] Connection errors handled gracefully (log and skip, don't crash)
+
+**How**:
+1. Create test_scenarios.sh script to run all 32 with detailed output
+2. Parse and validate output files programmatically
+3. Compare sample calculations by hand
+4. Document any issues found
+
+### Phase 7.2: Dashboard & Visualization
+
+### Objectives (7.2)
 Create a minimal single-run visualization dashboard that renders benchmark results as a static artifact.
 
 ### Approach: JSON-Based Dashboard (No Database Required)
@@ -265,11 +306,22 @@ Create a minimal single-run visualization dashboard that renders benchmark resul
 - GitHub Actions CI/CD integration
 - Documentation and guides
 
-### Phase 7: Dashboard & Visualization (⏳ In Progress)
-- Static HTML dashboard generation from JSON
-- Interactive metrics visualization
-- Single-file self-contained artifact
-- No database, no historical tracking
+### Phase 7: Comprehensive Testing + Dashboard (⏳ In Progress)
+- Phase 7.1: Comprehensive validation testing (CRITICAL FIRST)
+  - Validate 32 scenarios run correctly
+  - Check setup, operation distribution, latency sanity
+  - Verify calculations and output correctness
+  - Test edge cases and error handling
+- Phase 7.2: Static HTML dashboard generation from JSON
+  - Interactive metrics visualization
+  - Single-file self-contained artifact
+  - No database, no historical tracking
+
+### Phase 8: Future Enhancements (Planned)
+- Website/documentation updates with benchmark methodology and results
+- Python reference implementation
+- Additional language implementations
+- Optional SQLite historical storage (separate from Phase 7)
 
 ---
 
