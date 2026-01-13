@@ -1,8 +1,77 @@
 # Revised Redlite-Bench Implementation Plan (v0.2.0)
 
-**Status**: 🟢 **READY FOR IMPLEMENTATION** (after dependency spikes)
+**Status**: 🟢 **PHASE 3 COMPLETE** - CLI integration and async concurrency done
 **Based on**: Critical analysis of original plan + architectural improvements
 **Target**: Bulletproof, maintainable, realistic timeline
+
+---
+
+## Progress Update (2026-01-13) - Session 2
+
+### Completed This Session
+
+**Phase 3 - CLI Integration**: COMPLETE
+- [x] Scenario subcommand added to CLI for YAML-defined workloads
+- [x] --output-format (console/json) flag on all subcommands
+- [x] --output-file flag for writing results to file
+- [x] run_scenario_benchmark() using dispatcher for weighted operation mixes
+
+**True Async Concurrent Execution**: COMPLETE
+- [x] tokio::spawn for real concurrent task execution in async mode
+- [x] StdRng::from_entropy() for Send-safe RNG in spawned tasks
+- [x] Added 'static bound to BenchmarkRunner generic
+- [x] Results aggregated from all concurrent workers
+
+**Test Scenarios**: COMPLETE
+- [x] test-scenarios.yaml with read_heavy, write_heavy, balanced workloads
+- [x] Full JSON output with metadata, latency percentiles, throughput
+
+### Files Modified
+- `src/bin/main.rs` - Added Scenario subcommand, output flags, scenario runner (+200 lines)
+- `src/concurrency.rs` - True async execution with tokio::spawn (+100 lines)
+- `src/benchmark/mod.rs` - Added 'static bound for concurrent execution
+- `src/scenarios.rs` - Cleaned up unused import
+
+### Files Created
+- `test-scenarios.yaml` - Sample scenario definitions
+
+### Build & Test Status
+- cargo build --release: SUCCESS
+- cargo test: 16 tests passed
+
+---
+
+## Previous Session (2026-01-13) - Session 1
+
+**Phase 2 - Trait-Based Client Architecture**: COMPLETE
+- [x] RedisLikeClient trait with 48 Redis + 4 Redlite-specific ops (52 total)
+- [x] RedisClient adapter (redis_adapter.rs)
+- [x] RedliteEmbeddedClient adapter (redlite_embedded_adapter.rs)
+- [x] Clone trait implemented on both clients
+
+**Phase 4.2 - YAML Scenario Loading**: COMPLETE
+- [x] scenarios.rs - Parses workloads from YAML
+- [x] Weighted operation selection with normalized cumulative probabilities
+- [x] WorkloadScenario and OperationWeight structs with serde support
+
+**Phase 4.1 - Operation Dispatcher**: COMPLETE
+- [x] dispatcher.rs - Runtime operation dispatch for all 52 operations
+- [x] Returns latency in microseconds per operation
+- [x] Full error handling
+
+**JSON Output Format**: COMPLETE
+- [x] output.rs - JSON serialization with metadata, latency percentiles, throughput
+- [x] OutputFormat enum (Console/Json)
+- [x] JsonBenchmarkResult and JsonConcurrentResult structs
+- [x] File output support
+
+---
+
+## Next Session Tasks
+1. SQLite results storage (Phase 5) - optional, JSON works for now
+2. Additional concurrent benchmark operations (LPUSH, HSET currently return "not implemented")
+3. Run comprehensive benchmarks against Redis for comparison
+4. Documentation and usage examples
 
 ---
 
