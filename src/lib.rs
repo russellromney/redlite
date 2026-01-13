@@ -16,8 +16,6 @@
 pub mod backend;
 pub mod db;
 pub mod error;
-#[cfg(feature = "libsql")]
-pub mod libsql_db;
 pub mod resp;
 pub mod server;
 #[cfg(feature = "turso")]
@@ -26,8 +24,6 @@ pub mod types;
 
 pub use backend::Backend;
 pub use db::Db;
-#[cfg(feature = "libsql")]
-pub use libsql_db::LibsqlDb;
 #[cfg(feature = "turso")]
 pub use turso_db::TursoDb;
 pub use error::{KvError, Result};

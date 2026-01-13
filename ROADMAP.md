@@ -948,9 +948,86 @@ value := db.Get("key")
 - Session 20.1-20.3: Node.js/Bun bindings (napi-rs + npm)
 - Session 21.1-21.3: C FFI layer + Go bindings (cgo)
 
+---
+
+### Session 22: Redis Ecosystem Compatibility 🎯
+
+**Goal:** Improve compatibility with Redis clients and ecosystem tools.
+
+#### Session 22.1: Authentication ✅
+- [x] `--password` CLI flag for server mode
+- [x] AUTH command (single password and username+password formats)
+- [x] Per-connection authentication state
+- [x] NOAUTH error for unauthenticated commands
+- [x] WRONGPASS error for incorrect passwords
+- [x] All 134 tests passing
+
+#### Session 22.2: Backend Options ✅
+- [x] `--backend` flag (sqlite, turso)
+- [x] `--storage` flag (file, memory)
+- [x] Turso/libSQL backend (feature-gated)
+- [x] Default port changed to 6379 (Redis standard)
+
+#### Session 22.3: WATCH/UNWATCH (Optimistic Locking) 🔜
+- [ ] Per-connection watched keys tracking
+- [ ] WATCH key [key ...] - Mark keys for modification detection
+- [ ] UNWATCH - Clear all watched keys
+- [ ] EXEC returns nil if watched keys were modified
+- [ ] Key version tracking in database
+- [ ] Unit tests + integration tests
+
+#### Session 22.4: Additional Redis Commands
+- [ ] CLIENT SETNAME/GETNAME - Connection naming
+- [ ] CLIENT LIST - List connections
+- [ ] LREM - Remove elements from list by value
+- [ ] LINSERT - Insert before/after element
+- [ ] SMOVE - Move member between sets
+- [ ] *STORE commands (SDIFFSTORE, SINTERSTORE, SUNIONSTORE)
+
+---
+
+### Session 23: SQLite Ecosystem Integration 🎯
+
+**Goal:** Leverage SQLite's unique capabilities for features Redis can't provide.
+
+#### Session 23.1: Backup & Recovery
+- [ ] BACKUP command - Hot backup to path (VACUUM INTO)
+- [ ] CHECKPOINT command - Force WAL checkpoint
+- [ ] RESTORE command - Restore from backup
+- [ ] Point-in-time recovery documentation
+
+#### Session 23.2: Litestream Integration
+- [ ] Documentation for Litestream setup
+- [ ] LITESTREAM STATUS command (if Litestream detected)
+- [ ] S3/GCS/Azure replication examples
+- [ ] Disaster recovery playbook
+
+#### Session 23.3: Read Replicas
+- [ ] `--readonly` flag for replica mode
+- [ ] Connection to primary for writes
+- [ ] WAL-based replication documentation
+- [ ] Multi-region deployment guide
+
+#### Session 23.4: Full-Text Search (FTS5)
+- [ ] FT.CREATE index - Create FTS index on keys
+- [ ] FT.SEARCH query - Full-text search
+- [ ] FT.ADD key - Add key to index
+- [ ] FT.DEL key - Remove from index
+- [ ] Automatic index sync on writes
+
+#### Session 23.5: Geospatial (R*Tree)
+- [ ] GEOADD key longitude latitude member
+- [ ] GEOPOS key member [member ...]
+- [ ] GEODIST key member1 member2 [unit]
+- [ ] GEORADIUS key longitude latitude radius unit
+- [ ] GEOSEARCH key FROMMEMBER/FROMLONLAT ...
+
+---
+
 ### Maybe (If Requested)
 
-- WATCH/UNWATCH (optimistic locking)
-- Lua scripting (probably not)
+- Lua scripting (EVAL/EVALSHA) - Complex, low priority
 - XAUTOCLAIM (auto-reassign stuck messages)
+- Cluster mode (probably not - use LiteFS instead)
+- ACL system (Redis 6+ access control)
 

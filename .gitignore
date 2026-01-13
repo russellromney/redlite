@@ -95,3 +95,5 @@ coverage/
 
 # Session planning (local reference, not part of repo)
 NEXT_SESSION_PROMPT.md
+
+*.rdb

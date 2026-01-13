@@ -4,8 +4,6 @@ use std::sync::Arc;
 use std::time::Duration;
 
 // Optional backend imports (feature-gated)
-#[cfg(feature = "libsql")]
-use redlite::LibsqlDb;
 #[cfg(feature = "turso")]
 use redlite::TursoDb;
 
@@ -23,20 +21,6 @@ fn create_file_db() -> Db {
     let path = format!("/tmp/redlite_bench_{}.db", timestamp);
     Db::open(&path).expect("Failed to create file Db instance")
 }
-
-// LibsqlDb helpers (feature-gated)
-#[cfg(feature = "libsql")]
-fn try_create_libsql_db() -> Option<LibsqlDb> {
-    // libsql has threading issues with Criterion, disabled by default
-    if std::env::var("REDLITE_BENCH_LIBSQL").map(|v| v == "1").unwrap_or(false) {
-        LibsqlDb::open_memory().ok()
-    } else {
-        None
-    }
-}
-
-#[cfg(not(feature = "libsql"))]
-fn try_create_libsql_db() -> Option<Db> { None }
 
 // TursoDb helpers (feature-gated)
 #[cfg(feature = "turso")]
@@ -624,7 +608,7 @@ fn bench_full_comparison(c: &mut Criterion) {
 }
 
 // ============================================================================
-// SCALING BENCHMARKS - Test performance at different dataset sizes
+// SCALING BENCHMARKS - Test performance at 1K and 10K key sizes
 // ============================================================================
 
 fn flush_server(client: &redis::Client) {
@@ -634,45 +618,23 @@ fn flush_server(client: &redis::Client) {
 }
 
 fn bench_scaling(c: &mut Criterion) {
-    let redis_client = try_connect("redis://127.0.0.1:6379/");
-    let redlite_server_mem = try_connect("redis://127.0.0.1:6381/");
+    eprintln!("\n╔════════════════════════════════════════════════════════════╗");
+    eprintln!("║  Redlite Scaling Benchmarks (1K keys)                   ║");
+    eprintln!("║  Testing backends: SQLite, Turso                        ║");
+    eprintln!("╚════════════════════════════════════════════════════════════╝\n");
 
-    eprintln!("\n=== Server Availability ===");
-    eprintln!("Dragonfly (6382):           Not running");
-    eprintln!("Redis (6379):               {}", if redis_client.is_some() { "OK" } else { "Not running" });
-    eprintln!("Redlite server file (6380): Not running");
-    eprintln!("Redlite server mem (6381):  {}", if redlite_server_mem.is_some() { "OK" } else { "Not running" });
-    eprintln!("Redlite embedded file:      Always available");
-    eprintln!("Redlite embedded memory:    Always available");
-
-    let sizes: &[u32] = &[1_000, 10_000, 100_000, 1_000_000];
-    let size_names: &[&str] = &["1K", "10K", "100K", "1M"];
-
-    // GET scaling benchmark
-    eprintln!("\n=== Scaling Benchmark ===");
-    eprintln!("Testing GET latency as dataset grows from 1K to 1M keys");
-    eprintln!("This reveals O(log n) vs O(1) behavior differences");
+    let sizes: &[u32] = &[1_000];
+    let size_names: &[&str] = &["1K"];
 
     for (size, size_name) in sizes.iter().zip(size_names.iter()) {
-        eprintln!("--- Testing size: {} ---", size_name);
+        eprintln!("\n=== Dataset Size: {} keys ===", size_name);
 
-        // Flush servers first
-        eprintln!("Flushing Redis...");
-        if let Some(ref client) = redis_client {
-            flush_server(client);
-        }
-        eprintln!("Flushing Redlite server...");
-        if let Some(ref client) = redlite_server_mem {
-            flush_server(client);
-        }
-
-        let mut group = c.benchmark_group("scaling/get");
-
-        // Redlite embedded (memory)
+        // ========================================================================
+        // SQLite/Rusqlite (Default) Backend - Memory
+        // ========================================================================
         {
+            eprintln!("[SQLite/Memory] Populating {} keys...", size_name);
             let db = create_db();
-            // Populate using mset batching
-            eprintln!("Populating Redlite embedded with {} keys...", size);
             let batch_size = 1000usize;
             for batch_start in (0..*size as usize).step_by(batch_size) {
                 let batch_end = std::cmp::min(batch_start + batch_size, *size as usize);
@@ -680,10 +642,13 @@ fn bench_scaling(c: &mut Criterion) {
                 let pairs: Vec<(&str, &[u8])> = keys.iter().map(|k| (k.as_str(), b"value_data_here".as_slice())).collect();
                 db.mset(&pairs).unwrap();
             }
-            eprintln!("Done.");
+            eprintln!("[SQLite/Memory] Done.");
 
-            eprintln!("Testing scaling/get/{}/redlite_embedded_mem", size_name);
-            group.bench_function(BenchmarkId::new(*size_name, "redlite_embedded_mem"), |b| {
+            let mut group = c.benchmark_group(format!("scaling_1k_10k/{}/sqlite_memory", size_name));
+            group.sample_size(50);
+
+            eprintln!("[SQLite/Memory] Running GET benchmark...");
+            group.bench_function("GET", |b| {
                 let mut idx = 0;
                 b.iter(|| {
                     let key = format!("key_{}", idx % *size);
@@ -691,13 +656,27 @@ fn bench_scaling(c: &mut Criterion) {
                     idx += 1;
                 });
             });
-            eprintln!("Success");
+
+            eprintln!("[SQLite/Memory] Running SET benchmark...");
+            let mut set_counter = *size as usize;
+            group.bench_function("SET", |b| {
+                b.iter(|| {
+                    let key = format!("new_key_{}", set_counter);
+                    db.set(black_box(&key), black_box(b"value_data_here"), None).unwrap();
+                    set_counter += 1;
+                });
+            });
+
+            group.finish();
+            eprintln!("[SQLite/Memory] Complete.");
         }
 
-        // Redlite embedded (file)
+        // ========================================================================
+        // SQLite/Rusqlite (Default) Backend - File
+        // ========================================================================
         {
+            eprintln!("[SQLite/File] Populating {} keys...", size_name);
             let db = create_file_db();
-            eprintln!("Populating Redlite file with {} keys...", size);
             let batch_size = 1000usize;
             for batch_start in (0..*size as usize).step_by(batch_size) {
                 let batch_end = std::cmp::min(batch_start + batch_size, *size as usize);
@@ -705,10 +684,13 @@ fn bench_scaling(c: &mut Criterion) {
                 let pairs: Vec<(&str, &[u8])> = keys.iter().map(|k| (k.as_str(), b"value_data_here".as_slice())).collect();
                 db.mset(&pairs).unwrap();
             }
-            eprintln!("Done.");
+            eprintln!("[SQLite/File] Done.");
 
-            eprintln!("Testing scaling/get/{}/redlite_embedded_file", size_name);
-            group.bench_function(BenchmarkId::new(*size_name, "redlite_embedded_file"), |b| {
+            let mut group = c.benchmark_group(format!("scaling_1k_10k/{}/sqlite_file", size_name));
+            group.sample_size(50);
+
+            eprintln!("[SQLite/File] Running GET benchmark...");
+            group.bench_function("GET", |b| {
                 let mut idx = 0;
                 b.iter(|| {
                     let key = format!("key_{}", idx % *size);
@@ -716,73 +698,118 @@ fn bench_scaling(c: &mut Criterion) {
                     idx += 1;
                 });
             });
-            eprintln!("Success");
-        }
 
-        // Redis
-        if let Some(ref client) = redis_client {
-            let mut conn = client.get_connection().unwrap();
-            eprintln!("Populating Redis with {} keys...", size);
-            // Use pipelining for fast population
-            let batch_size = 1000usize;
-            for batch_start in (0..*size as usize).step_by(batch_size) {
-                let batch_end = std::cmp::min(batch_start + batch_size, *size as usize);
-                let mut pipe = redis::pipe();
-                for i in batch_start..batch_end {
-                    pipe.cmd("SET").arg(format!("key_{}", i)).arg(b"value_data_here");
-                }
-                let _: () = pipe.query(&mut conn).unwrap();
-            }
-            eprintln!("Done.");
-
-            eprintln!("Testing scaling/get/{}/redis", size_name);
-            group.bench_function(BenchmarkId::new(*size_name, "redis"), |b| {
-                let mut conn = client.get_connection().unwrap();
-                let mut idx = 0;
+            eprintln!("[SQLite/File] Running SET benchmark...");
+            let mut set_counter = *size as usize;
+            group.bench_function("SET", |b| {
                 b.iter(|| {
-                    let key = format!("key_{}", idx % *size);
-                    let _: Option<Vec<u8>> = redis::cmd("GET")
-                        .arg(black_box(&key))
-                        .query(&mut conn)
-                        .unwrap();
-                    idx += 1;
+                    let key = format!("new_key_{}", set_counter);
+                    db.set(black_box(&key), black_box(b"value_data_here"), None).unwrap();
+                    set_counter += 1;
                 });
             });
-            eprintln!("Success");
+
+            group.finish();
+            eprintln!("[SQLite/File] Complete.");
         }
 
-        // Redlite server (memory)
-        if let Some(ref client) = redlite_server_mem {
-            let mut conn = client.get_connection().unwrap();
-            eprintln!("Populating Redlite server with {} keys...", size);
-            let batch_size = 1000usize;
-            for batch_start in (0..*size as usize).step_by(batch_size) {
-                let batch_end = std::cmp::min(batch_start + batch_size, *size as usize);
-                let mut pipe = redis::pipe();
-                for i in batch_start..batch_end {
-                    pipe.cmd("SET").arg(format!("key_{}", i)).arg(b"value_data_here");
+        // ========================================================================
+        // Turso Backend - Memory (feature-gated)
+        // ========================================================================
+        #[cfg(feature = "turso")]
+        {
+            eprintln!("[Turso/Memory] Populating {} keys...", size_name);
+            if let Ok(db) = TursoDb::open_memory() {
+                // Turso doesn't have mset, so populate with individual sets
+                for i in 0..*size as usize {
+                    let key = format!("key_{}", i);
+                    let _ = db.set(&key, b"value_data_here", None);
                 }
-                let _: () = pipe.query(&mut conn).unwrap();
-            }
-            eprintln!("Done.");
+                eprintln!("[Turso/Memory] Done.");
 
-            eprintln!("Testing scaling/get/{}/redlite_server_mem", size_name);
-            group.bench_function(BenchmarkId::new(*size_name, "redlite_server_mem"), |b| {
-                let mut conn = client.get_connection().unwrap();
-                let mut idx = 0;
-                b.iter(|| {
-                    let key = format!("key_{}", idx % *size);
-                    let _: Option<Vec<u8>> = redis::cmd("GET")
-                        .arg(black_box(&key))
-                        .query(&mut conn)
-                        .unwrap();
-                    idx += 1;
+                let mut group = c.benchmark_group(format!("scaling_1k_10k/{}/turso_memory", size_name));
+                group.sample_size(50);
+
+                eprintln!("[Turso/Memory] Running GET benchmark...");
+                group.bench_function("GET", |b| {
+                    let mut idx = 0;
+                    b.iter(|| {
+                        let key = format!("key_{}", idx % *size);
+                        let _result = db.get(black_box(&key));
+                        idx += 1;
+                    });
                 });
-            });
-            eprintln!("Success");
+
+                eprintln!("[Turso/Memory] Running SET benchmark...");
+                let mut set_counter = *size as usize;
+                group.bench_function("SET", |b| {
+                    b.iter(|| {
+                        let key = format!("new_key_{}", set_counter);
+                        let _ = db.set(black_box(&key), black_box(b"value_data_here"), None);
+                        set_counter += 1;
+                    });
+                });
+
+                group.finish();
+                eprintln!("[Turso/Memory] Complete.");
+            } else {
+                eprintln!("[Turso/Memory] SKIPPED - Failed to open");
+            }
         }
 
-        group.finish();
+        // ========================================================================
+        // Turso Backend - File (feature-gated)
+        // ========================================================================
+        #[cfg(feature = "turso")]
+        {
+            eprintln!("[Turso/File] Populating {} keys...", size_name);
+            use std::time::{SystemTime, UNIX_EPOCH};
+            let timestamp = SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .unwrap()
+                .as_nanos();
+            let path = format!("/tmp/redlite_turso_bench_{}.db", timestamp);
+
+            if let Ok(db) = TursoDb::open(&path) {
+                // Turso doesn't have mset, so populate with individual sets
+                for i in 0..*size as usize {
+                    let key = format!("key_{}", i);
+                    let _ = db.set(&key, b"value_data_here", None);
+                }
+                eprintln!("[Turso/File] Done.");
+
+                let mut group = c.benchmark_group(format!("scaling_1k_10k/{}/turso_file", size_name));
+                group.sample_size(50);
+
+                eprintln!("[Turso/File] Running GET benchmark...");
+                group.bench_function("GET", |b| {
+                    let mut idx = 0;
+                    b.iter(|| {
+                        let key = format!("key_{}", idx % *size);
+                        let _result = db.get(black_box(&key));
+                        idx += 1;
+                    });
+                });
+
+                eprintln!("[Turso/File] Running SET benchmark...");
+                let mut set_counter = *size as usize;
+                group.bench_function("SET", |b| {
+                    b.iter(|| {
+                        let key = format!("new_key_{}", set_counter);
+                        let _ = db.set(black_box(&key), black_box(b"value_data_here"), None);
+                        set_counter += 1;
+                    });
+                });
+
+                group.finish();
+                eprintln!("[Turso/File] Complete.");
+
+                // Cleanup
+                let _ = std::fs::remove_file(&path);
+            } else {
+                eprintln!("[Turso/File] SKIPPED - Failed to open");
+            }
+        }
     }
 }
 

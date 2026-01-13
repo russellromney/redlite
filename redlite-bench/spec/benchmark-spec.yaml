@@ -1,0 +1,596 @@
+# Redis Protocol Comprehensive Benchmark Specification
+# Version 1.0
+#
+# This specification defines a comprehensive benchmark suite for any system
+# that speaks the Redis protocol (Redis, Dragonfly, KeyDB, Redlite, etc.)
+#
+# Goal: Fill gaps in existing tools (redis-benchmark, memtier_benchmark)
+# - Complete coverage of all 6 data types
+# - Streams operations (missing from most tools)
+# - Sorted Sets (ZADD missing from redis-benchmark defaults)
+# - Concurrent scaling characteristics
+# - Fair cross-implementation comparison
+
+version: "0.1.0"
+name: "Redis Protocol Comprehensive Benchmark"
+description: "Complete benchmark coverage for all Redis data types and operations"
+
+# Target systems to benchmark
+backends:
+  - name: "Redis"
+    connection: "redis://127.0.0.1:6379"
+    description: "Official Redis server"
+
+  - name: "Dragonfly"
+    connection: "redis://127.0.0.1:6380"
+    description: "Modern Redis alternative, multithreaded"
+
+  - name: "KeyDB"
+    connection: "redis://127.0.0.1:6381"
+    description: "Multithreaded Redis fork"
+
+  - name: "Redlite-Server"
+    connection: "redis://127.0.0.1:7381"
+    description: "SQLite-backed Redis server"
+
+  # Add more backends as needed
+
+# Benchmark configuration
+config:
+  dataset_sizes:
+    - 1000       # Small - quick validation
+    - 10000      # Medium - standard testing
+    - 100000     # Large - stress testing
+
+  concurrency_levels:
+    - 1          # Baseline single-threaded
+    - 2          # Light concurrency
+    - 4          # Standard concurrency
+    - 8          # High concurrency
+    - 16         # Stress concurrency
+
+  iterations_per_test: 10000  # Operations per test
+
+  warmup_iterations: 1000     # Warmup before measurement
+
+  timeout_seconds: 300        # Max time per test
+
+# Metrics to collect
+metrics:
+  latency:
+    - avg_us           # Average latency (microseconds)
+    - min_us           # Minimum latency
+    - max_us           # Maximum latency
+    - p50_us           # Median (50th percentile)
+    - p95_us           # 95th percentile
+    - p99_us           # 99th percentile
+    - stddev_us        # Standard deviation
+
+  throughput:
+    - ops_per_sec      # Operations per second
+    - mb_per_sec       # Megabytes per second (for data transfer)
+
+  resource:
+    - memory_bytes     # Memory usage (if measurable)
+    - cpu_percent      # CPU utilization (if measurable)
+    - network_bytes    # Network bytes transferred (for server mode)
+
+# ============================================================================
+# DATA TYPE OPERATIONS
+# ============================================================================
+
+operations:
+
+  # --------------------------------------------------------------------------
+  # STRING OPERATIONS (Core K-V)
+  # --------------------------------------------------------------------------
+  string:
+    - name: SET
+      description: "Set string value"
+      command: "SET {key} {value}"
+      setup: "Empty database"
+      value_size: 100  # bytes
+      key_pattern: "str:{n}"
+      complexity: "O(1)"
+
+    - name: GET
+      description: "Get string value"
+      command: "GET {key}"
+      setup: "Pre-populated with N keys"
+      key_pattern: "str:{n}"
+      complexity: "O(1)"
+
+    - name: INCR
+      description: "Atomic increment"
+      command: "INCR {key}"
+      setup: "Pre-populated counters"
+      key_pattern: "counter:{n}"
+      complexity: "O(1)"
+
+    - name: APPEND
+      description: "Append to string"
+      command: "APPEND {key} {value}"
+      setup: "Pre-populated strings"
+      value_size: 50
+      key_pattern: "str:{n}"
+      complexity: "O(1)"
+
+    - name: STRLEN
+      description: "Get string length"
+      command: "STRLEN {key}"
+      setup: "Pre-populated strings"
+      key_pattern: "str:{n}"
+      complexity: "O(1)"
+
+    - name: MGET
+      description: "Multi-get (10 keys)"
+      command: "MGET {key1} {key2} ... {key10}"
+      setup: "Pre-populated strings"
+      batch_size: 10
+      key_pattern: "str:{n}"
+      complexity: "O(N) where N is number of keys"
+
+    - name: MSET
+      description: "Multi-set (10 keys)"
+      command: "MSET {key1} {val1} {key2} {val2} ..."
+      setup: "Empty database"
+      batch_size: 10
+      value_size: 100
+      key_pattern: "str:{n}"
+      complexity: "O(N) where N is number of keys"
+
+  # --------------------------------------------------------------------------
+  # LIST OPERATIONS
+  # --------------------------------------------------------------------------
+  list:
+    - name: LPUSH
+      description: "Push element to list head"
+      command: "LPUSH {key} {value}"
+      setup: "Empty list"
+      value_size: 100
+      key_pattern: "list:{n}"
+      complexity: "O(1)"
+
+    - name: RPUSH
+      description: "Push element to list tail"
+      command: "RPUSH {key} {value}"
+      setup: "Empty list"
+      value_size: 100
+      key_pattern: "list:{n}"
+      complexity: "O(1)"
+
+    - name: LPOP
+      description: "Pop element from list head"
+      command: "LPOP {key}"
+      setup: "List with N elements"
+      list_size: 1000
+      key_pattern: "list:{n}"
+      complexity: "O(1)"
+
+    - name: RPOP
+      description: "Pop element from list tail"
+      command: "RPOP {key}"
+      setup: "List with N elements"
+      list_size: 1000
+      key_pattern: "list:{n}"
+      complexity: "O(1)"
+
+    - name: LLEN
+      description: "Get list length"
+      command: "LLEN {key}"
+      setup: "List with N elements"
+      list_size: 1000
+      key_pattern: "list:{n}"
+      complexity: "O(1)"
+
+    - name: LRANGE
+      description: "Get range of elements (first 100)"
+      command: "LRANGE {key} 0 99"
+      setup: "List with N elements"
+      list_size: 1000
+      range_size: 100
+      key_pattern: "list:{n}"
+      complexity: "O(S+N) where S is start, N is range"
+
+    - name: LINDEX
+      description: "Get element by index"
+      command: "LINDEX {key} {index}"
+      setup: "List with N elements"
+      list_size: 1000
+      key_pattern: "list:{n}"
+      complexity: "O(N) where N is list length"
+
+  # --------------------------------------------------------------------------
+  # HASH OPERATIONS
+  # --------------------------------------------------------------------------
+  hash:
+    - name: HSET
+      description: "Set hash field"
+      command: "HSET {key} {field} {value}"
+      setup: "Empty hash"
+      value_size: 100
+      key_pattern: "hash:{n}"
+      field_pattern: "field:{m}"
+      complexity: "O(1)"
+
+    - name: HGET
+      description: "Get hash field"
+      command: "HGET {key} {field}"
+      setup: "Hash with N fields"
+      hash_fields: 100
+      key_pattern: "hash:{n}"
+      field_pattern: "field:{m}"
+      complexity: "O(1)"
+
+    - name: HGETALL
+      description: "Get all hash fields (100 fields)"
+      command: "HGETALL {key}"
+      setup: "Hash with N fields"
+      hash_fields: 100
+      key_pattern: "hash:{n}"
+      complexity: "O(N) where N is hash size"
+
+    - name: HMGET
+      description: "Multi-get hash fields (10 fields)"
+      command: "HMGET {key} {field1} {field2} ... {field10}"
+      setup: "Hash with N fields"
+      hash_fields: 100
+      batch_size: 10
+      key_pattern: "hash:{n}"
+      complexity: "O(N) where N is number of fields"
+
+    - name: HLEN
+      description: "Get hash field count"
+      command: "HLEN {key}"
+      setup: "Hash with N fields"
+      hash_fields: 100
+      key_pattern: "hash:{n}"
+      complexity: "O(1)"
+
+    - name: HDEL
+      description: "Delete hash field"
+      command: "HDEL {key} {field}"
+      setup: "Hash with N fields"
+      hash_fields: 100
+      key_pattern: "hash:{n}"
+      field_pattern: "field:{m}"
+      complexity: "O(N) where N is number of fields"
+
+    - name: HINCRBY
+      description: "Increment hash field (integer)"
+      command: "HINCRBY {key} {field} 1"
+      setup: "Hash with numeric fields"
+      hash_fields: 100
+      key_pattern: "hash:{n}"
+      field_pattern: "counter:{m}"
+      complexity: "O(1)"
+
+  # --------------------------------------------------------------------------
+  # SET OPERATIONS
+  # --------------------------------------------------------------------------
+  set:
+    - name: SADD
+      description: "Add member to set"
+      command: "SADD {key} {member}"
+      setup: "Empty set"
+      key_pattern: "set:{n}"
+      member_pattern: "member:{m}"
+      complexity: "O(1)"
+
+    - name: SREM
+      description: "Remove member from set"
+      command: "SREM {key} {member}"
+      setup: "Set with N members"
+      set_size: 1000
+      key_pattern: "set:{n}"
+      member_pattern: "member:{m}"
+      complexity: "O(1)"
+
+    - name: SMEMBERS
+      description: "Get all set members (1000 members)"
+      command: "SMEMBERS {key}"
+      setup: "Set with N members"
+      set_size: 1000
+      key_pattern: "set:{n}"
+      complexity: "O(N) where N is set size"
+
+    - name: SISMEMBER
+      description: "Check set membership"
+      command: "SISMEMBER {key} {member}"
+      setup: "Set with N members"
+      set_size: 1000
+      key_pattern: "set:{n}"
+      member_pattern: "member:{m}"
+      complexity: "O(1)"
+
+    - name: SCARD
+      description: "Get set cardinality"
+      command: "SCARD {key}"
+      setup: "Set with N members"
+      set_size: 1000
+      key_pattern: "set:{n}"
+      complexity: "O(1)"
+
+    - name: SPOP
+      description: "Pop random member"
+      command: "SPOP {key}"
+      setup: "Set with N members"
+      set_size: 1000
+      key_pattern: "set:{n}"
+      complexity: "O(1)"
+
+    - name: SRANDMEMBER
+      description: "Get random member (without removing)"
+      command: "SRANDMEMBER {key}"
+      setup: "Set with N members"
+      set_size: 1000
+      key_pattern: "set:{n}"
+      complexity: "O(1)"
+
+  # --------------------------------------------------------------------------
+  # SORTED SET OPERATIONS (Often missing from benchmarks!)
+  # --------------------------------------------------------------------------
+  sorted_set:
+    - name: ZADD
+      description: "Add member with score"
+      command: "ZADD {key} {score} {member}"
+      setup: "Empty sorted set"
+      key_pattern: "zset:{n}"
+      member_pattern: "member:{m}"
+      score_range: [0, 1000]
+      complexity: "O(log(N))"
+
+    - name: ZREM
+      description: "Remove member"
+      command: "ZREM {key} {member}"
+      setup: "Sorted set with N members"
+      zset_size: 1000
+      key_pattern: "zset:{n}"
+      member_pattern: "member:{m}"
+      complexity: "O(M*log(N)) where M is members removed"
+
+    - name: ZRANGE
+      description: "Get range by rank (first 100)"
+      command: "ZRANGE {key} 0 99"
+      setup: "Sorted set with N members"
+      zset_size: 1000
+      range_size: 100
+      key_pattern: "zset:{n}"
+      complexity: "O(log(N)+M) where M is range size"
+
+    - name: ZRANGEBYSCORE
+      description: "Get range by score"
+      command: "ZRANGEBYSCORE {key} 100 200"
+      setup: "Sorted set with N members"
+      zset_size: 1000
+      score_range: [100, 200]
+      key_pattern: "zset:{n}"
+      complexity: "O(log(N)+M) where M is matches"
+
+    - name: ZSCORE
+      description: "Get member score"
+      command: "ZSCORE {key} {member}"
+      setup: "Sorted set with N members"
+      zset_size: 1000
+      key_pattern: "zset:{n}"
+      member_pattern: "member:{m}"
+      complexity: "O(1)"
+
+    - name: ZRANK
+      description: "Get member rank"
+      command: "ZRANK {key} {member}"
+      setup: "Sorted set with N members"
+      zset_size: 1000
+      key_pattern: "zset:{n}"
+      member_pattern: "member:{m}"
+      complexity: "O(log(N))"
+
+    - name: ZCARD
+      description: "Get sorted set cardinality"
+      command: "ZCARD {key}"
+      setup: "Sorted set with N members"
+      zset_size: 1000
+      key_pattern: "zset:{n}"
+      complexity: "O(1)"
+
+    - name: ZCOUNT
+      description: "Count members in score range"
+      command: "ZCOUNT {key} 100 200"
+      setup: "Sorted set with N members"
+      zset_size: 1000
+      score_range: [100, 200]
+      key_pattern: "zset:{n}"
+      complexity: "O(log(N))"
+
+  # --------------------------------------------------------------------------
+  # STREAM OPERATIONS (Completely missing from most tools!)
+  # --------------------------------------------------------------------------
+  stream:
+    - name: XADD
+      description: "Add entry to stream"
+      command: "XADD {key} * field1 value1"
+      setup: "Empty stream"
+      key_pattern: "stream:{n}"
+      field_count: 5
+      value_size: 100
+      complexity: "O(1)"
+
+    - name: XLEN
+      description: "Get stream length"
+      command: "XLEN {key}"
+      setup: "Stream with N entries"
+      stream_size: 1000
+      key_pattern: "stream:{n}"
+      complexity: "O(1)"
+
+    - name: XRANGE
+      description: "Get range of entries (100 entries)"
+      command: "XRANGE {key} - +"
+      setup: "Stream with N entries"
+      stream_size: 1000
+      range_size: 100
+      key_pattern: "stream:{n}"
+      complexity: "O(N) where N is entries returned"
+
+    - name: XREVRANGE
+      description: "Get reverse range of entries"
+      command: "XREVRANGE {key} + - COUNT 100"
+      setup: "Stream with N entries"
+      stream_size: 1000
+      range_size: 100
+      key_pattern: "stream:{n}"
+      complexity: "O(N) where N is entries returned"
+
+    - name: XREAD
+      description: "Read from stream (non-blocking)"
+      command: "XREAD COUNT 100 STREAMS {key} 0"
+      setup: "Stream with N entries"
+      stream_size: 1000
+      read_count: 100
+      key_pattern: "stream:{n}"
+      complexity: "O(N) where N is entries read"
+
+    - name: XDEL
+      description: "Delete stream entry"
+      command: "XDEL {key} {id}"
+      setup: "Stream with N entries"
+      stream_size: 1000
+      key_pattern: "stream:{n}"
+      complexity: "O(1)"
+
+    - name: XTRIM
+      description: "Trim stream to max length"
+      command: "XTRIM {key} MAXLEN 500"
+      setup: "Stream with 1000 entries"
+      stream_size: 1000
+      max_length: 500
+      key_pattern: "stream:{n}"
+      complexity: "O(N) where N is entries deleted"
+
+  # --------------------------------------------------------------------------
+  # KEY MANAGEMENT OPERATIONS
+  # --------------------------------------------------------------------------
+  key:
+    - name: DEL
+      description: "Delete key"
+      command: "DEL {key}"
+      setup: "Pre-populated keys"
+      key_pattern: "key:{n}"
+      complexity: "O(N) where N is keys deleted"
+
+    - name: EXISTS
+      description: "Check key existence"
+      command: "EXISTS {key}"
+      setup: "Pre-populated keys"
+      key_pattern: "key:{n}"
+      complexity: "O(1)"
+
+    - name: TYPE
+      description: "Get key type"
+      command: "TYPE {key}"
+      setup: "Mixed key types"
+      key_pattern: "key:{n}"
+      complexity: "O(1)"
+
+    - name: EXPIRE
+      description: "Set key expiration (10 seconds)"
+      command: "EXPIRE {key} 10"
+      setup: "Pre-populated keys"
+      key_pattern: "key:{n}"
+      expiration: 10
+      complexity: "O(1)"
+
+    - name: TTL
+      description: "Get time to live"
+      command: "TTL {key}"
+      setup: "Keys with expiration"
+      key_pattern: "key:{n}"
+      complexity: "O(1)"
+
+# ============================================================================
+# WORKLOAD SCENARIOS (Mixed operations, realistic patterns)
+# ============================================================================
+workloads:
+
+  - name: "read_heavy"
+    description: "80% read, 20% write"
+    operations:
+      - { type: "GET", weight: 70 }
+      - { type: "HGET", weight: 10 }
+      - { type: "SET", weight: 15 }
+      - { type: "HSET", weight: 5 }
+
+  - name: "write_heavy"
+    description: "20% read, 80% write"
+    operations:
+      - { type: "GET", weight: 15 }
+      - { type: "HGET", weight: 5 }
+      - { type: "SET", weight: 60 }
+      - { type: "HSET", weight: 20 }
+
+  - name: "balanced"
+    description: "50% read, 50% write"
+    operations:
+      - { type: "GET", weight: 40 }
+      - { type: "HGET", weight: 10 }
+      - { type: "SET", weight: 40 }
+      - { type: "HSET", weight: 10 }
+
+  - name: "list_queue"
+    description: "List as message queue"
+    operations:
+      - { type: "LPUSH", weight: 50 }
+      - { type: "RPOP", weight: 50 }
+
+  - name: "stream_processing"
+    description: "Stream as event log"
+    operations:
+      - { type: "XADD", weight: 60 }
+      - { type: "XREAD", weight: 30 }
+      - { type: "XLEN", weight: 10 }
+
+# ============================================================================
+# OUTPUT FORMATS
+# ============================================================================
+output:
+  formats:
+    - console     # Pretty-printed tables to stdout
+    - json        # Machine-readable JSON
+    - csv         # Spreadsheet-compatible
+    - markdown    # Documentation-ready tables
+    - html        # Interactive web report
+
+  grouping:
+    - by_operation      # Group by operation type
+    - by_data_type      # Group by data type
+    - by_backend        # Group by backend
+    - by_concurrency    # Group by concurrency level
+
+  charts:
+    - latency_comparison       # Latency across backends
+    - throughput_comparison    # Throughput across backends
+    - concurrency_scaling      # How throughput scales with concurrency
+    - operation_breakdown      # Performance by operation
+
+# ============================================================================
+# IMPLEMENTATION NOTES
+# ============================================================================
+#
+# Each language implementation should:
+# 1. Parse this YAML spec
+# 2. Connect to specified backends
+# 3. Run setup phase (populate data)
+# 4. Run warmup iterations
+# 5. Run measured iterations
+# 6. Collect metrics
+# 7. Generate reports in specified formats
+#
+# Target languages:
+# - Python (reference implementation - simple, readable)
+# - JavaScript/TypeScript (Node.js ecosystem)
+# - Go (high performance, great concurrency)
+# - Rust (maximum performance, Redlite integration)
+# - Java (enterprise environments)
+# - C# (Windows environments)
+#
+# ============================================================================

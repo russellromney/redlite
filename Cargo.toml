@@ -21,12 +21,10 @@ path = "src/main.rs"
 
 [features]
 default = []
-libsql = ["dep:libsql"]
 turso = ["dep:turso"]
 
 [dependencies]
 rusqlite = { version = "0.31", features = ["bundled"] }
-libsql = { version = "0.6", optional = true }
 turso = { version = "0.1", optional = true }
 tokio = { version = "1", features = ["full", "rt-multi-thread"] }
 bytes = "1"
@@ -42,6 +40,7 @@ redis = "0.25"
 tempfile = "3"
 tokio-test = "0.4"
 criterion = { version = "0.5", features = ["html_reports"] }
+brunch = "0.5"
 
 [profile.release]
 lto = true
@@ -49,4 +48,24 @@ codegen-units = 1
 
 [[bench]]
 name = "redlite_benchmarks"
+harness = false
+
+[[bench]]
+name = "brunch_scaling"
+harness = false
+
+[[bench]]
+name = "comprehensive_comparison"
+harness = false
+
+[[bench]]
+name = "test_concurrent"
+harness = false
+
+[[bench]]
+name = "test_server_connection"
+harness = false
+
+[[bench]]
+name = "test_step_by_step"
 harness = false
