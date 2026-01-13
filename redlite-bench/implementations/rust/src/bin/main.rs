@@ -166,6 +166,37 @@ enum Commands {
         #[arg(long)]
         output_file: Option<String>,
     },
+
+    /// Run comprehensive benchmarks comparing Redis vs Redlite
+    RunBenchmarks {
+        /// Path to YAML scenario file
+        #[arg(short, long, default_value = "scenarios/comprehensive.yaml")]
+        scenario_file: String,
+
+        /// Comma-separated list of scenario names to run (runs all if not specified)
+        #[arg(long)]
+        scenarios: Option<String>,
+
+        /// Redis connection URL
+        #[arg(long, default_value = "redis://127.0.0.1:6379")]
+        redis_url: String,
+
+        /// Number of iterations per scenario
+        #[arg(short, long, default_value = "50000")]
+        iterations: usize,
+
+        /// Dataset size (number of keys)
+        #[arg(short, long, default_value = "10000")]
+        dataset_size: usize,
+
+        /// Report output format: json or markdown
+        #[arg(long, default_value = "markdown")]
+        report_format: String,
+
+        /// Report file path
+        #[arg(long)]
+        report_file: Option<String>,
+    },
 }
 
 fn parse_operations(ops: &str) -> Vec<String> {
@@ -625,6 +656,140 @@ async fn main() -> anyhow::Result<()> {
             if is_json {
                 write_output(&output, output_file.as_deref())?;
             }
+        }
+
+        Commands::RunBenchmarks {
+            scenario_file,
+            scenarios,
+            redis_url,
+            iterations,
+            dataset_size,
+            report_format,
+            report_file,
+        } => {
+            use redlite_bench::{MultiScenarioRunner, ReportGenerator, ReportFormat};
+            use std::str::FromStr;
+
+            println!("Loading scenarios from {}...", scenario_file);
+            let all_scenarios = load_scenarios(&scenario_file)?;
+
+            // Filter scenarios if specified
+            let scenarios_to_run: Vec<_> = if let Some(scenario_names) = &scenarios {
+                let names: Vec<&str> = scenario_names.split(',').map(|s| s.trim()).collect();
+                all_scenarios
+                    .into_iter()
+                    .filter(|s| names.contains(&s.name.as_str()))
+                    .collect()
+            } else {
+                all_scenarios
+            };
+
+            if scenarios_to_run.is_empty() {
+                println!("No matching scenarios found!");
+                return Ok(());
+            }
+
+            println!(
+                "Running {} scenarios ({} iterations, {} dataset size)...\n",
+                scenarios_to_run.len(),
+                iterations,
+                dataset_size
+            );
+
+            // Create scenario metadata for report
+            let scenario_metadata: Vec<_> = scenarios_to_run
+                .iter()
+                .map(|s| (s.name.clone(), s.description.clone()))
+                .collect();
+
+            // Connect to backends
+            println!("Connecting to Redis at {}...", redis_url);
+            let redis_client = match RedisClient::new(&redis_url) {
+                Ok(client) => {
+                    println!("✓ Redis connected");
+                    Some(client)
+                }
+                Err(e) => {
+                    println!("✗ Failed to connect to Redis: {}", e);
+                    None
+                }
+            };
+
+            println!("Creating in-memory Redlite database...");
+            let redlite_client = match RedliteEmbeddedClient::new_memory() {
+                Ok(client) => {
+                    println!("✓ Redlite created");
+                    Some(client)
+                }
+                Err(e) => {
+                    println!("✗ Failed to create Redlite: {}", e);
+                    None
+                }
+            };
+
+            // Run benchmarks
+            let runner = MultiScenarioRunner::new(scenarios_to_run, iterations, dataset_size);
+            let mut comparisons = Vec::new();
+
+            for (idx, scenario) in runner.scenarios.iter().enumerate() {
+                println!(
+                    "\n[{}/{}] Running scenario: {}",
+                    idx + 1,
+                    runner.scenarios.len(),
+                    scenario.name
+                );
+
+                match (&redis_client, &redlite_client) {
+                    (Some(redis), Some(redlite)) => {
+                        match runner.run_scenario_comparison(scenario, redis, redlite).await {
+                            Ok(comparison) => {
+                                if let Some((redlite_tps, redis_tps, diff)) = comparison.throughput_diff() {
+                                    println!(
+                                        "  Redis: {:.0} ops/sec | Redlite: {:.0} ops/sec ({:+.1}%)",
+                                        redis_tps, redlite_tps, diff
+                                    );
+                                } else {
+                                    println!("  One or both backends failed");
+                                }
+                                comparisons.push(comparison);
+                            }
+                            Err(e) => println!("  Error: {}", e),
+                        }
+                    }
+                    _ => println!("  Skipped: missing backend connection"),
+                }
+            }
+
+            // Generate report
+            println!("\n\nGenerating report...");
+            let report = ReportGenerator::generate_report(comparisons, &scenario_metadata);
+
+            // Save report
+            let report_fmt = ReportFormat::from_str(&report_format)
+                .unwrap_or(ReportFormat::Markdown);
+
+            if let Some(path) = report_file {
+                match ReportGenerator::save_report(&report, &path, report_fmt) {
+                    Ok(_) => println!("✓ Report saved to: {}", path),
+                    Err(e) => println!("✗ Failed to save report: {}", e),
+                }
+            } else {
+                // Print to console
+                match report_fmt {
+                    ReportFormat::Markdown => {
+                        let markdown = ReportGenerator::format_markdown(&report);
+                        println!("{}", markdown);
+                    }
+                    ReportFormat::Json => {
+                        match serde_json::to_string_pretty(&report) {
+                            Ok(json) => println!("{}", json),
+                            Err(e) => println!("Error formatting JSON: {}", e),
+                        }
+                    }
+                }
+            }
+
+            println!("\n✓ Benchmark run complete!");
         }
     }
 

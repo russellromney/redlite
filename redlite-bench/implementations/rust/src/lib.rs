@@ -5,6 +5,8 @@ pub mod error;
 pub mod scenarios;
 pub mod dispatcher;
 pub mod output;
+pub mod benchmark_runner;
+pub mod report_generator;
 
 pub use benchmark::{BenchmarkConfig, BenchmarkResult, BenchmarkRunner};
 pub use client::{ClientError, RedisClient, RedisLikeClient, RedliteEmbeddedClient};
@@ -15,3 +17,5 @@ pub use scenarios::{
     execute_setup, load_scenarios, find_scenario,
 };
 pub use dispatcher::execute_operation;
+pub use benchmark_runner::{MultiScenarioRunner, ScenarioComparison, ScenarioResult};
+pub use report_generator::{BenchmarkReport, ReportGenerator, ReportFormat};
