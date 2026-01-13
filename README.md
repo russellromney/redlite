@@ -1,40 +1,43 @@
-# redlite 🔴
+# redlite
 
-SQLite-backed Redis-compatible embedded key-value store written in Rust.
+SQLite-backed Redis-compatible embedded key-value store.
 
-**Documentation:** [redlite.dev](https://redlite.dev)
+**Docs:** [redlite.dev](https://redlite.dev)
 
-## Why?
+## Quick Start
 
-- **Embedded-first** - Use as a library, no separate server needed
-- **Disk is cheap** - Persistent storage without Redis's memory constraints
-- **SQLite foundation** - ACID transactions, durability, zero config
-- **Redis compatible** - Existing clients just work (for most operations)
-- **Easy backup** - SQLite WAL files work with [litestream](https://litestream.io) or similar tools
+**Library (recommended):**
+```rust
+use redlite::Db;
 
-## Differences from Redis
+let db = Db::open("mydata.db")?;
+db.set("user:1", b"alice", None)?;
+let name = db.get("user:1")?;
+```
 
-**Embedded mode** is fully Redis-compatible for strings, hashes, lists, sets, sorted sets, and streams (reading & writing - non-blocking)
+**Server:**
+```bash
+cargo install redlite
+redlite --db mydata.db
+redis-cli SET foo bar
+```
 
-**Server mode only** features (not available in embedded mode):
-- **Pub/Sub** - At-most-once, fire-and-forget (messages not persisted if no subscribers)
-- **Transactions** - MULTI/EXEC/DISCARD/WATCH/UNWATCH (blocking commands not allowed in transactions)
-- **Blocking reads** - BLPOP, BRPOP, XREAD BLOCK, XREADGROUP BLOCK
+## When to Use
 
-**Architectural differences:**
-- **Persistence** - Data always disk-backed; no Redis SAVE/BGSAVE (use SQLite WAL tools)
-- **Memory** - Uses SQLite storage, not RAM-optimized for speed
-- **Replication** - No built-in replication; use SQLite backup mechanisms
+| Use Case | Redlite | Redis |
+|----------|---------|-------|
+| Single app KV store | Best choice | Overkill |
+| Memory-constrained | Disk-backed | RAM-bound |
+| Persistence required | Always durable | Needs config |
+| Multi-app sharing | Server mode | Native |
+| Clusters | Use [walsync](https://github.com/russellromney/walsync) | Native |
 
-**Not implemented:**
-- Cluster mode, Sentinel, Lua scripting, Modules, ACL, Stream XAUTOCLAIM
+## Why Redlite
 
-## Extensions
-
-- `VACUUM` - Delete expired keys and reclaim disk space
-- `KEYINFO key` - Returns type, ttl, created_at, updated_at
-- `AUTOVACUUM ON|OFF` - Auto-cleanup interval (default: ON, 60s)
-- `HISTORY` - Track and query operation history with time-travel queries (Session 17)
+- **Embedded-first** — No separate server needed
+- **Disk-backed** — No RAM constraints
+- **SQLite foundation** — ACID, durable, zero config
+- **Redis compatible** — Standard clients work
 
 ## Install
 
@@ -42,255 +45,39 @@ SQLite-backed Redis-compatible embedded key-value store written in Rust.
 cargo add redlite
 ```
 
-## Usage
-
-### Embedded (Library)
-
-```rust
-use redlite::Db;
-
-let db = Db::open("mydata.db")?;  // Persistent
-// let db = Db::open_memory()?;   // In-memory
-
-// String operations
-db.set("key", b"value", None)?;
-let value = db.get("key")?;  // Some(b"value")
-
-// With TTL
-use std::time::Duration;
-db.set("temp", b"expires", Some(Duration::from_secs(60)))?;
-
-// SET NX/XX
-use redlite::SetOptions;
-db.set_opts("key", b"value", SetOptions::new().nx())?;  // Only if not exists
-db.set_opts("key", b"value", SetOptions::new().xx())?;  // Only if exists
-
-// Delete
-db.del(&["key1", "key2"])?;
-
-// Multiple databases (like Redis SELECT 0-15)
-let mut db = Db::open("mydata.db")?;
-db.select(1)?;  // Switch to database 1
-db.set("key", b"in db 1", None)?;
-
-// Multiple sessions sharing the same backend
-let db1 = Db::open("mydata.db")?;
-let mut db2 = db1.session();  // New session, starts at db 0
-db2.select(1)?;               // Switch db2 to database 1
-
-// db1 and db2 share data but have independent selected database
-db1.set("key", b"db0 value", None)?;  // Goes to db 0
-db2.set("key", b"db1 value", None)?;  // Goes to db 1
-
-// Key metadata
-if let Some(info) = db.keyinfo("key")? {
-    println!("Type: {:?}, TTL: {}s, Created: {}",
-             info.key_type, info.ttl, info.created_at);
-}
-
-// Manual cleanup (deletes expired + SQLite VACUUM)
-let deleted = db.vacuum()?;
-
-// Autovacuum config (default: ON @ 60s)
-db.set_autovacuum(true);
-db.set_autovacuum_interval(30_000);  // 30 seconds
-```
-
-### Server Mode
-
-```bash
-# Build
-cargo build --release
-
-# Run server (default port 6379)
-./target/release/redlite --db=mydata.db
-
-# In-memory mode
-./target/release/redlite --db=:memory:
-
-# With authentication
-./target/release/redlite --db=mydata.db --password=secret
-
-# Custom port
-./target/release/redlite --db=mydata.db --addr=127.0.0.1:6380
-```
-
-Connect with any Redis client:
-
-```bash
-redis-cli SET foo bar
-redis-cli GET foo
-
-# With authentication
-redis-cli -a secret SET foo bar
-```
-
 ## Commands
 
-**Strings:** `GET`, `SET` (EX, PX, NX, XX), `INCR`, `DECR`, `INCRBY`, `DECRBY`, `INCRBYFLOAT`, `MGET`, `MSET`, `APPEND`, `STRLEN`, `GETRANGE`, `SETRANGE`
+All standard Redis commands for strings, hashes, lists, sets, sorted sets, and streams. See [docs](https://redlite.dev/commands/overview) for full list.
 
-**Keys:** `DEL`, `EXISTS`, `TYPE`, `EXPIRE`, `PERSIST`, `TTL`, `PTTL`, `KEYS`, `SCAN`
+**Server-only:** Pub/Sub, blocking reads (BLPOP, BRPOP, XREAD BLOCK)
 
-**Hashes:** `HSET`, `HGET`, `HSETNX`, `HMGET`, `HGETALL`, `HDEL`, `HEXISTS`, `HKEYS`, `HVALS`, `HLEN`, `HINCRBY`, `HINCRBYFLOAT`
+**RediSearch:** FT.CREATE, FT.SEARCH, FT.INFO, FT.ALTER, FT.DROPINDEX, aliases, synonyms, suggestions
 
-**Lists:** `LPUSH`, `RPUSH`, `LPOP`, `RPOP`, `LLEN`, `LRANGE`, `LINDEX`, `LSET`, `LTRIM`, `LREM`, `LINSERT`
+**Extensions:** `VACUUM`, `KEYINFO`, `AUTOVACUUM`, `HISTORY` (time-travel queries)
 
-**Sets:** `SADD`, `SREM`, `SMEMBERS`, `SISMEMBER`, `SCARD`, `SPOP`, `SRANDMEMBER`, `SDIFF`, `SINTER`, `SUNION`, `SMOVE`, `SDIFFSTORE`, `SINTERSTORE`, `SUNIONSTORE`
+## Server Options
 
-**Sorted Sets:** `ZADD`, `ZREM`, `ZSCORE`, `ZRANK`, `ZREVRANK`, `ZCARD`, `ZRANGE`, `ZREVRANGE` (WITHSCORES), `ZRANGEBYSCORE`, `ZCOUNT`, `ZINCRBY`, `ZREMRANGEBYRANK`, `ZREMRANGEBYSCORE`
-
-**Streams:** `XADD`, `XLEN`, `XRANGE`, `XREVRANGE`, `XREAD`, `XTRIM`, `XDEL`, `XINFO STREAM`, `XGROUP CREATE`, `XGROUP DESTROY`, `XGROUP SETID`, `XREADGROUP`, `XACK`, `XPENDING`, `XCLAIM`
-
-**Blocking Reads (server mode):** `BLPOP`, `BRPOP`, `XREAD BLOCK`, `XREADGROUP BLOCK`
-
-**Pub/Sub (server mode):** `SUBSCRIBE`, `UNSUBSCRIBE`, `PUBLISH`, `PSUBSCRIBE`, `PUNSUBSCRIBE`
-
-**Transactions:** `MULTI`, `EXEC`, `DISCARD`, `WATCH`, `UNWATCH`
-
-**History Tracking:** `HISTORY ENABLE`, `HISTORY DISABLE`, `HISTORY GET`, `HISTORY GETAT`, `HISTORY STATS`, `HISTORY CLEAR`, `HISTORY PRUNE`, `HISTORY LIST`
-
-**Server:** `PING`, `ECHO`, `QUIT`, `COMMAND`, `SELECT`, `DBSIZE`, `FLUSHDB`, `INFO`
-
-**Client (server mode):** `CLIENT SETNAME`, `CLIENT GETNAME`, `CLIENT LIST`, `CLIENT ID`, `CLIENT KILL`, `CLIENT PAUSE`, `CLIENT UNPAUSE`, `CLIENT INFO`
+```bash
+redlite --db mydata.db              # Persistent
+redlite --storage memory            # In-memory
+redlite --password secret           # Auth
+redlite --cache 1024                # 1GB cache (faster reads)
+```
 
 ## Performance
 
-Redlite embedded mode is significantly faster than Redis for local access (no network overhead):
+Embedded mode eliminates network overhead:
 
-| Operation | Redlite Embedded | Redis | Speedup |
-|-----------|------------------|-------|---------|
-| GET | 232k ops/sec, 3.8µs P50 | 1.9k ops/sec, 386µs P50 | **122x** |
-| SET | 53k ops/sec, 19µs P50 | 3.4k ops/sec, 291µs P50 | **15x** |
+| Op | Redlite | Redis | Speedup |
+|----|---------|-------|---------|
+| GET | 232k/s | 1.9k/s | 122x |
+| SET | 53k/s | 3.4k/s | 15x |
 
-Run benchmarks with `redlite-bench`:
+Tune with `--cache` for near-memory reads with SQLite durability.
 
-```bash
-cd redlite-bench/implementations/rust
-cargo build --release
-./target/release/redlite-bench scenario -s scenarios/comprehensive.yaml -n read_heavy --memory
-./target/release/redlite-bench run-benchmarks --report-format markdown
-```
+## Backups
 
-35+ scenarios covering caching, sessions, queues, leaderboards, streams, and more.
-
-### Tuning for Maximum Performance
-
-**Fastest: Pure memory mode** - No disk I/O, maximum throughput:
-```bash
-redlite --storage memory                  # Server mode
-```
-```rust
-let db = Db::open_memory()?;              // Embedded mode
-```
-Data is lost on restart. Use for caching, tests, or ephemeral workloads.
-
-**Recommended for durable workloads: File mode with large cache** - Near-memory reads with SQLite durability:
-
-Redlite uses SQLite's page cache to keep hot data in memory. Larger cache = more reads from RAM = faster.
-
-**CLI (server mode):**
-```bash
-# Use 1GB cache for high-performance reads
-redlite --db mydata.db --cache 1024
-
-# Use 256MB cache (good default)
-redlite --db mydata.db --cache 256
-
-# Default: 64MB cache
-redlite --db mydata.db
-```
-
-**Rust API (embedded mode):**
-```rust
-use redlite::Db;
-
-// Open with specific cache size
-let db = Db::open_with_cache("mydata.db", 1024)?;  // 1GB cache
-
-// Or configure at runtime
-let db = Db::open("mydata.db")?;
-db.set_cache_mb(1024)?;  // Switch to 1GB cache
-
-// Check current cache size
-println!("Cache: {}MB", db.cache_mb()?);
-```
-
-**Rule of thumb:** Set `--cache` to as much RAM as you can spare. If your hot dataset is 500MB, a 1GB cache means near-memory read performance with full SQLite durability.
-
-**Coming soon: Memory mode with periodic snapshots** - Like Redis RDB, this will offer pure memory speed with configurable disk dumps for durability.
-
-## Recently Completed
-
-**Cache Configuration (Session 18.8)** ✅
-- `Db::open_with_cache(path, mb)` - Open with specific cache size
-- `db.set_cache_mb(mb)` - Configure cache at runtime
-- `--cache` CLI flag for server mode
-- Near-Redis read performance with SQLite durability
-
-**Benchmarking Suite (Session 18)** ✅
-- Comprehensive YAML-driven benchmark framework (`redlite-bench/`)
-- 35+ workload scenarios (read-heavy, write-heavy, leaderboards, queues, etc.)
-- Redis vs Redlite comparison with latency percentiles and throughput
-- JSON and Markdown report generation
-
-**Session 22.4: Redis Ecosystem Commands** ✅
-- List operations: `LREM`, `LINSERT`
-- Set operations: `SMOVE`, `SDIFFSTORE`, `SINTERSTORE`, `SUNIONSTORE`
-- Client commands: `CLIENT SETNAME/GETNAME/LIST/ID`
-
-**Session 22: Redis Ecosystem Compatibility** ✅
-- Authentication: `--password` flag, AUTH command
-- Backend options: `--backend` (sqlite/turso), `--storage` (file/memory)
-- WATCH/UNWATCH for optimistic locking (check-and-set)
-
-**Session 17: History Tracking & Time-Travel Queries** ✅
-- Track value changes per key with three-tier opt-in
-- Time-travel queries: `HISTORY GETAT key timestamp`
-- Configurable retention policies
-
-## Upcoming Features
-
-See [ROADMAP.md](./ROADMAP.md) for detailed plans.
-
-**Sessions 19-21: Language Bindings** (Next)
-- **Python** (`redlite-py`) - PyO3 bindings via PyPI
-- **Node.js/Bun** (`redlite-js`) - NAPI-RS bindings via npm
-- **C FFI + Go** - C bindings via cbindgen + Go cgo wrapper
-
-**Session 24: Vector Search**
-- K-NN similarity search via sqlite-vec
-- VADD, VSEARCH, VGET, VDEL commands
-
-**Session 25: Geospatial**
-- R*Tree spatial indexing
-- GEOADD, GEOPOS, GEODIST, GEORADIUS commands
-
-## Durability & Replication
-
-Redlite uses SQLite WAL mode for crash-safe writes. For backups and replication, use external tools:
-
-**Recommended: [walsync](https://github.com/russellromney/walsync)**
-```bash
-walsync watch mydata.db -b s3://backups/redlite
-```
-- Continuous WAL sync to S3/Tigris
-- Point-in-time recovery
-- Multi-database support (~12MB RAM)
-
-**Alternative: [Litestream](https://litestream.io)** - Mature, battle-tested S3/GCS/Azure support.
-
-## Testing
-
-```bash
-# Unit tests (memory + disk)
-cargo test --lib
-
-# Integration tests (requires redis-cli)
-cargo build && cargo test --test integration -- --test-threads=1
-
-# All tests
-cargo test -- --test-threads=1
-```
+Use [walsync](https://github.com/russellromney/walsync) or [Litestream](https://litestream.io) for continuous backups.
 
 ## License
 

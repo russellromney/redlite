@@ -2,7 +2,7 @@
 
 Quick reference for all implemented Redis commands. For detailed progress, see [ROADMAP.md](./ROADMAP.md).
 
-## Implemented Commands (Sessions 1-17)
+## Implemented Commands (Sessions 1-23)
 
 ### Strings (Core KV) ✅
 
@@ -106,7 +106,7 @@ Quick reference for all implemented Redis commands. For detailed progress, see [
 | ZREMRANGEBYRANK | Remove by rank range |
 | ZREMRANGEBYSCORE | Remove by score range |
 
-### Server/Connection
+### Server/Connection ✅
 
 | Command | Description |
 |---------|-------------|
@@ -115,6 +115,21 @@ Quick reference for all implemented Redis commands. For detailed progress, see [
 | INFO | Server info |
 | SELECT | Select database (0-15) |
 | QUIT | Close connection |
+| AUTH | Authenticate with password |
+| COMMAND | List supported commands |
+
+### Client Commands (Session 23) ✅
+
+| Command | Description |
+|---------|-------------|
+| CLIENT SETNAME | Set connection name |
+| CLIENT GETNAME | Get connection name |
+| CLIENT LIST | List all connections |
+| CLIENT ID | Get connection ID |
+| CLIENT INFO | Get current connection info |
+| CLIENT KILL | Kill a connection |
+| CLIENT PAUSE | Pause all clients |
+| CLIENT UNPAUSE | Resume paused clients |
 
 ### Streams (Session 13) ✅
 
@@ -138,13 +153,15 @@ Quick reference for all implemented Redis commands. For detailed progress, see [
 | XACK | Acknowledge message |
 | XPENDING | Get pending messages |
 
-### Transactions (Session 16) ✅
+### Transactions (Session 16, 22) ✅
 
 | Command | Description |
 |---------|-------------|
 | MULTI | Start transaction (batch commands) |
 | EXEC | Execute transaction |
 | DISCARD | Abort transaction |
+| WATCH | Watch keys for changes (optimistic locking) |
+| UNWATCH | Clear watched keys |
 
 ### Pub/Sub (Session 15) ✅ - Server Mode Only
 
@@ -186,19 +203,54 @@ Quick reference for all implemented Redis commands. For detailed progress, see [
 | HISTORY CLEAR | Clear history for a key (optionally before timestamp) |
 | HISTORY PRUNE | Delete all history before timestamp across all keys |
 
-### List & Key Operations (V2+) ✅
+### RediSearch Full-Text Search (Session 23) ✅
+
+| Command | Description |
+|---------|-------------|
+| FT.CREATE | Create search index with schema (TEXT, NUMERIC, TAG fields) |
+| FT.DROPINDEX | Drop search index (with optional DD to delete docs) |
+| FT._LIST | List all indexes |
+| FT.INFO | Get index metadata |
+| FT.ALTER | Add field to existing index |
+| FT.ALIASADD | Create index alias |
+| FT.ALIASDEL | Delete index alias |
+| FT.ALIASUPDATE | Update alias to point to different index |
+| FT.SYNUPDATE | Add terms to synonym group |
+| FT.SYNDUMP | Get all synonym groups |
+| FT.SUGADD | Add autocomplete suggestion |
+| FT.SUGGET | Get autocomplete suggestions (with FUZZY, WITHSCORES) |
+| FT.SUGDEL | Delete autocomplete suggestion |
+| FT.SUGLEN | Count suggestions in dictionary |
+| FT.SEARCH | Search index with query (NOCONTENT, WITHSCORES, LIMIT, SORTBY, RETURN) |
+
+**Query Syntax:**
+- `word1 word2` - AND (implicit)
+- `word1 | word2` - OR
+- `-word` - NOT
+- `"exact phrase"` - Phrase match
+- `word*` - Prefix search
+- `@field:term` - Field-scoped
+- `@field:[min max]` - Numeric range
+- `@field:{tag1|tag2}` - Tag exact match
+
+### Additional List & Set Operations ✅
+
+| Command | Description |
+|---------|-------------|
+| LINSERT | Insert before/after pivot |
+| LREM | Remove elements by value |
+| SMOVE | Move member between sets |
+| SDIFFSTORE | Store difference |
+| SINTERSTORE | Store intersection |
+| SUNIONSTORE | Store union |
+
+### Planned Commands (Not Yet Implemented)
 
 | Command | Description |
 |---------|-------------|
 | RENAME | Rename key |
 | RENAMENX | Rename if target doesn't exist |
-| LINSERT | Insert before/after pivot |
-| LREM | Remove elements by value |
 | LMOVE | Pop from one list, push to another |
-| SMOVE | Move member between sets |
-| SDIFFSTORE | Store difference |
-| SINTERSTORE | Store intersection |
-| SUNIONSTORE | Store union |
 | ZINTERSTORE | Store sorted set intersection |
 | ZUNIONSTORE | Store sorted set union |
 | HSCAN | Iterate hash fields |
@@ -213,10 +265,9 @@ These Redis features are intentionally omitted:
 
 | Feature | Reason |
 |---------|--------|
-| WATCH/UNWATCH | Use SQLite transactions in library mode. Optimistic locking adds complexity for minimal benefit. May reconsider for V3. |
 | EVAL/EVALSHA | Lua scripting is out of scope |
 | CLUSTER * | Not the use case — Redlite is for embedded/single-node |
-| GEO* | Use PostGIS or specialized geo library |
+| GEO* | Planned for Session 25 (R*Tree spatial indexing) |
 | BITFIELD/BITOP | Niche operations |
 | GETSET | Deprecated in Redis, use `SET key value GET` |
 | RPOPLPUSH | Deprecated in Redis, use LMOVE |
