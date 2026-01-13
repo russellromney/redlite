@@ -615,22 +615,44 @@ impl<C: RedisLikeClient + 'static> BenchmarkRunner<C> {
         Ok(result)
     }
 
-    /// Run concurrent LPUSH benchmark (not yet implemented)
+    /// Run concurrent LPUSH benchmark
     pub async fn bench_lpush_concurrent(
         &self,
-        _mode: ConcurrencyMode,
+        mode: ConcurrencyMode,
     ) -> Result<ConcurrentBenchmarkResult> {
-        // Placeholder - will be implemented in next phase
-        Err(crate::error::BenchError::Configuration("LPUSH concurrent not yet implemented".to_string()))
+        let value = generate_value();
+
+        // Calculate iterations per task
+        let total_iterations = self.config.iterations;
+        let iterations_per_task = (total_iterations + self.config.concurrency - 1) / self.config.concurrency;
+
+        // Create concurrent benchmark executor
+        let executor = ConcurrentBenchmark::new(mode, self.config.concurrency);
+        let result = executor
+            .run_concurrent_lpush(&self.client, self.config.dataset_size, &value, iterations_per_task)
+            .await?;
+
+        Ok(result)
     }
 
-    /// Run concurrent HSET benchmark (not yet implemented)
+    /// Run concurrent HSET benchmark
     pub async fn bench_hset_concurrent(
         &self,
-        _mode: ConcurrencyMode,
+        mode: ConcurrencyMode,
     ) -> Result<ConcurrentBenchmarkResult> {
-        // Placeholder - will be implemented in next phase
-        Err(crate::error::BenchError::Configuration("HSET concurrent not yet implemented".to_string()))
+        let value = generate_value();
+
+        // Calculate iterations per task
+        let total_iterations = self.config.iterations;
+        let iterations_per_task = (total_iterations + self.config.concurrency - 1) / self.config.concurrency;
+
+        // Create concurrent benchmark executor
+        let executor = ConcurrentBenchmark::new(mode, self.config.concurrency);
+        let result = executor
+            .run_concurrent_hset(&self.client, self.config.dataset_size, &value, iterations_per_task)
+            .await?;
+
+        Ok(result)
     }
 
     // ========== REDLITE-SPECIFIC BENCHMARKS ==========

@@ -5,6 +5,7 @@ CREATE TABLE IF NOT EXISTS keys (
     key TEXT NOT NULL,
     type INTEGER NOT NULL,
     expire_at INTEGER,
+    version INTEGER NOT NULL DEFAULT 0,
     created_at INTEGER NOT NULL DEFAULT (unixepoch('now', 'subsec') * 1000),
     updated_at INTEGER NOT NULL DEFAULT (unixepoch('now', 'subsec') * 1000)
 );

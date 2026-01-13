@@ -1,0 +1,469 @@
+# Comprehensive Workload Scenarios for redlite-bench
+# Each scenario specifies setup requirements and operation mix
+#
+# Setup fields:
+#   strings: { count, value_size } - pre-populate string keys
+#   lists: { count, items_per_list } - pre-populate lists with items
+#   hashes: { count, fields_per_hash } - pre-populate hashes with fields
+#   sets: { count, members_per_set } - pre-populate sets with members
+#   sorted_sets: { count, members_per_set } - pre-populate sorted sets
+#   streams: { count, entries_per_stream } - pre-populate streams
+#   counters: { count } - pre-populate counter keys (value "0")
+
+workloads:
+  # ========== CORE SCENARIOS ==========
+
+  - name: "read_heavy"
+    description: "80% read, 20% write - typical caching pattern"
+    setup:
+      strings: { count: 10000, value_size: 100 }
+      hashes: { count: 1000, fields_per_hash: 10 }
+    operations:
+      - type: "GET"
+        weight: 50.0
+      - type: "HGET"
+        weight: 15.0
+      - type: "SET"
+        weight: 25.0
+      - type: "HSET"
+        weight: 10.0
+
+  - name: "write_heavy"
+    description: "20% read, 80% write - logging/analytics pattern"
+    setup:
+      strings: { count: 1000, value_size: 100 }
+    operations:
+      - type: "SET"
+        weight: 40.0
+      - type: "HSET"
+        weight: 20.0
+      - type: "LPUSH"
+        weight: 15.0
+      - type: "SADD"
+        weight: 10.0
+      - type: "XADD"
+        weight: 10.0
+      - type: "GET"
+        weight: 5.0
+
+  - name: "truly_balanced"
+    description: "Equal mix of reads and writes across data types"
+    setup:
+      strings: { count: 5000, value_size: 100 }
+      lists: { count: 500, items_per_list: 100 }
+      hashes: { count: 500, fields_per_hash: 20 }
+      sets: { count: 500, members_per_set: 50 }
+      sorted_sets: { count: 500, members_per_set: 50 }
+      streams: { count: 100, entries_per_stream: 100 }
+    operations:
+      # Strings: read then write
+      - type: "GET"
+        weight: 8.0
+      - type: "SET"
+        weight: 8.0
+      # Lists: write then read (LPUSH adds, LRANGE reads)
+      - type: "LPUSH"
+        weight: 8.0
+      - type: "LRANGE"
+        weight: 8.0
+      # Hashes: write then read
+      - type: "HSET"
+        weight: 8.0
+      - type: "HGET"
+        weight: 8.0
+      # Sets: write then read
+      - type: "SADD"
+        weight: 8.0
+      - type: "SISMEMBER"
+        weight: 8.0
+      # Sorted Sets: write then read
+      - type: "ZADD"
+        weight: 8.0
+      - type: "ZRANGE"
+        weight: 8.0
+      # Streams: write then read length
+      - type: "XADD"
+        weight: 10.0
+      - type: "XLEN"
+        weight: 10.0
+
+  - name: "read_only"
+    description: "100% read - requires pre-populated data"
+    setup:
+      strings: { count: 10000, value_size: 100 }
+      hashes: { count: 1000, fields_per_hash: 20 }
+      lists: { count: 500, items_per_list: 100 }
+      sets: { count: 500, members_per_set: 100 }
+      sorted_sets: { count: 500, members_per_set: 100 }
+      streams: { count: 100, entries_per_stream: 100 }
+    operations:
+      - type: "GET"
+        weight: 30.0
+      - type: "HGET"
+        weight: 20.0
+      - type: "LRANGE"
+        weight: 15.0
+      - type: "SISMEMBER"
+        weight: 15.0
+      - type: "ZRANGE"
+        weight: 10.0
+      - type: "XLEN"
+        weight: 10.0
+
+  - name: "write_only"
+    description: "100% write - pure write workload baseline"
+    operations:
+      - type: "SET"
+        weight: 25.0
+      - type: "HSET"
+        weight: 20.0
+      - type: "LPUSH"
+        weight: 15.0
+      - type: "SADD"
+        weight: 15.0
+      - type: "ZADD"
+        weight: 15.0
+      - type: "XADD"
+        weight: 10.0
+
+  # ========== DATA STRUCTURE SPECIFIC ==========
+
+  - name: "cache_pattern"
+    description: "KV cache - mostly GET/SET on strings, tolerates misses"
+    setup:
+      strings: { count: 10000, value_size: 100 }
+    operations:
+      - type: "GET"
+        weight: 70.0
+      - type: "SET"
+        weight: 25.0
+      - type: "DEL"
+        weight: 5.0
+
+  - name: "session_store"
+    description: "User sessions - hash operations"
+    setup:
+      hashes: { count: 5000, fields_per_hash: 10 }
+    operations:
+      - type: "HGET"
+        weight: 40.0
+      - type: "HSET"
+        weight: 35.0
+      - type: "HGETALL"
+        weight: 15.0
+      - type: "HDEL"
+        weight: 5.0
+      - type: "EXPIRE"
+        weight: 5.0
+
+  - name: "message_queue"
+    description: "Task queue - FIFO list operations with large lists"
+    setup:
+      lists: { count: 100, items_per_list: 10000 }
+    operations:
+      - type: "LPUSH"
+        weight: 45.0
+      - type: "RPOP"
+        weight: 45.0
+      - type: "LLEN"
+        weight: 10.0
+
+  - name: "leaderboard"
+    description: "Ranking system - sorted set operations"
+    setup:
+      sorted_sets: { count: 100, members_per_set: 10000 }
+    operations:
+      - type: "ZADD"
+        weight: 30.0
+      - type: "ZRANGE"
+        weight: 30.0
+      - type: "ZRANK"
+        weight: 25.0
+      - type: "ZSCORE"
+        weight: 15.0
+
+  - name: "event_stream"
+    description: "Event sourcing - stream operations"
+    setup:
+      streams: { count: 100, entries_per_stream: 1000 }
+    operations:
+      - type: "XADD"
+        weight: 50.0
+      - type: "XRANGE"
+        weight: 30.0
+      - type: "XLEN"
+        weight: 20.0
+
+  - name: "social_graph"
+    description: "Social network - set operations for relationships"
+    setup:
+      sets: { count: 1000, members_per_set: 500 }
+    operations:
+      - type: "SADD"
+        weight: 25.0
+      - type: "SREM"
+        weight: 10.0
+      - type: "SISMEMBER"
+        weight: 40.0
+      - type: "SMEMBERS"
+        weight: 15.0
+      - type: "SCARD"
+        weight: 10.0
+
+  - name: "counter_pattern"
+    description: "Counters and rate limiting - INCR operations"
+    setup:
+      counters: { count: 10000 }
+    operations:
+      - type: "INCR"
+        weight: 60.0
+      - type: "GET"
+        weight: 30.0
+      - type: "EXPIRE"
+        weight: 10.0
+
+  # ========== EXTREME/STRESS SCENARIOS ==========
+
+  - name: "hot_keys"
+    description: "Skewed access - 90% GET, 10% SET on limited key space"
+    setup:
+      strings: { count: 100, value_size: 100 }  # Small keyspace = hot keys
+    operations:
+      - type: "GET"
+        weight: 90.0
+      - type: "SET"
+        weight: 10.0
+
+  - name: "write_storm"
+    description: "Burst write load - stress memory and throughput"
+    operations:
+      - type: "SET"
+        weight: 50.0
+      - type: "LPUSH"
+        weight: 30.0
+      - type: "SADD"
+        weight: 20.0
+
+  - name: "read_storm"
+    description: "Burst read load on pre-populated data"
+    setup:
+      strings: { count: 10000, value_size: 100 }
+      lists: { count: 1000, items_per_list: 100 }
+      sets: { count: 1000, members_per_set: 100 }
+    operations:
+      - type: "GET"
+        weight: 50.0
+      - type: "LRANGE"
+        weight: 30.0
+      - type: "SMEMBERS"
+        weight: 20.0
+
+  - name: "mixed_storm"
+    description: "Alternating read/write bursts on strings"
+    setup:
+      strings: { count: 10000, value_size: 100 }
+    operations:
+      - type: "GET"
+        weight: 45.0
+      - type: "SET"
+        weight: 45.0
+      - type: "DEL"
+        weight: 10.0
+
+  - name: "range_operations_heavy"
+    description: "High volume of expensive range scans"
+    setup:
+      lists: { count: 500, items_per_list: 1000 }
+      sorted_sets: { count: 500, members_per_set: 1000 }
+      streams: { count: 100, entries_per_stream: 1000 }
+      sets: { count: 500, members_per_set: 500 }
+      hashes: { count: 500, fields_per_hash: 100 }
+    operations:
+      - type: "LRANGE"
+        weight: 25.0
+      - type: "ZRANGE"
+        weight: 25.0
+      - type: "XRANGE"
+        weight: 25.0
+      - type: "SMEMBERS"
+        weight: 15.0
+      - type: "HGETALL"
+        weight: 10.0
+
+  # ========== SPECIALIZED PATTERNS ==========
+
+  - name: "pub_sub_pattern"
+    description: "Pub/Sub-like pattern using lists"
+    setup:
+      lists: { count: 100, items_per_list: 100 }
+    operations:
+      - type: "LPUSH"
+        weight: 50.0
+      - type: "LRANGE"
+        weight: 30.0
+      - type: "LLEN"
+        weight: 20.0
+
+  - name: "time_series"
+    description: "Time-series data using sorted sets"
+    setup:
+      sorted_sets: { count: 100, members_per_set: 10000 }
+    operations:
+      - type: "ZADD"
+        weight: 40.0
+      - type: "ZRANGEBYSCORE"
+        weight: 30.0
+      - type: "ZCOUNT"
+        weight: 15.0
+      - type: "ZCARD"
+        weight: 15.0
+
+  - name: "object_store"
+    description: "Object storage using hashes"
+    setup:
+      hashes: { count: 5000, fields_per_hash: 20 }
+    operations:
+      - type: "HSET"
+        weight: 25.0
+      - type: "HGET"
+        weight: 30.0
+      - type: "HMGET"
+        weight: 20.0
+      - type: "HGETALL"
+        weight: 15.0
+      - type: "HLEN"
+        weight: 10.0
+
+  - name: "tag_system"
+    description: "Tagging system using sets"
+    setup:
+      sets: { count: 1000, members_per_set: 100 }
+    operations:
+      - type: "SADD"
+        weight: 30.0
+      - type: "SREM"
+        weight: 10.0
+      - type: "SISMEMBER"
+        weight: 35.0
+      - type: "SMEMBERS"
+        weight: 15.0
+      - type: "SCARD"
+        weight: 10.0
+
+  - name: "queue_drain"
+    description: "Drain large lists - tests RPOP on deep lists"
+    setup:
+      lists: { count: 10, items_per_list: 100000 }
+    operations:
+      - type: "RPOP"
+        weight: 90.0
+      - type: "LLEN"
+        weight: 10.0
+
+  - name: "large_hash_access"
+    description: "Access patterns on hashes with many fields"
+    setup:
+      hashes: { count: 100, fields_per_hash: 1000 }
+    operations:
+      - type: "HGET"
+        weight: 40.0
+      - type: "HSET"
+        weight: 30.0
+      - type: "HGETALL"
+        weight: 20.0
+      - type: "HLEN"
+        weight: 10.0
+
+  # ========== REDLITE-SPECIFIC SCENARIOS ==========
+
+  - name: "history_tracking"
+    description: "Redlite history feature - enable tracking and retrieve"
+    setup:
+      strings: { count: 1000, value_size: 100 }
+    operations:
+      - type: "SET"
+        weight: 40.0
+      - type: "GET"
+        weight: 30.0
+      - type: "HISTORY_ENABLE"
+        weight: 15.0
+      - type: "HISTORY_GET"
+        weight: 15.0
+
+  - name: "keyinfo_monitoring"
+    description: "Redlite keyinfo for debugging/monitoring"
+    setup:
+      strings: { count: 5000, value_size: 100 }
+    operations:
+      - type: "SET"
+        weight: 30.0
+      - type: "GET"
+        weight: 40.0
+      - type: "KEYINFO"
+        weight: 30.0
+
+  # ========== SIMPLE BASELINES ==========
+
+  - name: "get_only"
+    description: "Pure GET operations - requires setup"
+    setup:
+      strings: { count: 10000, value_size: 100 }
+    operations:
+      - type: "GET"
+        weight: 100.0
+
+  - name: "set_only"
+    description: "Pure SET operations for baseline"
+    operations:
+      - type: "SET"
+        weight: 100.0
+
+  - name: "lpush_only"
+    description: "Pure LPUSH operations for baseline"
+    operations:
+      - type: "LPUSH"
+        weight: 100.0
+
+  - name: "rpop_only"
+    description: "Pure RPOP operations - requires large pre-populated lists"
+    setup:
+      lists: { count: 100, items_per_list: 100000 }
+    operations:
+      - type: "RPOP"
+        weight: 100.0
+
+  - name: "hset_only"
+    description: "Pure HSET operations for baseline"
+    operations:
+      - type: "HSET"
+        weight: 100.0
+
+  - name: "hget_only"
+    description: "Pure HGET operations - requires setup"
+    setup:
+      hashes: { count: 5000, fields_per_hash: 20 }
+    operations:
+      - type: "HGET"
+        weight: 100.0
+
+  - name: "incr_only"
+    description: "Pure INCR operations - works on non-existent keys too"
+    setup:
+      counters: { count: 10000 }
+    operations:
+      - type: "INCR"
+        weight: 100.0
+
+  - name: "zadd_only"
+    description: "Pure ZADD operations for baseline"
+    operations:
+      - type: "ZADD"
+        weight: 100.0
+
+  - name: "zrange_only"
+    description: "Pure ZRANGE operations - requires setup"
+    setup:
+      sorted_sets: { count: 500, members_per_set: 1000 }
+    operations:
+      - type: "ZRANGE"
+        weight: 100.0

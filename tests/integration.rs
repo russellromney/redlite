@@ -8,6 +8,7 @@
 use std::process::{Child, Command};
 use std::thread;
 use std::time::Duration;
+use redis::Commands;
 
 struct ServerProcess(Child);
 
@@ -58,6 +59,65 @@ fn redis_cli_n(port: u16, db: i32, args: &[&str]) -> String {
         .expect("Failed to run redis-cli");
 
     String::from_utf8_lossy(&output.stdout).trim().to_string()
+}
+
+/// Run multiple redis-cli commands in a single connection using stdin piping
+/// Each command should be a list of arguments (parts)
+fn redis_cli_pipeline(port: u16, commands: &[&[&str]]) -> Vec<String> {
+    use std::io::Write;
+    use std::process::Stdio;
+
+    // Retry with exponential backoff to wait for server to be ready
+    let mut attempts = 0;
+    let max_attempts = 5;
+
+    loop {
+        let mut child = Command::new("redis-cli")
+            .arg("-p")
+            .arg(port.to_string())
+            .stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .spawn();
+
+        match child {
+            Ok(mut process) => {
+                {
+                    let stdin = process.stdin.as_mut().expect("Failed to get stdin");
+                    for cmd in commands {
+                        // Write command as space-separated arguments
+                        let line = cmd.join(" ");
+                        writeln!(stdin, "{}", line).expect("Failed to write to stdin");
+                    }
+                }
+
+                let output = process.wait_with_output().expect("Failed to read redis-cli output");
+                let stdout = String::from_utf8_lossy(&output.stdout);
+
+                // Split output by lines, filtering empty lines
+                let results: Vec<String> = stdout.lines()
+                    .map(|s| s.trim().to_string())
+                    .filter(|s| !s.is_empty() && !s.starts_with("Could not connect"))
+                    .collect();
+
+                // If we got results, return them
+                if !results.is_empty() || attempts >= max_attempts {
+                    return results;
+                }
+
+                // Otherwise retry
+                attempts += 1;
+                thread::sleep(Duration::from_millis(100 * (attempts as u64)));
+            }
+            Err(_) => {
+                attempts += 1;
+                if attempts >= max_attempts {
+                    panic!("Failed to connect after {} attempts", max_attempts);
+                }
+                thread::sleep(Duration::from_millis(100 * (attempts as u64)));
+            }
+        }
+    }
 }
 
 
@@ -2239,5 +2299,148 @@ fn test_exec_without_multi() {
 
     let result = redis_cli(17012, &["EXEC"]);
     assert!(result.to_lowercase().contains("err"));
+}
+
+// WATCH/UNWATCH Integration Tests
+
+#[test]
+fn test_watch_returns_ok() {
+    let _server = start_server(17013);
+
+    // Set a key first and then WATCH it in the same connection
+    let results = redis_cli_pipeline(17013, &[
+        &["SET", "mykey", "value1"],
+        &["WATCH", "mykey"],
+    ]);
+
+    // Second result should be OK
+    assert_eq!(results[1], "OK");
+}
+
+#[test]
+fn test_unwatch_returns_ok() {
+    let _server = start_server(17014);
+
+    // Set, watch, and unwatch a key in the same connection
+    let results = redis_cli_pipeline(17014, &[
+        &["SET", "mykey", "value1"],
+        &["WATCH", "mykey"],
+        &["UNWATCH"],
+    ]);
+
+    // Results should be OK, OK, OK
+    assert_eq!(results[1], "OK");
+    assert_eq!(results[2], "OK");
+}
+
+#[test]
+fn test_watch_exec_succeeds_when_not_modified() {
+    let _server = start_server(17015);
+
+    // Watch, start transaction, queue command, and exec - all in one connection
+    let results = redis_cli_pipeline(17015, &[
+        &["SET", "mykey", "value1"],
+        &["WATCH", "mykey"],
+        &["MULTI"],
+        &["SET", "mykey", "value2"],
+        &["EXEC"],
+    ]);
+
+    let exec_result = &results[4];
+    // EXEC should return array with OK (not nil)
+    assert!(!exec_result.contains("nil"), "EXEC should succeed when watched key not modified, got: {}", exec_result);
+    assert!(exec_result.contains("OK"), "EXEC result should contain OK, got: {}", exec_result);
+
+    // Verify the SET was executed
+    let final_value = redis_cli(17015, &["GET", "mykey"]);
+    assert_eq!(final_value, "value2");
+}
+
+#[test]
+fn test_watch_exec_returns_nil_when_modified() {
+    let _server = start_server(17016);
+    thread::sleep(Duration::from_millis(300)); // Wait for server to be ready
+
+    // Connection 1: Watch the key and start transaction
+    let client1 = redis::Client::open("redis://127.0.0.1:17016").unwrap();
+    let mut conn1 = client1.get_connection().unwrap();
+
+    redis::cmd("SET").arg("mykey").arg("value1").execute(&mut conn1);
+    redis::cmd("WATCH").arg("mykey").execute(&mut conn1);
+    redis::cmd("MULTI").execute(&mut conn1);
+    redis::cmd("SET").arg("mykey").arg("value2").execute(&mut conn1);
+
+    // Connection 2: Modify the watched key while connection 1 is in transaction
+    let client2 = redis::Client::open("redis://127.0.0.1:17016").unwrap();
+    let mut conn2 = client2.get_connection().unwrap();
+    redis::cmd("SET").arg("mykey").arg("modified").execute(&mut conn2);
+
+    // Connection 1: Try to EXEC - should return nil because key was modified
+    let exec_result: Option<Vec<String>> = redis::cmd("EXEC").query(&mut conn1).unwrap();
+    assert_eq!(exec_result, None, "EXEC should return nil when watched key modified");
+
+    // Verify the key was NOT updated by the transaction (but was modified by connection 2)
+    let final_value: String = redis::cmd("GET").arg("mykey").query(&mut conn2).unwrap();
+    assert_eq!(final_value, "modified", "Key should have value from connection 2");
+}
+
+#[test]
+fn test_watch_multiple_keys() {
+    let _server = start_server(17017);
+    thread::sleep(Duration::from_millis(300)); // Wait for server to be ready
+
+    // Connection 1: Set initial values, watch multiple keys, and start transaction
+    let client1 = redis::Client::open("redis://127.0.0.1:17017").unwrap();
+    let mut conn1 = client1.get_connection().unwrap();
+
+    redis::cmd("SET").arg("key1").arg("value1").execute(&mut conn1);
+    redis::cmd("SET").arg("key2").arg("value2").execute(&mut conn1);
+    redis::cmd("SET").arg("key3").arg("value3").execute(&mut conn1);
+    redis::cmd("WATCH").arg("key1").arg("key2").arg("key3").execute(&mut conn1);
+    redis::cmd("MULTI").execute(&mut conn1);
+    redis::cmd("SET").arg("key1").arg("new1").execute(&mut conn1);
+
+    // Connection 2: Modify one of the watched keys from "outside" the transaction
+    let client2 = redis::Client::open("redis://127.0.0.1:17017").unwrap();
+    let mut conn2 = client2.get_connection().unwrap();
+    redis::cmd("SET").arg("key2").arg("modified").execute(&mut conn2);
+
+    // Connection 1: Try to EXEC - should return nil because one watched key was modified
+    let exec_result: Option<Vec<String>> = redis::cmd("EXEC").query(&mut conn1).unwrap();
+    assert_eq!(exec_result, None, "EXEC should return nil when any watched key modified");
+
+    // Verify key1 was NOT updated by transaction, key2 WAS modified by external command
+    let key1_value: String = redis::cmd("GET").arg("key1").query(&mut conn2).unwrap();
+    assert_eq!(key1_value, "value1", "key1 should not be modified by rolled-back transaction");
+
+    let key2_value: String = redis::cmd("GET").arg("key2").query(&mut conn2).unwrap();
+    assert_eq!(key2_value, "modified", "key2 should have the external modification");
+}
+
+#[test]
+fn test_watch_nonexistent_key_created() {
+    let _server = start_server(17018);
+    thread::sleep(Duration::from_millis(300)); // Wait for server to be ready
+
+    // Connection 1: Watch a non-existent key and start transaction
+    let client1 = redis::Client::open("redis://127.0.0.1:17018").unwrap();
+    let mut conn1 = client1.get_connection().unwrap();
+
+    redis::cmd("WATCH").arg("newkey").execute(&mut conn1);
+    redis::cmd("MULTI").execute(&mut conn1);
+    redis::cmd("SET").arg("newkey").arg("myvalue").execute(&mut conn1);
+
+    // Connection 2: Create the watched key from "outside" the transaction
+    let client2 = redis::Client::open("redis://127.0.0.1:17018").unwrap();
+    let mut conn2 = client2.get_connection().unwrap();
+    redis::cmd("SET").arg("newkey").arg("external").execute(&mut conn2);
+
+    // Connection 1: Try to EXEC - should return nil because watched key was created
+    let exec_result: Option<Vec<String>> = redis::cmd("EXEC").query(&mut conn1).unwrap();
+    assert_eq!(exec_result, None, "EXEC should return nil when watched non-existent key is created");
+
+    // Verify the key has the value from the external command
+    let final_value: String = redis::cmd("GET").arg("newkey").query(&mut conn2).unwrap();
+    assert_eq!(final_value, "external", "Key should have value from external creation");
 }
 

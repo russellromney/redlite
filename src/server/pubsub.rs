@@ -27,7 +27,11 @@ pub struct QueuedCommand {
 #[derive(Debug)]
 pub enum ConnectionState {
     /// Normal command processing mode
-    Normal,
+    Normal {
+        /// Keys being watched for WATCH/UNWATCH optimistic locking
+        /// Maps key name to version at time of WATCH
+        watched_keys: HashMap<String, u64>,
+    },
     /// Subscription mode - receiving messages from channels/patterns
     Subscribed {
         /// Exact channel subscriptions
@@ -43,14 +47,23 @@ pub enum ConnectionState {
     Transaction {
         /// Commands queued for execution
         queue: Vec<QueuedCommand>,
+        /// Keys being watched (preserved from Normal state)
+        watched_keys: HashMap<String, u64>,
     },
 }
 
 impl ConnectionState {
+    /// Create a new Normal state with no watched keys
+    pub fn new_normal() -> Self {
+        ConnectionState::Normal {
+            watched_keys: HashMap::new(),
+        }
+    }
+
     /// Get total subscription count (exact channels + patterns)
     pub fn subscription_count(&self) -> usize {
         match self {
-            ConnectionState::Normal => 0,
+            ConnectionState::Normal { .. } => 0,
             ConnectionState::Subscribed { channels, patterns, .. } => {
                 channels.len() + patterns.len()
             }
@@ -66,6 +79,23 @@ impl ConnectionState {
     /// Check if currently in transaction mode
     pub fn is_transaction(&self) -> bool {
         matches!(self, ConnectionState::Transaction { .. })
+    }
+
+    /// Get watched keys (if in Normal or Transaction mode)
+    pub fn watched_keys(&self) -> Option<&HashMap<String, u64>> {
+        match self {
+            ConnectionState::Normal { watched_keys } => Some(watched_keys),
+            ConnectionState::Transaction { watched_keys, .. } => Some(watched_keys),
+            ConnectionState::Subscribed { .. } => None,
+        }
+    }
+
+    /// Get mutable watched keys (only in Normal mode)
+    pub fn watched_keys_mut(&mut self) -> Option<&mut HashMap<String, u64>> {
+        match self {
+            ConnectionState::Normal { watched_keys } => Some(watched_keys),
+            _ => None,
+        }
     }
 }
 
@@ -141,7 +171,7 @@ pub fn cmd_subscribe(
     }
 
     // Initialize or access subscription state
-    if matches!(state, ConnectionState::Normal) {
+    if matches!(state, ConnectionState::Normal { .. }) {
         // Transition to subscribed mode
         *state = ConnectionState::Subscribed {
             channels: HashSet::new(),
@@ -210,7 +240,7 @@ pub fn cmd_subscribe(
 /// Unsubscribe from channels. If no channels specified, unsubscribe from all.
 pub fn cmd_unsubscribe(state: &mut ConnectionState, args: &[Vec<u8>]) -> RespValue {
     match state {
-        ConnectionState::Normal => {
+        ConnectionState::Normal { .. } => {
             // Not in subscription mode
             RespValue::Array(Some(vec![
                 RespValue::from_string("unsubscribe".to_string()),
@@ -265,7 +295,7 @@ pub fn cmd_unsubscribe(state: &mut ConnectionState, args: &[Vec<u8>]) -> RespVal
 
             // Exit subscription mode if no subscriptions remain
             if channels.is_empty() && patterns.is_empty() {
-                *state = ConnectionState::Normal;
+                *state = ConnectionState::new_normal();
             }
 
             if responses.is_empty() {
@@ -310,7 +340,7 @@ pub fn cmd_psubscribe(
     }
 
     // Initialize or access subscription state
-    if matches!(state, ConnectionState::Normal) {
+    if matches!(state, ConnectionState::Normal { .. }) {
         // Transition to subscribed mode
         *state = ConnectionState::Subscribed {
             channels: HashSet::new(),
@@ -379,7 +409,7 @@ pub fn cmd_psubscribe(
 /// Unsubscribe from pattern subscriptions.
 pub fn cmd_punsubscribe(state: &mut ConnectionState, args: &[Vec<u8>]) -> RespValue {
     match state {
-        ConnectionState::Normal => {
+        ConnectionState::Normal { .. } => {
             // Not in subscription mode
             RespValue::Array(Some(vec![
                 RespValue::from_string("punsubscribe".to_string()),
@@ -434,7 +464,7 @@ pub fn cmd_punsubscribe(state: &mut ConnectionState, args: &[Vec<u8>]) -> RespVa
 
             // Exit subscription mode if no subscriptions remain
             if channels.is_empty() && patterns.is_empty() {
-                *state = ConnectionState::Normal;
+                *state = ConnectionState::new_normal();
             }
 
             if responses.is_empty() {
@@ -457,7 +487,7 @@ pub fn cmd_punsubscribe(state: &mut ConnectionState, args: &[Vec<u8>]) -> RespVa
 /// Returns Some(RespValue) if a message is available, None otherwise.
 pub async fn receive_pubsub_message(state: &mut ConnectionState) -> Option<RespValue> {
     match state {
-        ConnectionState::Normal => None,
+        ConnectionState::Normal { .. } => None,
         ConnectionState::Transaction { .. } => None,
         ConnectionState::Subscribed {
             channel_receivers,
@@ -496,6 +526,69 @@ pub async fn receive_pubsub_message(state: &mut ConnectionState) -> Option<RespV
             }
 
             None
+        }
+    }
+}
+
+/// WATCH key [key ...]
+/// Mark keys for modification detection (optimistic locking).
+/// If any watched key is modified before EXEC, the transaction aborts.
+pub fn cmd_watch(
+    state: &mut ConnectionState,
+    args: &[Vec<u8>],
+    get_version: impl Fn(&str) -> u64,
+) -> RespValue {
+    if args.is_empty() {
+        return RespValue::error("wrong number of arguments for 'watch' command");
+    }
+
+    // WATCH not allowed in subscription mode
+    if matches!(state, ConnectionState::Subscribed { .. }) {
+        return RespValue::error("ERR WATCH not allowed in subscription mode");
+    }
+
+    // WATCH not allowed in transaction mode (already handled in server/mod.rs)
+    if matches!(state, ConnectionState::Transaction { .. }) {
+        return RespValue::error("ERR WATCH not allowed in transaction");
+    }
+
+    // Get or initialize watched_keys
+    let watched_keys = match state {
+        ConnectionState::Normal { watched_keys } => watched_keys,
+        _ => return RespValue::error("ERR unexpected state"),
+    };
+
+    // Watch each key
+    for arg in args {
+        let key = match std::str::from_utf8(arg) {
+            Ok(k) => k.to_string(),
+            Err(_) => return RespValue::error("invalid key name"),
+        };
+
+        // Get current version (0 if key doesn't exist)
+        let version = get_version(&key);
+        watched_keys.insert(key, version);
+    }
+
+    RespValue::ok()
+}
+
+/// UNWATCH
+/// Clear all watched keys for this connection.
+pub fn cmd_unwatch(state: &mut ConnectionState) -> RespValue {
+    match state {
+        ConnectionState::Normal { watched_keys } => {
+            watched_keys.clear();
+            RespValue::ok()
+        }
+        ConnectionState::Transaction { watched_keys, .. } => {
+            // Per Redis docs, UNWATCH is not allowed in transaction,
+            // but we handle it gracefully by clearing anyway
+            watched_keys.clear();
+            RespValue::ok()
+        }
+        ConnectionState::Subscribed { .. } => {
+            RespValue::error("ERR UNWATCH not allowed in subscription mode")
         }
     }
 }
@@ -630,7 +723,7 @@ mod tests {
 
     #[test]
     fn test_connection_state_counts() {
-        let state = ConnectionState::Normal;
+        let state = ConnectionState::new_normal();
         assert_eq!(state.subscription_count(), 0);
         assert!(!state.is_subscribed());
 
@@ -658,6 +751,7 @@ mod tests {
     fn test_transaction_state_creation() {
         let state = ConnectionState::Transaction {
             queue: Vec::new(),
+            watched_keys: HashMap::new(),
         };
         assert!(state.is_transaction());
         assert!(!state.is_subscribed());
@@ -666,7 +760,7 @@ mod tests {
 
     #[test]
     fn test_normal_state_not_transaction() {
-        let state = ConnectionState::Normal;
+        let state = ConnectionState::new_normal();
         assert!(!state.is_transaction());
         assert!(!state.is_subscribed());
     }
@@ -699,9 +793,10 @@ mod tests {
     fn test_transaction_queue_operations() {
         let mut state = ConnectionState::Transaction {
             queue: Vec::new(),
+            watched_keys: HashMap::new(),
         };
 
-        if let ConnectionState::Transaction { queue } = &mut state {
+        if let ConnectionState::Transaction { queue, .. } = &mut state {
             queue.push(QueuedCommand {
                 cmd: "SET".to_string(),
                 args: vec![b"k1".to_vec(), b"v1".to_vec()],

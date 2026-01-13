@@ -105,6 +105,24 @@ impl Db {
         let conn = self.core.conn.lock().unwrap_or_else(|e| e.into_inner());
         conn.execute_batch(include_str!("schema.sql"))?;
         conn.execute_batch(include_str!("schema_history.sql"))?;
+
+        // Migration: Add version column to keys table if it doesn't exist
+        // SQLite doesn't support ADD COLUMN IF NOT EXISTS, so we check first
+        let has_version: bool = conn
+            .query_row(
+                "SELECT COUNT(*) FROM pragma_table_info('keys') WHERE name = 'version'",
+                [],
+                |row| row.get::<_, i32>(0).map(|c| c > 0),
+            )
+            .unwrap_or(false);
+
+        if !has_version {
+            conn.execute(
+                "ALTER TABLE keys ADD COLUMN version INTEGER NOT NULL DEFAULT 0",
+                [],
+            )?;
+        }
+
         Ok(())
     }
 
@@ -271,14 +289,15 @@ impl Db {
             return Ok(false);
         }
 
-        // Upsert key
+        // Upsert key (increment version on every write for WATCH/UNWATCH support)
         conn.execute(
-            "INSERT INTO keys (db, key, type, expire_at, updated_at)
-             VALUES (?1, ?2, ?3, ?4, ?5)
+            "INSERT INTO keys (db, key, type, expire_at, updated_at, version)
+             VALUES (?1, ?2, ?3, ?4, ?5, 1)
              ON CONFLICT(db, key) DO UPDATE SET
                  type = excluded.type,
                  expire_at = excluded.expire_at,
-                 updated_at = excluded.updated_at",
+                 updated_at = excluded.updated_at,
+                 version = version + 1",
             params![db, key, KeyType::String as i32, expire_at, now],
         )?;
 
@@ -439,6 +458,27 @@ impl Db {
         }
 
         Ok(count)
+    }
+
+    /// Get the version number of a key for WATCH/UNWATCH optimistic locking.
+    /// Returns 0 if the key doesn't exist (watching a non-existent key).
+    pub fn get_version(&self, key: &str) -> Result<u64> {
+        let conn = self.core.conn.lock().unwrap_or_else(|e| e.into_inner());
+        let db = self.selected_db;
+        let now = Self::now_ms();
+
+        // Get version of the key (return 0 if key doesn't exist or is expired)
+        let version: u64 = conn
+            .query_row(
+                "SELECT version FROM keys
+                 WHERE db = ?1 AND key = ?2
+                 AND (expire_at IS NULL OR expire_at > ?3)",
+                params![db, key, now],
+                |row| row.get::<_, i64>(0).map(|v| v as u64),
+            )
+            .unwrap_or(0);
+
+        Ok(version)
     }
 
     /// EXPIRE key seconds - set TTL on key
@@ -616,12 +656,13 @@ impl Db {
 
         // Upsert key and get key_id in one statement (RETURNING eliminates extra SELECT)
         let key_id: i64 = conn.query_row(
-            "INSERT INTO keys (db, key, type, expire_at, updated_at)
-             VALUES (?1, ?2, ?3, ?4, ?5)
+            "INSERT INTO keys (db, key, type, expire_at, updated_at, version)
+             VALUES (?1, ?2, ?3, ?4, ?5, 1)
              ON CONFLICT(db, key) DO UPDATE SET
                  type = excluded.type,
                  expire_at = excluded.expire_at,
-                 updated_at = excluded.updated_at
+                 updated_at = excluded.updated_at,
+                 version = version + 1
              RETURNING id",
             params![db, key, KeyType::String as i32, preserve_ttl, now],
             |row| row.get(0),
@@ -717,12 +758,13 @@ impl Db {
 
         // Upsert key and get key_id in one statement
         let key_id: i64 = conn.query_row(
-            "INSERT INTO keys (db, key, type, expire_at, updated_at)
-             VALUES (?1, ?2, ?3, ?4, ?5)
+            "INSERT INTO keys (db, key, type, expire_at, updated_at, version)
+             VALUES (?1, ?2, ?3, ?4, ?5, 1)
              ON CONFLICT(db, key) DO UPDATE SET
                  type = excluded.type,
                  expire_at = excluded.expire_at,
-                 updated_at = excluded.updated_at
+                 updated_at = excluded.updated_at,
+                 version = version + 1
              RETURNING id",
             params![db, key, KeyType::String as i32, preserve_ttl, now],
             |row| row.get(0),
@@ -762,12 +804,13 @@ impl Db {
             for (key, value) in pairs {
                 // Upsert key
                 conn.execute(
-                    "INSERT INTO keys (db, key, type, expire_at, updated_at)
-                     VALUES (?1, ?2, ?3, NULL, ?4)
+                    "INSERT INTO keys (db, key, type, expire_at, updated_at, version)
+                     VALUES (?1, ?2, ?3, NULL, ?4, 1)
                      ON CONFLICT(db, key) DO UPDATE SET
                          type = excluded.type,
                          expire_at = excluded.expire_at,
-                         updated_at = excluded.updated_at",
+                         updated_at = excluded.updated_at,
+                         version = version + 1",
                     params![db, key, KeyType::String as i32, now],
                 )?;
 
@@ -852,7 +895,7 @@ impl Db {
 
                 // Update timestamp but preserve expiration
                 conn.execute(
-                    "UPDATE keys SET updated_at = ?1 WHERE id = ?2",
+                    "UPDATE keys SET updated_at = ?1, version = version + 1 WHERE id = ?2",
                     params![now, key_id],
                 )?;
 
@@ -982,7 +1025,7 @@ impl Db {
         let now = Self::now_ms();
 
         conn.execute(
-            "INSERT INTO keys (db, key, type, updated_at) VALUES (?1, ?2, ?3, ?4)",
+            "INSERT INTO keys (db, key, type, updated_at, version) VALUES (?1, ?2, ?3, ?4, 1)",
             params![db, key, KeyType::Hash as i32, now],
         )?;
 
@@ -1050,10 +1093,10 @@ impl Db {
             )?;
         }
 
-        // Update key timestamp
+        // Update key timestamp and version
         let now = Self::now_ms();
         conn.execute(
-            "UPDATE keys SET updated_at = ?1 WHERE id = ?2",
+            "UPDATE keys SET updated_at = ?1, version = version + 1 WHERE id = ?2",
             params![now, key_id],
         )?;
 
@@ -1295,7 +1338,7 @@ impl Db {
         // Update key timestamp
         let now = Self::now_ms();
         conn.execute(
-            "UPDATE keys SET updated_at = ?1 WHERE id = ?2",
+            "UPDATE keys SET updated_at = ?1, version = version + 1 WHERE id = ?2",
             params![now, key_id],
         )?;
 
@@ -1345,7 +1388,7 @@ impl Db {
         // Update key timestamp
         let now = Self::now_ms();
         conn.execute(
-            "UPDATE keys SET updated_at = ?1 WHERE id = ?2",
+            "UPDATE keys SET updated_at = ?1, version = version + 1 WHERE id = ?2",
             params![now, key_id],
         )?;
 
@@ -1379,7 +1422,7 @@ impl Db {
         // Update key timestamp
         let now = Self::now_ms();
         conn.execute(
-            "UPDATE keys SET updated_at = ?1 WHERE id = ?2",
+            "UPDATE keys SET updated_at = ?1, version = version + 1 WHERE id = ?2",
             params![now, key_id],
         )?;
 
@@ -1464,7 +1507,7 @@ impl Db {
         let now = Self::now_ms();
 
         conn.execute(
-            "INSERT INTO keys (db, key, type, updated_at) VALUES (?1, ?2, ?3, ?4)",
+            "INSERT INTO keys (db, key, type, updated_at, version) VALUES (?1, ?2, ?3, ?4, 1)",
             params![db, key, KeyType::List as i32, now],
         )?;
 
@@ -1554,7 +1597,7 @@ impl Db {
         // Update key timestamp
         let now = Self::now_ms();
         conn.execute(
-            "UPDATE keys SET updated_at = ?1 WHERE id = ?2",
+            "UPDATE keys SET updated_at = ?1, version = version + 1 WHERE id = ?2",
             params![now, key_id],
         )?;
 
@@ -1629,7 +1672,7 @@ impl Db {
         // Update key timestamp
         let now = Self::now_ms();
         conn.execute(
-            "UPDATE keys SET updated_at = ?1 WHERE id = ?2",
+            "UPDATE keys SET updated_at = ?1, version = version + 1 WHERE id = ?2",
             params![now, key_id],
         )?;
 
@@ -1699,7 +1742,7 @@ impl Db {
             // Update timestamp
             let now = Self::now_ms();
             conn.execute(
-                "UPDATE keys SET updated_at = ?1 WHERE id = ?2",
+                "UPDATE keys SET updated_at = ?1, version = version + 1 WHERE id = ?2",
                 params![now, key_id],
             )?;
         }
@@ -1755,7 +1798,7 @@ impl Db {
             // Update timestamp
             let now = Self::now_ms();
             conn.execute(
-                "UPDATE keys SET updated_at = ?1 WHERE id = ?2",
+                "UPDATE keys SET updated_at = ?1, version = version + 1 WHERE id = ?2",
                 params![now, key_id],
             )?;
         }
@@ -1937,7 +1980,7 @@ impl Db {
         // Update key timestamp
         let now = Self::now_ms();
         conn.execute(
-            "UPDATE keys SET updated_at = ?1 WHERE id = ?2",
+            "UPDATE keys SET updated_at = ?1, version = version + 1 WHERE id = ?2",
             params![now, key_id],
         )?;
 
@@ -2022,7 +2065,7 @@ impl Db {
             // Update timestamp
             let now = Self::now_ms();
             conn.execute(
-                "UPDATE keys SET updated_at = ?1 WHERE id = ?2",
+                "UPDATE keys SET updated_at = ?1, version = version + 1 WHERE id = ?2",
                 params![now, key_id],
             )?;
         }
@@ -2038,8 +2081,8 @@ impl Db {
         let now = Self::now_ms();
 
         conn.execute(
-            "INSERT INTO keys (db, key, type, created_at, updated_at)
-             VALUES (?1, ?2, ?3, ?4, ?4)",
+            "INSERT INTO keys (db, key, type, created_at, updated_at, version)
+             VALUES (?1, ?2, ?3, ?4, ?4, 1)",
             params![db, key, KeyType::Set as i32, now],
         )?;
 
@@ -2135,7 +2178,7 @@ impl Db {
         // Update timestamp
         let now = Self::now_ms();
         conn.execute(
-            "UPDATE keys SET updated_at = ?1 WHERE id = ?2",
+            "UPDATE keys SET updated_at = ?1, version = version + 1 WHERE id = ?2",
             params![now, key_id],
         )?;
 
@@ -2177,7 +2220,7 @@ impl Db {
             // Update timestamp
             let now = Self::now_ms();
             conn.execute(
-                "UPDATE keys SET updated_at = ?1 WHERE id = ?2",
+                "UPDATE keys SET updated_at = ?1, version = version + 1 WHERE id = ?2",
                 params![now, key_id],
             )?;
         }
@@ -2292,7 +2335,7 @@ impl Db {
             // Update timestamp
             let now = Self::now_ms();
             conn.execute(
-                "UPDATE keys SET updated_at = ?1 WHERE id = ?2",
+                "UPDATE keys SET updated_at = ?1, version = version + 1 WHERE id = ?2",
                 params![now, key_id],
             )?;
         }
@@ -2418,8 +2461,8 @@ impl Db {
         let now = Self::now_ms();
 
         conn.execute(
-            "INSERT INTO keys (db, key, type, created_at, updated_at)
-             VALUES (?1, ?2, ?3, ?4, ?4)",
+            "INSERT INTO keys (db, key, type, created_at, updated_at, version)
+             VALUES (?1, ?2, ?3, ?4, ?4, 1)",
             params![db, key, KeyType::ZSet as i32, now],
         )?;
 
@@ -2528,7 +2571,7 @@ impl Db {
         // Update timestamp
         let now = Self::now_ms();
         conn.execute(
-            "UPDATE keys SET updated_at = ?1 WHERE id = ?2",
+            "UPDATE keys SET updated_at = ?1, version = version + 1 WHERE id = ?2",
             params![now, key_id],
         )?;
 
@@ -2570,7 +2613,7 @@ impl Db {
             // Update timestamp
             let now = Self::now_ms();
             conn.execute(
-                "UPDATE keys SET updated_at = ?1 WHERE id = ?2",
+                "UPDATE keys SET updated_at = ?1, version = version + 1 WHERE id = ?2",
                 params![now, key_id],
             )?;
         }
@@ -2917,7 +2960,7 @@ impl Db {
         // Update timestamp
         let now = Self::now_ms();
         conn.execute(
-            "UPDATE keys SET updated_at = ?1 WHERE id = ?2",
+            "UPDATE keys SET updated_at = ?1, version = version + 1 WHERE id = ?2",
             params![now, key_id],
         )?;
 
@@ -2993,7 +3036,7 @@ impl Db {
             // Update timestamp
             let now = Self::now_ms();
             conn.execute(
-                "UPDATE keys SET updated_at = ?1 WHERE id = ?2",
+                "UPDATE keys SET updated_at = ?1, version = version + 1 WHERE id = ?2",
                 params![now, key_id],
             )?;
         }
@@ -3028,7 +3071,7 @@ impl Db {
             // Update timestamp
             let now = Self::now_ms();
             conn.execute(
-                "UPDATE keys SET updated_at = ?1 WHERE id = ?2",
+                "UPDATE keys SET updated_at = ?1, version = version + 1 WHERE id = ?2",
                 params![now, key_id],
             )?;
         }
@@ -3170,7 +3213,7 @@ impl Db {
         let now = Self::now_ms();
 
         conn.execute(
-            "INSERT INTO keys (db, key, type, updated_at) VALUES (?1, ?2, ?3, ?4)",
+            "INSERT INTO keys (db, key, type, updated_at, version) VALUES (?1, ?2, ?3, ?4, 1)",
             params![db, key, KeyType::Stream as i32, now],
         )?;
 
@@ -3302,7 +3345,7 @@ impl Db {
 
         // Update key timestamp
         conn.execute(
-            "UPDATE keys SET updated_at = ?1 WHERE id = ?2",
+            "UPDATE keys SET updated_at = ?1, version = version + 1 WHERE id = ?2",
             params![now, key_id],
         )?;
 
@@ -3534,7 +3577,7 @@ impl Db {
         // Update key timestamp
         let now = Self::now_ms();
         conn.execute(
-            "UPDATE keys SET updated_at = ?1 WHERE id = ?2",
+            "UPDATE keys SET updated_at = ?1, version = version + 1 WHERE id = ?2",
             params![now, key_id],
         )?;
 
@@ -3566,7 +3609,7 @@ impl Db {
         // Update key timestamp
         let now = Self::now_ms();
         conn.execute(
-            "UPDATE keys SET updated_at = ?1 WHERE id = ?2",
+            "UPDATE keys SET updated_at = ?1, version = version + 1 WHERE id = ?2",
             params![now, key_id],
         )?;
 
@@ -5095,7 +5138,7 @@ impl Db {
 
         // Create new key entry if it doesn't exist
         conn.execute(
-            "INSERT INTO keys (db, key, type, created_at) VALUES (?, ?, ?, ?)",
+            "INSERT INTO keys (db, key, type, created_at, version) VALUES (?, ?, ?, ?, 1)",
             params![db, key, 0, Self::now_ms()],
         )?;
 

@@ -968,13 +968,22 @@ value := db.Get("key")
 - [x] Turso/libSQL backend (feature-gated)
 - [x] Default port changed to 6379 (Redis standard)
 
-#### Session 22.3: WATCH/UNWATCH (Optimistic Locking) 🔜
-- [ ] Per-connection watched keys tracking
-- [ ] WATCH key [key ...] - Mark keys for modification detection
-- [ ] UNWATCH - Clear all watched keys
-- [ ] EXEC returns nil if watched keys were modified
-- [ ] Key version tracking in database
-- [ ] Unit tests + integration tests
+#### Session 22.3: WATCH/UNWATCH (Optimistic Locking) ✅
+- [x] Per-connection watched keys tracking (HashMap<String, u64> in ConnectionState)
+- [x] WATCH key [key ...] - Mark keys for modification detection
+- [x] UNWATCH - Clear all watched keys
+- [x] EXEC returns nil if watched keys were modified
+- [x] Key version tracking in database (version column + increment on write)
+- [x] Unit tests passing
+- [ ] Integration tests for WATCH/UNWATCH (remaining work for next session)
+
+Key implementation details:
+- Schema: Added `version INTEGER NOT NULL DEFAULT 0` to keys table
+- db.rs: Added get_version(key) method, all write ops increment version
+- pubsub.rs: ConnectionState::Normal and Transaction now have watched_keys field
+- server/mod.rs: WATCH/UNWATCH dispatch, cmd_multi preserves watched_keys
+- execute_transaction checks versions before executing, returns null() on mismatch
+- DISCARD keeps watched keys, EXEC always clears them
 
 #### Session 22.4: Additional Redis Commands
 - [ ] CLIENT SETNAME/GETNAME - Connection naming

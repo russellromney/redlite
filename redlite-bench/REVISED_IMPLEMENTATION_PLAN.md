@@ -1,8 +1,45 @@
 # Revised Redlite-Bench Implementation Plan (v0.2.0)
 
-**Status**: 🟢 **PHASE 3 COMPLETE** - CLI integration and async concurrency done
+**Status**: 🟢 **PHASE 4 COMPLETE** - Full concurrent benchmarks + comprehensive scenarios
 **Based on**: Critical analysis of original plan + architectural improvements
 **Target**: Bulletproof, maintainable, realistic timeline
+
+---
+
+## Progress Update (2026-01-13) - Session 3
+
+### Completed This Session
+
+**Phase 4 - Concurrent LPUSH/HSET Benchmarks**: COMPLETE
+- [x] Implemented `run_concurrent_lpush()` in concurrency.rs (sequential + async modes)
+- [x] Implemented `run_concurrent_hset()` in concurrency.rs (sequential + async modes)
+- [x] Updated `bench_lpush_concurrent()` in benchmark/mod.rs to use new implementation
+- [x] Updated `bench_hset_concurrent()` in benchmark/mod.rs to use new implementation
+- [x] All concurrent benchmarks now follow the same architecture pattern:
+  - Clone client for each task
+  - StdRng::from_entropy() for Send-safe RNG
+  - Arc<Mutex> for result aggregation
+  - 'static bound on generic type
+
+**Comprehensive Scenario YAML Files**: COMPLETE
+- [x] Created `scenarios/comprehensive.yaml` with 28 workloads:
+  - 5 core scenarios: read_heavy, write_heavy, truly_balanced, read_only, write_only
+  - 7 data structure specific: cache_pattern, session_store, message_queue, leaderboard, event_stream, social_graph, counter_pattern
+  - 5 stress scenarios: hot_keys, write_storm, read_storm, mixed_storm, range_operations_heavy
+  - 4 specialized patterns: pub_sub_pattern, time_series, object_store, tag_system
+  - 2 Redlite-specific: history_tracking, keyinfo_monitoring
+  - 5 pure baselines: get_only, set_only, lpush_only, hset_only, incr_only
+
+### Files Modified
+- `src/concurrency.rs` - Added LPUSH/HSET concurrent implementations (+200 lines)
+- `src/benchmark/mod.rs` - Updated concurrent methods to use new implementations
+
+### Files Created
+- `scenarios/comprehensive.yaml` - 28 comprehensive workload scenarios
+
+### Build & Test Status
+- cargo build --release: SUCCESS
+- cargo test: 16 tests passed
 
 ---
 
@@ -68,10 +105,10 @@
 ---
 
 ## Next Session Tasks
-1. SQLite results storage (Phase 5) - optional, JSON works for now
-2. Additional concurrent benchmark operations (LPUSH, HSET currently return "not implemented")
-3. Run comprehensive benchmarks against Redis for comparison
-4. Documentation and usage examples
+1. SQLite results storage (Phase 5) - optional, JSON works well as alternative
+2. Run comprehensive benchmarks comparing Redis vs Redlite embedded performance
+3. Documentation and usage examples
+4. Consider adding more concurrent operations (SADD, ZADD, XADD) if needed
 
 ---
 

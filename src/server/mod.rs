@@ -12,6 +12,7 @@ use crate::types::{StreamId, ZMember};
 mod pubsub;
 use pubsub::{
     cmd_publish, cmd_subscribe, cmd_unsubscribe, cmd_psubscribe, cmd_punsubscribe,
+    cmd_watch, cmd_unwatch,
     receive_pubsub_message, ConnectionState, PubSubMessage, QueuedCommand,
 };
 
@@ -69,7 +70,7 @@ async fn handle_connection(
 
     let (reader, mut writer) = socket.into_split();
     let mut reader = RespReader::new(reader);
-    let mut state = ConnectionState::Normal;
+    let mut state = ConnectionState::new_normal();
     // If no password is configured, start authenticated
     let mut authenticated = password.is_none();
 
@@ -179,6 +180,16 @@ async fn execute_normal_command(
                 return queue_command(state, &cmd, cmd_args);
             }
         }
+    }
+
+    // Handle WATCH/UNWATCH commands
+    match cmd.as_str() {
+        "WATCH" => {
+            let db_ref = db;
+            return cmd_watch(state, cmd_args, |key| db_ref.get_version(key).unwrap_or(0));
+        }
+        "UNWATCH" => return cmd_unwatch(state),
+        _ => {}
     }
 
     // Handle pub/sub commands
@@ -3828,10 +3839,12 @@ fn cmd_xclaim(db: &Db, args: &[Vec<u8>]) -> RespValue {
 /// Returns OK and buffering all subsequent commands
 fn cmd_multi(state: &mut ConnectionState) -> RespValue {
     match state {
-        ConnectionState::Normal => {
-            // Transition to transaction mode with empty queue
+        ConnectionState::Normal { watched_keys } => {
+            // Transition to transaction mode with empty queue, preserving watched keys
+            let watched = std::mem::take(watched_keys);
             *state = ConnectionState::Transaction {
                 queue: Vec::new(),
+                watched_keys: watched,
             };
             RespValue::ok()
         }
@@ -3845,18 +3858,19 @@ fn cmd_multi(state: &mut ConnectionState) -> RespValue {
 }
 
 /// DISCARD - Exit transaction mode without executing queued commands
-/// Returns OK and clears the queue
+/// Returns OK and clears the queue but keeps watched keys
 fn cmd_discard(state: &mut ConnectionState) -> RespValue {
     match state {
-        ConnectionState::Normal => {
+        ConnectionState::Normal { .. } => {
             RespValue::error("ERR DISCARD without MULTI")
         }
         ConnectionState::Subscribed { .. } => {
             RespValue::error("ERR DISCARD not allowed in subscription mode")
         }
-        ConnectionState::Transaction { .. } => {
-            // Exit transaction mode
-            *state = ConnectionState::Normal;
+        ConnectionState::Transaction { watched_keys, .. } => {
+            // Exit transaction mode, keeping watched keys
+            let watched = std::mem::take(watched_keys);
+            *state = ConnectionState::Normal { watched_keys: watched };
             RespValue::ok()
         }
     }
@@ -3865,7 +3879,7 @@ fn cmd_discard(state: &mut ConnectionState) -> RespValue {
 /// Queue a command for later execution in a transaction
 /// Returns QUEUED
 fn queue_command(state: &mut ConnectionState, cmd: &str, args: &[Vec<u8>]) -> RespValue {
-    if let ConnectionState::Transaction { queue } = state {
+    if let ConnectionState::Transaction { queue, .. } = state {
         queue.push(QueuedCommand {
             cmd: cmd.to_string(),
             args: args.to_vec(),
@@ -3905,16 +3919,26 @@ async fn execute_transaction_command(
 
 /// Execute all queued commands atomically
 /// Extracts queue from transaction state, executes each command, and returns array of results
+/// If any watched key has changed, returns null and aborts the transaction
 async fn execute_transaction(state: &mut ConnectionState, db: &mut Db) -> RespValue {
-    // Extract and clear the queue
-    let queue = if let ConnectionState::Transaction { queue } = state {
-        std::mem::take(queue)
+    // Extract queue and watched keys from transaction state
+    let (queue, watched_keys) = if let ConnectionState::Transaction { queue, watched_keys } = state {
+        (std::mem::take(queue), std::mem::take(watched_keys))
     } else {
         return RespValue::error("ERR not in transaction");
     };
 
-    // Exit transaction mode
-    *state = ConnectionState::Normal;
+    // Exit transaction mode (always clears watched keys)
+    *state = ConnectionState::new_normal();
+
+    // Check if any watched key has been modified
+    for (key, original_version) in &watched_keys {
+        let current_version = db.get_version(key).unwrap_or(0);
+        if current_version != *original_version {
+            // Key was modified - abort transaction
+            return RespValue::null();
+        }
+    }
 
     // Execute each command and collect results
     let mut results = Vec::new();
@@ -3938,7 +3962,7 @@ mod transaction_tests {
 
     #[test]
     fn test_cmd_multi_from_normal() {
-        let mut state = ConnectionState::Normal;
+        let mut state = ConnectionState::new_normal();
         let result = cmd_multi(&mut state);
         assert!(matches!(result, RespValue::SimpleString(ref s) if s == "OK"));
         assert!(state.is_transaction());
@@ -3948,6 +3972,7 @@ mod transaction_tests {
     fn test_cmd_multi_nested() {
         let mut state = ConnectionState::Transaction {
             queue: Vec::new(),
+            watched_keys: HashMap::new(),
         };
         let result = cmd_multi(&mut state);
         if let RespValue::Error(msg) = result {
@@ -3975,7 +4000,7 @@ mod transaction_tests {
 
     #[test]
     fn test_cmd_discard_without_multi() {
-        let mut state = ConnectionState::Normal;
+        let mut state = ConnectionState::new_normal();
         let result = cmd_discard(&mut state);
         if let RespValue::Error(msg) = &result {
             assert!(msg.contains("DISCARD without MULTI"));
@@ -3991,11 +4016,12 @@ mod transaction_tests {
                 cmd: "SET".to_string(),
                 args: vec![b"key".to_vec(), b"value".to_vec()],
             }],
+            watched_keys: HashMap::new(),
         };
         let result = cmd_discard(&mut state);
         assert!(matches!(result, RespValue::SimpleString(ref s) if s == "OK"));
         assert!(!state.is_transaction());
-        assert!(matches!(state, ConnectionState::Normal));
+        assert!(matches!(state, ConnectionState::Normal { .. }));
     }
 
     #[test]
@@ -4011,9 +4037,10 @@ mod transaction_tests {
                     args: vec![b"counter".to_vec()],
                 },
             ],
+            watched_keys: HashMap::new(),
         };
         assert_eq!(
-            if let ConnectionState::Transaction { queue } = &state {
+            if let ConnectionState::Transaction { queue, .. } = &state {
                 queue.len()
             } else {
                 0
@@ -4021,7 +4048,7 @@ mod transaction_tests {
             2
         );
         cmd_discard(&mut state);
-        assert!(matches!(state, ConnectionState::Normal));
+        assert!(matches!(state, ConnectionState::Normal { .. }));
     }
 
     #[test]
@@ -4044,13 +4071,14 @@ mod transaction_tests {
     fn test_queue_command() {
         let mut state = ConnectionState::Transaction {
             queue: Vec::new(),
+            watched_keys: HashMap::new(),
         };
         let cmd = "SET";
         let args = vec![b"key".to_vec(), b"value".to_vec()];
         let result = queue_command(&mut state, cmd, &args);
         assert!(matches!(result, RespValue::SimpleString(ref s) if s == "QUEUED"));
         assert_eq!(
-            if let ConnectionState::Transaction { queue } = &state {
+            if let ConnectionState::Transaction { queue, .. } = &state {
                 queue.len()
             } else {
                 0
@@ -4063,12 +4091,13 @@ mod transaction_tests {
     fn test_queue_command_multiple() {
         let mut state = ConnectionState::Transaction {
             queue: Vec::new(),
+            watched_keys: HashMap::new(),
         };
         queue_command(&mut state, "SET", &vec![b"k1".to_vec(), b"v1".to_vec()]);
         queue_command(&mut state, "INCR", &vec![b"counter".to_vec()]);
         queue_command(&mut state, "GET", &vec![b"k1".to_vec()]);
         assert_eq!(
-            if let ConnectionState::Transaction { queue } = &state {
+            if let ConnectionState::Transaction { queue, .. } = &state {
                 queue.len()
             } else {
                 0
@@ -4079,7 +4108,7 @@ mod transaction_tests {
 
     #[test]
     fn test_queue_command_not_in_transaction() {
-        let mut state = ConnectionState::Normal;
+        let mut state = ConnectionState::new_normal();
         let result = queue_command(&mut state, "SET", &vec![b"key".to_vec(), b"value".to_vec()]);
         if let RespValue::Error(msg) = &result {
             assert!(msg.contains("not in transaction mode"));
@@ -4095,15 +4124,17 @@ mod transaction_tests {
                 cmd: "SET".to_string(),
                 args: vec![b"key".to_vec(), b"value".to_vec()],
             }],
+            watched_keys: HashMap::new(),
         };
         cmd_discard(&mut state);
-        assert!(matches!(state, ConnectionState::Normal));
+        assert!(matches!(state, ConnectionState::Normal { .. }));
     }
 
     #[test]
     fn test_cmd_discard_with_args_returns_error() {
         let mut state = ConnectionState::Transaction {
             queue: Vec::new(),
+            watched_keys: HashMap::new(),
         };
         let result = cmd_discard(&mut state);
         // cmd_discard doesn't validate args, so this should succeed
@@ -4114,6 +4145,7 @@ mod transaction_tests {
     fn test_watch_rejected_in_transaction() {
         let mut state = ConnectionState::Transaction {
             queue: Vec::new(),
+            watched_keys: HashMap::new(),
         };
         // Simulate the check that's in execute_normal_command
         // In real usage, WATCH would be rejected before reaching transaction code
@@ -4126,6 +4158,7 @@ mod transaction_tests {
     fn test_blpop_rejected_in_transaction() {
         let mut state = ConnectionState::Transaction {
             queue: Vec::new(),
+            watched_keys: HashMap::new(),
         };
         // Blocking commands are rejected at the command routing level
         assert!(state.is_transaction());
@@ -4135,6 +4168,7 @@ mod transaction_tests {
     fn test_subscribe_rejected_in_transaction() {
         let mut state = ConnectionState::Transaction {
             queue: Vec::new(),
+            watched_keys: HashMap::new(),
         };
         // Pub/sub commands are rejected at the command routing level
         assert!(state.is_transaction());
@@ -4144,6 +4178,7 @@ mod transaction_tests {
     fn test_queue_accumulates_commands() {
         let mut state = ConnectionState::Transaction {
             queue: Vec::new(),
+            watched_keys: HashMap::new(),
         };
 
         // Queue several commands
@@ -4154,7 +4189,7 @@ mod transaction_tests {
         }
 
         // Verify all are queued
-        if let ConnectionState::Transaction { queue } = &state {
+        if let ConnectionState::Transaction { queue, .. } = &state {
             assert_eq!(queue.len(), 5);
             for cmd_entry in queue {
                 assert_eq!(cmd_entry.cmd, "SET");
@@ -4168,11 +4203,12 @@ mod transaction_tests {
     fn test_command_with_empty_args() {
         let mut state = ConnectionState::Transaction {
             queue: Vec::new(),
+            watched_keys: HashMap::new(),
         };
         let result = queue_command(&mut state, "INCR", &[]);
         assert!(matches!(result, RespValue::SimpleString(ref s) if s == "QUEUED"));
         assert_eq!(
-            if let ConnectionState::Transaction { queue } = &state {
+            if let ConnectionState::Transaction { queue, .. } = &state {
                 queue.len()
             } else {
                 0
@@ -4185,13 +4221,14 @@ mod transaction_tests {
     fn test_transaction_persists_across_multiple_queues() {
         let mut state = ConnectionState::Transaction {
             queue: Vec::new(),
+            watched_keys: HashMap::new(),
         };
 
         queue_command(&mut state, "SET", &vec![b"key".to_vec()]);
         queue_command(&mut state, "GET", &vec![b"key".to_vec()]);
         queue_command(&mut state, "DEL", &vec![b"key".to_vec()]);
 
-        if let ConnectionState::Transaction { queue } = &state {
+        if let ConnectionState::Transaction { queue, .. } = &state {
             assert_eq!(queue.len(), 3);
             assert_eq!(queue[0].cmd, "SET");
             assert_eq!(queue[1].cmd, "GET");
