@@ -42,14 +42,28 @@ export default defineConfig({
 					label: 'Commands',
 					items: [
 						{ label: 'Overview', slug: 'commands/overview' },
+						{ label: 'Strings', slug: 'commands/strings' },
+						{ label: 'Keys', slug: 'commands/keys' },
+						{ label: 'Hashes', slug: 'commands/hashes' },
+						{ label: 'Lists', slug: 'commands/lists' },
+						{ label: 'Sets', slug: 'commands/sets' },
+						{ label: 'Sorted Sets', slug: 'commands/sorted-sets' },
+						{ label: 'Streams', slug: 'commands/streams' },
+						{ label: 'Custom', slug: 'commands/custom' },
 					],
 				},
 				{
 					label: 'Reference',
 					items: [
 						{ label: 'Configuration', slug: 'reference/configuration' },
-						{ label: 'Schema', slug: 'reference/schema' },
 						{ label: 'History Tracking', slug: 'reference/history' },
+					],
+				},
+				{
+					label: 'Internals',
+					collapsed: true,
+					items: [
+						{ label: 'Schema', slug: 'internals/schema' },
 					],
 				},
 			],

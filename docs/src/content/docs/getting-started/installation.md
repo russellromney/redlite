@@ -30,10 +30,16 @@ The binary will be at `./target/release/redlite`.
 
 ## Pre-built Binaries
 
-Coming soon. For now, build from source.
+Pre-built binaries are available for major platforms via GitHub Releases. Download the latest release for your platform:
+
+- **macOS** (Apple Silicon): `redlite-aarch64-apple-darwin`
+- **macOS** (Intel): `redlite-x86_64-apple-darwin`
+- **Linux** (x86_64): `redlite-x86_64-unknown-linux-gnu`
+
+Or build from source for other platforms.
 
 ## Requirements
 
-- Rust 1.70+ (for building)
-- SQLite is bundled — no system dependencies needed
-- `redis-cli` (optional, for testing server mode)
+- **Rust** (latest stable recommended, for building from source)
+- **SQLite** is bundled — no system dependencies needed
+- **redis-cli** (optional, for testing server mode)

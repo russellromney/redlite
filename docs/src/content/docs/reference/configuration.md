@@ -12,30 +12,53 @@ Redlite is designed for zero-configuration operation. However, there are a few o
 | Argument | Short | Default | Description |
 |----------|-------|---------|-------------|
 | `--db` | `-d` | `redlite.db` | Database file path |
-| `--addr` | `-a` | `127.0.0.1:6767` | Listen address and port |
+| `--addr` | `-a` | `127.0.0.1:6379` | Listen address and port |
+| `--password` | | (none) | Require password for connections (like Redis `requirepass`) |
+| `--storage` | | `file` | Storage type: `file` or `memory` |
+| `--backend` | | `sqlite` | Backend type: `sqlite` or `turso` |
+| `--cache` | | `64` | SQLite page cache size in MB (larger = faster reads) |
 
 ### Database Path
 
 ```bash
 # Persistent file
-./redlite --db=/var/lib/redlite/data.db
+./redlite --db /var/lib/redlite/data.db
 
 # In-memory (no persistence)
-./redlite --db=:memory:
+./redlite --storage memory
 ```
 
 ### Network Binding
 
 ```bash
 # Localhost only (default, secure)
-./redlite --addr=127.0.0.1:6767
+./redlite --addr 127.0.0.1:6379
 
 # All interfaces (for remote access)
-./redlite --addr=0.0.0.0:6767
+./redlite --addr 0.0.0.0:6379
 
 # Custom port
-./redlite --addr=127.0.0.1:6379
+./redlite --addr 127.0.0.1:6380
 ```
+
+### Authentication
+
+```bash
+# Require password for all connections
+./redlite --db mydata.db --password secret
+```
+
+### Performance Tuning
+
+```bash
+# Use 1GB cache for high-performance reads
+./redlite --db mydata.db --cache 1024
+
+# Default: 64MB cache
+./redlite --db mydata.db
+```
+
+The `--cache` flag sets SQLite's page cache size. Larger values keep more data in RAM for faster reads while maintaining full durability.
 
 ## Library Configuration
 
@@ -50,7 +73,15 @@ let db = Db::open("/path/to/data.db")?;
 // In-memory database
 let db = Db::open_memory()?;
 
+// With custom cache size (1GB)
+let db = Db::open_with_cache("/path/to/data.db", 1024)?;
+
+// Or set cache at runtime
+let db = Db::open("/path/to/data.db")?;
+db.set_cache_mb(1024)?;
+
 // Select database (0-15)
+let mut db = Db::open("/path/to/data.db")?;
 db.select(1)?;
 ```
 
@@ -77,13 +108,13 @@ Redlite uses the `tracing` crate for logging. Configure with standard Rust loggi
 
 ```bash
 # Enable info logging
-RUST_LOG=info ./redlite --db=mydata.db
+RUST_LOG=info ./redlite --db mydata.db
 
 # Debug logging
-RUST_LOG=debug ./redlite --db=mydata.db
+RUST_LOG=debug ./redlite --db mydata.db
 
 # Trace logging (very verbose)
-RUST_LOG=trace ./redlite --db=mydata.db
+RUST_LOG=trace ./redlite --db mydata.db
 ```
 
 ## Database Limits

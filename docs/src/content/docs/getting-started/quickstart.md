@@ -41,38 +41,38 @@ Start the server:
 
 ```bash
 # With persistent storage
-./target/release/redlite --db=mydata.db
+./target/release/redlite --db mydata.db
 
-# In-memory mode
-./target/release/redlite --db=:memory:
+# In-memory mode (no persistence)
+./target/release/redlite --storage memory
 
-# Custom port (default is 6767)
-./target/release/redlite --db=mydata.db --addr=127.0.0.1:6379
+# Custom port
+./target/release/redlite --db mydata.db --addr 127.0.0.1:6380
 ```
 
 Connect with `redis-cli`:
 
 ```bash
-$ redis-cli -p 6767
+$ redis-cli
 
-127.0.0.1:6767> PING
+127.0.0.1:6379> PING
 PONG
 
-127.0.0.1:6767> SET greeting "Hello, World!"
+127.0.0.1:6379> SET greeting "Hello, World!"
 OK
 
-127.0.0.1:6767> GET greeting
+127.0.0.1:6379> GET greeting
 "Hello, World!"
 
-127.0.0.1:6767> SET temp "expires soon" PX 5000
+127.0.0.1:6379> SET temp "expires soon" PX 5000
 OK
 
-127.0.0.1:6767> GET temp
+127.0.0.1:6379> GET temp
 "expires soon"
 
 # Wait 5 seconds...
 
-127.0.0.1:6767> GET temp
+127.0.0.1:6379> GET temp
 (nil)
 ```
 
@@ -83,7 +83,7 @@ Redlite is compatible with standard Redis clients. Example with Python:
 ```python
 import redis
 
-r = redis.Redis(host='localhost', port=6767)
+r = redis.Redis(host='localhost', port=6379)
 r.set('foo', 'bar')
 print(r.get('foo'))  # b'bar'
 ```
@@ -93,7 +93,7 @@ Or Node.js:
 ```javascript
 import { createClient } from 'redis';
 
-const client = createClient({ url: 'redis://localhost:6767' });
+const client = createClient({ url: 'redis://localhost:6379' });
 await client.connect();
 
 await client.set('foo', 'bar');

@@ -3,61 +3,80 @@ title: Server Mode
 description: Running Redlite as a standalone Redis-compatible server
 ---
 
-While Redlite is designed as an embedded library, it also includes a standalone server that speaks the Redis protocol. This lets you use any Redis client to connect.
+While Redlite is designed as an embedded library, it also includes a standalone server that speaks the Redis protocol. Any standard Redis client can connect.
 
 ## Starting the Server
 
 ### Basic Usage
 
 ```bash
-# Default: persistent storage, port 6767
-./redlite --db=mydata.db
+# Default: persistent storage, port 6379
+./redlite --db mydata.db
 
-# In-memory mode
-./redlite --db=:memory:
+# In-memory mode (no persistence)
+./redlite --storage memory
+
+# Alternative: SQLite's :memory: syntax also works
+./redlite --db :memory:
 ```
 
 ### Custom Port
 
 ```bash
-# Use Redis default port
-./redlite --db=mydata.db --addr=127.0.0.1:6379
+# Custom port
+./redlite --db mydata.db --addr 127.0.0.1:6380
 
 # Bind to all interfaces
-./redlite --db=mydata.db --addr=0.0.0.0:6767
+./redlite --db mydata.db --addr 0.0.0.0:6379
 ```
 
 ### Command Line Options
 
-| Option | Default | Description |
-|--------|---------|-------------|
-| `--db`, `-d` | `redlite.db` | Database file path (`:memory:` for in-memory) |
-| `--addr`, `-a` | `127.0.0.1:6767` | Listen address and port |
+| Option | Short | Default | Description |
+|--------|-------|---------|-------------|
+| `--db` | `-d` | `redlite.db` | Database file path |
+| `--addr` | `-a` | `127.0.0.1:6379` | Listen address and port |
+| `--password` | | (none) | Require password for connections (like Redis `requirepass`) |
+| `--storage` | | `file` | Storage type: `file` or `memory` |
+| `--backend` | | `sqlite` | Backend type: `sqlite` or `turso` |
+| `--cache` | | `64` | SQLite page cache size in MB (larger = faster reads) |
 
 ## Connecting with redis-cli
 
 ```bash
-$ redis-cli -p 6767
+$ redis-cli
 
-127.0.0.1:6767> PING
+127.0.0.1:6379> PING
 PONG
 
-127.0.0.1:6767> SET name "Redlite"
+127.0.0.1:6379> SET name "Redlite"
 OK
 
-127.0.0.1:6767> GET name
+127.0.0.1:6379> GET name
 "Redlite"
 
-127.0.0.1:6767> SET temp "expires" PX 5000
+127.0.0.1:6379> SET temp "expires" PX 5000
 OK
 
-127.0.0.1:6767> GET temp
+127.0.0.1:6379> GET temp
 "expires"
 
 # Wait 5 seconds...
 
-127.0.0.1:6767> GET temp
+127.0.0.1:6379> GET temp
 (nil)
+```
+
+### With Authentication
+
+```bash
+# Start server with password
+./redlite --db mydata.db --password secret
+
+# Connect with password
+$ redis-cli -a secret
+127.0.0.1:6379> PING
+PONG
 ```
 
 ## Using Redis Client Libraries
@@ -67,7 +86,7 @@ OK
 ```python
 import redis
 
-r = redis.Redis(host='localhost', port=6767)
+r = redis.Redis(host='localhost', port=6379)
 
 # String operations
 r.set('foo', 'bar')
@@ -82,7 +101,7 @@ r.setex('session', 60, 'user_data')  # expires in 60 seconds
 ```javascript
 import { createClient } from 'redis';
 
-const client = createClient({ url: 'redis://localhost:6767' });
+const client = createClient({ url: 'redis://localhost:6379' });
 await client.connect();
 
 // String operations
@@ -105,7 +124,7 @@ import (
 
 func main() {
     rdb := redis.NewClient(&redis.Options{
-        Addr: "localhost:6767",
+        Addr: "localhost:6379",
     })
 
     ctx := context.Background()
@@ -122,7 +141,7 @@ func main() {
 use redis::Commands;
 
 fn main() -> redis::RedisResult<()> {
-    let client = redis::Client::open("redis://127.0.0.1:6767/")?;
+    let client = redis::Client::open("redis://127.0.0.1:6379/")?;
     let mut con = client.get_connection()?;
 
     con.set("foo", "bar")?;
@@ -170,13 +189,13 @@ RUN cargo build --release
 
 FROM debian:bookworm-slim
 COPY --from=builder /app/target/release/redlite /usr/local/bin/
-EXPOSE 6767
-CMD ["redlite", "--db=/data/redlite.db", "--addr=0.0.0.0:6767"]
+EXPOSE 6379
+CMD ["redlite", "--db=/data/redlite.db", "--addr=0.0.0.0:6379"]
 ```
 
 ```bash
 docker build -t redlite .
-docker run -p 6767:6767 -v redlite-data:/data redlite
+docker run -p 6379:6379 -v redlite-data:/data redlite
 ```
 
 ## Custom Commands
@@ -191,8 +210,8 @@ Redlite adds these commands on top of Redis:
 
 When using server mode, be aware of these differences:
 
-1. **Persistence** - Data is always persisted (unless using `:memory:`)
+1. **Persistence** - Persisted to disk by default (or in-memory with `--storage memory`)
 2. **Memory** - Not bounded by RAM; uses disk storage
-3. **Commands** - Only subset of Redis commands supported (see [Commands](/commands/strings))
+3. **Commands** - Only subset of Redis commands supported (see [Commands](/commands/overview))
 4. **Clustering** - No cluster mode; single-node only
 5. **Pub/Sub** - Supported (server mode only)

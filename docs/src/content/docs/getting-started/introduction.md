@@ -15,7 +15,7 @@ Redlite is a **SQLite-backed Redis-compatible key-value store** written in Rust.
 
 ## When to Use Redlite
 
-Redlite is a great choice when you need:
+Use Redlite when you need:
 
 - **Persistent storage** without running a separate Redis server
 - **Embedded key-value store** in a Rust application
@@ -25,7 +25,7 @@ Redlite is a great choice when you need:
 
 ## When NOT to Use Redlite
 
-Redlite may not be the best choice for:
+Redlite is not suitable for:
 
 - **High-throughput, low-latency workloads** where Redis's in-memory model excels
 - **Distributed systems** requiring built-in replication (though this is planned via walsync)
@@ -33,21 +33,25 @@ Redlite may not be the best choice for:
 
 ## Feature Status
 
-**Current Status:** Sessions 1-17 complete (400+ tests passing)
+**Current Status:** Sessions 1-23 complete
 
 | Feature | Status |
 |---------|--------|
 | Strings (GET, SET, INCR, etc.) | ✅ Complete |
 | Key Management (DEL, EXISTS, KEYS, SCAN, TTL) | ✅ Complete |
 | Hashes (HSET, HGET, etc.) | ✅ Complete |
-| Lists (LPUSH, RPOP, etc.) | ✅ Complete |
-| Sets (SADD, SMEMBERS, etc.) | ✅ Complete |
+| Lists (LPUSH, RPOP, LREM, LINSERT, etc.) | ✅ Complete |
+| Sets (SADD, SMEMBERS, SMOVE, etc.) | ✅ Complete |
 | Sorted Sets (ZADD, ZRANGE, etc.) | ✅ Complete |
 | Streams (XADD, XREAD, Consumer Groups) | ✅ Complete |
-| Transactions (MULTI/EXEC/DISCARD) | ✅ Complete |
+| Transactions (MULTI/EXEC/DISCARD/WATCH/UNWATCH) | ✅ Complete |
 | Pub/Sub (Server Mode Only) | ✅ Complete |
 | Blocking Reads (Server Mode Only) | ✅ Complete |
 | History Tracking & Time-Travel | ✅ Complete |
-| Python/Node.js/Go Bindings | 🔜 Sessions 18-20 |
-| Full-Text Search | 🔜 V3+ |
-| Replication (walsync) | 🔜 V3+ |
+| Authentication (AUTH, --password) | ✅ Complete |
+| Client Commands (CLIENT LIST, etc.) | ✅ Complete |
+| Cache Configuration (--cache) | ✅ Complete |
+| Python/Node.js/Go Bindings | 🔜 Sessions 19-21 |
+| Full-Text Search | 🔜 Session 24 |
+| Vector Search | 🔜 Session 24 |
+| Geospatial | 🔜 Session 25 |

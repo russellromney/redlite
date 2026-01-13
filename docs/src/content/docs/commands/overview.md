@@ -20,9 +20,13 @@ See [COMMANDS.md](https://github.com/russellromney/redlite/blob/main/COMMANDS.md
 
 ### Transactions & Scripting
 
-- ✅ **Transactions** - MULTI, EXEC, DISCARD
+- ✅ **Transactions** - MULTI, EXEC, DISCARD, WATCH, UNWATCH
 - ❌ **Lua Scripting** - EVAL, EVALSHA (not supported)
-- ❌ **Watch** - WATCH, UNWATCH (use SQLite transactions in library mode)
+
+### Connection & Authentication
+
+- ✅ **Authentication** - AUTH, password support via `--password` flag
+- ✅ **Client Commands** - CLIENT SETNAME, GETNAME, LIST, ID, INFO, KILL, PAUSE, UNPAUSE
 
 ## Server-Only Features
 
@@ -55,7 +59,7 @@ Redlite adds commands that Redis doesn't have:
 Delete expired keys and run SQLite VACUUM:
 
 ```bash
-127.0.0.1:6767> VACUUM
+127.0.0.1:6379> VACUUM
 OK
 ```
 
@@ -74,7 +78,7 @@ Useful for:
 Get detailed metadata about a key:
 
 ```bash
-127.0.0.1:6767> KEYINFO mykey
+127.0.0.1:6379> KEYINFO mykey
 1) "type"
 2) "string"
 3) "ttl"
@@ -103,15 +107,15 @@ Track and query historical data with time-travel queries:
 
 ```bash
 # Enable history tracking
-127.0.0.1:6767> HISTORY ENABLE KEY mykey RETENTION COUNT 100
+127.0.0.1:6379> HISTORY ENABLE KEY mykey RETENTION COUNT 100
 OK
 
 # Query history
-127.0.0.1:6767> HISTORY GET mykey LIMIT 10
+127.0.0.1:6379> HISTORY GET mykey LIMIT 10
 [... history entries ...]
 
 # Time-travel query
-127.0.0.1:6767> HISTORY GETAT mykey 1704067200000
+127.0.0.1:6379> HISTORY GETAT mykey 1704067200000
 "historical_value"
 ```
 
@@ -130,7 +134,7 @@ Redlite uses **lazy expiration** by default:
 
 ### Persistence
 
-Redlite is **persistent by default**:
+Redlite **persists data by default**:
 - All data written to SQLite database file
 - ACID transactions out of the box
 - No separate `SAVE` or `BGSAVE` commands needed
@@ -139,17 +143,35 @@ Redlite is **persistent by default**:
 
 ### Transactions
 
-Library mode offers **true ACID transactions** via SQLite:
+Server mode provides `MULTI/EXEC` for command batching:
 
-```rust
-db.with_transaction(|tx| {
-    tx.set("key1", b"value1")?;
-    tx.set("key2", b"value2")?;
-    Ok(())
-})?;
+```bash
+127.0.0.1:6379> MULTI
+OK
+127.0.0.1:6379> SET key1 value1
+QUEUED
+127.0.0.1:6379> SET key2 value2
+QUEUED
+127.0.0.1:6379> EXEC
+1) OK
+2) OK
 ```
 
-Server mode `MULTI/EXEC` provides command batching but not full ACID guarantees across commands.
+Use `WATCH` for optimistic locking (check-and-set):
+
+```bash
+127.0.0.1:6379> WATCH mykey
+OK
+127.0.0.1:6379> GET mykey
+"100"
+127.0.0.1:6379> MULTI
+OK
+127.0.0.1:6379> SET mykey 101
+QUEUED
+127.0.0.1:6379> EXEC
+1) OK
+# Returns nil if mykey was modified by another client
+```
 
 ## Redis Documentation
 

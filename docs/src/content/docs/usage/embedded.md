@@ -139,7 +139,7 @@ for handle in handles {
 
 ## SQLite Advantages
 
-Because Redlite uses SQLite under the hood, you get:
+Redlite's SQLite foundation provides:
 
 - **ACID transactions** - Data integrity guaranteed
 - **WAL mode** - Concurrent readers with single writer
