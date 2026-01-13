@@ -509,32 +509,207 @@ operations:
 
 # ============================================================================
 # WORKLOAD SCENARIOS (Mixed operations, realistic patterns)
+# All scenarios use commands available in Redlite (109 total)
 # ============================================================================
 workloads:
 
+  # ============================================================================
+  # CORE SCENARIOS (5): Fundamental workload patterns
+  # ============================================================================
+
   - name: "read_heavy"
-    description: "80% read, 20% write"
+    description: "80% read, 20% write - typical caching workload"
     operations:
-      - { type: "GET", weight: 70 }
-      - { type: "HGET", weight: 10 }
+      - { type: "GET", weight: 50 }
+      - { type: "HGET", weight: 15 }
+      - { type: "LRANGE", weight: 10 }
+      - { type: "SMEMBERS", weight: 5 }
       - { type: "SET", weight: 15 }
       - { type: "HSET", weight: 5 }
 
   - name: "write_heavy"
-    description: "20% read, 80% write"
+    description: "20% read, 80% write - typical logging/analytics"
     operations:
-      - { type: "GET", weight: 15 }
-      - { type: "HGET", weight: 5 }
-      - { type: "SET", weight: 60 }
-      - { type: "HSET", weight: 20 }
-
-  - name: "balanced"
-    description: "50% read, 50% write"
-    operations:
-      - { type: "GET", weight: 40 }
-      - { type: "HGET", weight: 10 }
       - { type: "SET", weight: 40 }
-      - { type: "HSET", weight: 10 }
+      - { type: "HSET", weight: 20 }
+      - { type: "LPUSH", weight: 15 }
+      - { type: "SADD", weight: 10 }
+      - { type: "XADD", weight: 10 }
+      - { type: "GET", weight: 5 }
+
+  - name: "read_only"
+    description: "100% read - pure read workload"
+    operations:
+      - { type: "GET", weight: 30 }
+      - { type: "HGET", weight: 20 }
+      - { type: "LRANGE", weight: 15 }
+      - { type: "SMEMBERS", weight: 15 }
+      - { type: "ZRANGE", weight: 10 }
+      - { type: "XRANGE", weight: 10 }
+
+  - name: "write_only"
+    description: "100% write - pure write workload"
+    operations:
+      - { type: "SET", weight: 25 }
+      - { type: "HSET", weight: 20 }
+      - { type: "LPUSH", weight: 15 }
+      - { type: "SADD", weight: 15 }
+      - { type: "ZADD", weight: 15 }
+      - { type: "XADD", weight: 10 }
+
+  - name: "truly_balanced"
+    description: "Equal mix across ALL 6 data types"
+    operations:
+      # Strings: 17%
+      - { type: "GET", weight: 10 }
+      - { type: "SET", weight: 7 }
+      # Lists: 17%
+      - { type: "LPUSH", weight: 10 }
+      - { type: "LPOP", weight: 7 }
+      # Hashes: 17%
+      - { type: "HGET", weight: 10 }
+      - { type: "HSET", weight: 7 }
+      # Sets: 17%
+      - { type: "SADD", weight: 10 }
+      - { type: "SREM", weight: 7 }
+      # Sorted Sets: 16%
+      - { type: "ZADD", weight: 9 }
+      - { type: "ZRANGE", weight: 7 }
+      # Streams: 16%
+      - { type: "XADD", weight: 9 }
+      - { type: "XREAD", weight: 7 }
+
+  # ============================================================================
+  # DATA STRUCTURE SPECIFIC SCENARIOS (6): Optimize for each type
+  # ============================================================================
+
+  - name: "cache_pattern"
+    description: "KV cache - String-heavy (GET/SET)"
+    operations:
+      - { type: "GET", weight: 70 }
+      - { type: "SET", weight: 20 }
+      - { type: "INCR", weight: 5 }
+      - { type: "DEL", weight: 5 }
+
+  - name: "session_store"
+    description: "User sessions - Hash-heavy"
+    operations:
+      - { type: "HGET", weight: 50 }
+      - { type: "HSET", weight: 30 }
+      - { type: "HGETALL", weight: 10 }
+      - { type: "HDEL", weight: 5 }
+      - { type: "EXPIRE", weight: 5 }
+
+  - name: "message_queue"
+    description: "Task queue - List FIFO operations"
+    operations:
+      - { type: "LPUSH", weight: 45 }
+      - { type: "RPOP", weight: 45 }
+      - { type: "LLEN", weight: 10 }
+
+  - name: "leaderboard"
+    description: "Ranking system - Sorted Set heavy"
+    operations:
+      - { type: "ZADD", weight: 40 }
+      - { type: "ZRANGE", weight: 30 }
+      - { type: "ZRANK", weight: 20 }
+      - { type: "ZSCORE", weight: 10 }
+
+  - name: "event_stream"
+    description: "Event sourcing - Stream operations"
+    operations:
+      - { type: "XADD", weight: 50 }
+      - { type: "XREAD", weight: 30 }
+      - { type: "XRANGE", weight: 15 }
+      - { type: "XLEN", weight: 5 }
+
+  - name: "social_graph"
+    description: "Social network - Set operations"
+    operations:
+      - { type: "SADD", weight: 30 }
+      - { type: "SISMEMBER", weight: 40 }
+      - { type: "SMEMBERS", weight: 20 }
+      - { type: "SINTER", weight: 10 }
+
+  # ============================================================================
+  # STRESS SCENARIOS (5): Extreme/pathological cases
+  # ============================================================================
+
+  - name: "hot_keys"
+    description: "Skewed access - 90% of ops hit 10% of keys (cache hotspot)"
+    operations:
+      - { type: "GET", weight: 90 }
+      - { type: "SET", weight: 10 }
+
+  - name: "write_storm"
+    description: "Burst write load - stress memory and throughput"
+    operations:
+      - { type: "SET", weight: 50 }
+      - { type: "LPUSH", weight: 30 }
+      - { type: "SADD", weight: 20 }
+
+  - name: "read_storm"
+    description: "Burst read load - stress memory and caching"
+    operations:
+      - { type: "GET", weight: 50 }
+      - { type: "LRANGE", weight: 30 }
+      - { type: "SMEMBERS", weight: 20 }
+
+  - name: "mixed_storm"
+    description: "Alternating read/write bursts"
+    operations:
+      - { type: "GET", weight: 45 }
+      - { type: "SET", weight: 45 }
+      - { type: "DEL", weight: 10 }
+
+  - name: "range_operations_heavy"
+    description: "High volume of expensive range scans"
+    operations:
+      - { type: "LRANGE", weight: 25 }
+      - { type: "ZRANGE", weight: 25 }
+      - { type: "XRANGE", weight: 25 }
+      - { type: "SMEMBERS", weight: 15 }
+      - { type: "HGETALL", weight: 10 }
+
+  # ============================================================================
+  # REDLITE-SPECIFIC SCENARIOS (4): Showcase Redlite unique features ⭐
+  # ============================================================================
+
+  - name: "history_tracking"
+    description: "Enable history tracking - measure performance impact"
+    operations:
+      - { type: "SET", weight: 40 }
+      - { type: "GET", weight: 30 }
+      - { type: "HISTORY ENABLE", weight: 10 }
+      - { type: "HISTORY GET", weight: 15 }
+      - { type: "DEL", weight: 5 }
+
+  - name: "time_travel_queries"
+    description: "Time-travel with HISTORY GETAT for audit/compliance"
+    operations:
+      - { type: "SET", weight: 50 }
+      - { type: "HISTORY GETAT", weight: 40 }
+      - { type: "HISTORY STATS", weight: 10 }
+
+  - name: "vacuum_optimization"
+    description: "Heavy expiration with VACUUM storage optimization"
+    operations:
+      - { type: "SET", weight: 40 }
+      - { type: "EXPIRE", weight: 30 }
+      - { type: "VACUUM", weight: 20 }
+      - { type: "DEL", weight: 10 }
+
+  - name: "keyinfo_metadata"
+    description: "Metadata queries with KEYINFO"
+    operations:
+      - { type: "SET", weight: 30 }
+      - { type: "KEYINFO", weight: 40 }
+      - { type: "EXPIRE", weight: 20 }
+      - { type: "TTL", weight: 10 }
+
+  # ============================================================================
+  # LEGACY SCENARIOS (5): Kept for compatibility
+  # ============================================================================
 
   - name: "list_queue"
     description: "List as message queue"
@@ -548,6 +723,31 @@ workloads:
       - { type: "XADD", weight: 60 }
       - { type: "XREAD", weight: 30 }
       - { type: "XLEN", weight: 10 }
+
+  - name: "balanced"
+    description: "50% read, 50% write (simple version)"
+    operations:
+      - { type: "GET", weight: 40 }
+      - { type: "HGET", weight: 10 }
+      - { type: "SET", weight: 40 }
+      - { type: "HSET", weight: 10 }
+
+  - name: "transactions"
+    description: "MULTI/EXEC transaction patterns"
+    operations:
+      - { type: "MULTI", weight: 5 }
+      - { type: "SET", weight: 40 }
+      - { type: "HSET", weight: 30 }
+      - { type: "INCR", weight: 15 }
+      - { type: "EXEC", weight: 5 }
+      - { type: "GET", weight: 5 }
+
+  - name: "pubsub_load"
+    description: "Pub/Sub message patterns (server mode only)"
+    operations:
+      - { type: "PUBLISH", weight: 50 }
+      - { type: "SUBSCRIBE", weight: 30 }
+      - { type: "PSUBSCRIBE", weight: 20 }
 
 # ============================================================================
 # OUTPUT FORMATS
