@@ -151,7 +151,7 @@ redis-cli -a secret SET foo bar
 
 **Server:** `PING`, `ECHO`, `QUIT`, `COMMAND`, `SELECT`, `DBSIZE`, `FLUSHDB`, `INFO`
 
-**Client (server mode):** `CLIENT SETNAME`, `CLIENT GETNAME`, `CLIENT LIST`, `CLIENT ID`
+**Client (server mode):** `CLIENT SETNAME`, `CLIENT GETNAME`, `CLIENT LIST`, `CLIENT ID`, `CLIENT KILL`, `CLIENT PAUSE`, `CLIENT UNPAUSE`, `CLIENT INFO`
 
 ## Performance
 
@@ -173,9 +173,61 @@ cargo build --release
 
 35+ scenarios covering caching, sessions, queues, leaderboards, streams, and more.
 
+### Tuning for Maximum Performance
+
+**Fastest: Pure memory mode** - No disk I/O, maximum throughput:
+```bash
+redlite --storage memory                  # Server mode
+```
+```rust
+let db = Db::open_memory()?;              // Embedded mode
+```
+Data is lost on restart. Use for caching, tests, or ephemeral workloads.
+
+**Recommended for durable workloads: File mode with large cache** - Near-memory reads with SQLite durability:
+
+Redlite uses SQLite's page cache to keep hot data in memory. Larger cache = more reads from RAM = faster.
+
+**CLI (server mode):**
+```bash
+# Use 1GB cache for high-performance reads
+redlite --db mydata.db --cache 1024
+
+# Use 256MB cache (good default)
+redlite --db mydata.db --cache 256
+
+# Default: 64MB cache
+redlite --db mydata.db
+```
+
+**Rust API (embedded mode):**
+```rust
+use redlite::Db;
+
+// Open with specific cache size
+let db = Db::open_with_cache("mydata.db", 1024)?;  // 1GB cache
+
+// Or configure at runtime
+let db = Db::open("mydata.db")?;
+db.set_cache_mb(1024)?;  // Switch to 1GB cache
+
+// Check current cache size
+println!("Cache: {}MB", db.cache_mb()?);
+```
+
+**Rule of thumb:** Set `--cache` to as much RAM as you can spare. If your hot dataset is 500MB, a 1GB cache means near-memory read performance with full SQLite durability.
+
+**Coming soon: Memory mode with periodic snapshots** - Like Redis RDB, this will offer pure memory speed with configurable disk dumps for durability.
+
 ## Recently Completed
 
-**Benchmarking Suite** ✅
+**Cache Configuration (Session 18.8)** ✅
+- `Db::open_with_cache(path, mb)` - Open with specific cache size
+- `db.set_cache_mb(mb)` - Configure cache at runtime
+- `--cache` CLI flag for server mode
+- Near-Redis read performance with SQLite durability
+
+**Benchmarking Suite (Session 18)** ✅
 - Comprehensive YAML-driven benchmark framework (`redlite-bench/`)
 - 35+ workload scenarios (read-heavy, write-heavy, leaderboards, queues, etc.)
 - Redis vs Redlite comparison with latency percentiles and throughput
