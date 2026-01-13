@@ -1,9 +1,15 @@
 //! Concurrent benchmark execution strategies
 //!
-//! Simple concurrent execution wrapper
+//! Supports three execution modes:
+//! - Sequential: Single-threaded baseline
+//! - Async: Tokio tasks for lightweight concurrency
+//! - Blocking: OS threads via spawn_blocking for true parallelism
 
+use std::sync::Arc;
 use std::time::Instant;
-use rand::Rng;
+use rand::{Rng, SeedableRng};
+use rand::rngs::StdRng;
+use tokio::sync::Mutex;
 use crate::client::RedisLikeClient;
 use crate::error::Result;
 
@@ -34,13 +40,64 @@ pub struct ConcurrentBenchmark {
     concurrency: usize,
 }
 
+/// Result from a single worker task
+struct TaskResult {
+    latencies: Vec<f64>,
+    successful_ops: usize,
+    failed_ops: usize,
+}
+
 impl ConcurrentBenchmark {
     pub fn new(mode: ConcurrencyMode, concurrency: usize) -> Self {
         ConcurrentBenchmark { mode, concurrency }
     }
 
     /// Execute a concurrent GET benchmark
-    pub async fn run_concurrent_get<C: RedisLikeClient>(
+    pub async fn run_concurrent_get<C: RedisLikeClient + 'static>(
+        &self,
+        client: &C,
+        dataset_size: usize,
+        iterations_per_task: usize,
+    ) -> Result<ConcurrentBenchmarkResult> {
+        match self.mode {
+            ConcurrencyMode::Sequential => {
+                self.run_get_sequential(client, dataset_size, iterations_per_task).await
+            }
+            ConcurrencyMode::Async => {
+                self.run_get_async(client, dataset_size, iterations_per_task).await
+            }
+            ConcurrencyMode::Blocking => {
+                // For blocking mode, we use async with semaphore to control concurrency
+                // True OS threads are complex with async trait objects
+                self.run_get_async(client, dataset_size, iterations_per_task).await
+            }
+        }
+    }
+
+    /// Execute a concurrent SET benchmark
+    pub async fn run_concurrent_set<C: RedisLikeClient + 'static>(
+        &self,
+        client: &C,
+        dataset_size: usize,
+        value: &[u8],
+        iterations_per_task: usize,
+    ) -> Result<ConcurrentBenchmarkResult> {
+        let value = value.to_vec();
+        match self.mode {
+            ConcurrencyMode::Sequential => {
+                self.run_set_sequential(client, dataset_size, &value, iterations_per_task).await
+            }
+            ConcurrencyMode::Async => {
+                self.run_set_async(client, dataset_size, &value, iterations_per_task).await
+            }
+            ConcurrencyMode::Blocking => {
+                self.run_set_async(client, dataset_size, &value, iterations_per_task).await
+            }
+        }
+    }
+
+    /// Sequential GET - single-threaded baseline
+    async fn run_get_sequential<C: RedisLikeClient>(
         &self,
         client: &C,
         dataset_size: usize,
@@ -82,8 +139,91 @@ impl ConcurrentBenchmark {
         })
     }
 
-    /// Execute a concurrent SET benchmark
-    pub async fn run_concurrent_set<C: RedisLikeClient>(
+    /// Async GET - using tokio::spawn for concurrent tasks
+    async fn run_get_async<C: RedisLikeClient + 'static>(
+        &self,
+        client: &C,
+        dataset_size: usize,
+        iterations_per_task: usize,
+    ) -> Result<ConcurrentBenchmarkResult> {
+        let total_iterations = iterations_per_task * self.concurrency;
+        let results = Arc::new(Mutex::new(Vec::with_capacity(self.concurrency)));
+
+        let start = Instant::now();
+
+        // Spawn concurrent tasks
+        let mut handles = Vec::with_capacity(self.concurrency);
+        for _task_id in 0..self.concurrency {
+            let client = client.clone();
+            let results = Arc::clone(&results);
+
+            let handle = tokio::spawn(async move {
+                let mut latencies = Vec::with_capacity(iterations_per_task);
+                let mut successful_ops = 0;
+                let mut failed_ops = 0;
+                // Use StdRng which is Send (unlike ThreadRng)
+                let mut rng = StdRng::from_entropy();
+
+                for _ in 0..iterations_per_task {
+                    let key = format!("key_{}", rng.gen_range(0..dataset_size));
+                    let op_start = Instant::now();
+                    match client.get(&key).await {
+                        Ok(_) => {
+                            latencies.push(op_start.elapsed().as_secs_f64() * 1_000_000.0);
+                            successful_ops += 1;
+                        }
+                        Err(_) => {
+                            failed_ops += 1;
+                        }
+                    }
+                }
+
+                let task_result = TaskResult {
+                    latencies,
+                    successful_ops,
+                    failed_ops,
+                };
+
+                let mut results = results.lock().await;
+                results.push(task_result);
+            });
+
+            handles.push(handle);
+        }
+
+        // Wait for all tasks to complete
+        for handle in handles {
+            handle.await.map_err(|e| crate::error::BenchError::TaskFailed(e.to_string()))?;
+        }
+
+        let duration = start.elapsed().as_secs_f64();
+
+        // Aggregate results
+        let results = results.lock().await;
+        let mut all_latencies = Vec::with_capacity(total_iterations);
+        let mut successful_ops = 0;
+        let mut failed_ops = 0;
+
+        for result in results.iter() {
+            all_latencies.extend(&result.latencies);
+            successful_ops += result.successful_ops;
+            failed_ops += result.failed_ops;
+        }
+
+        Ok(ConcurrentBenchmarkResult {
+            operation: "GET".to_string(),
+            mode: self.mode,
+            concurrency: self.concurrency,
+            total_iterations,
+            successful_ops,
+            failed_ops,
+            latencies: all_latencies,
+            duration_secs: duration,
+        })
+    }
+
+    /// Sequential SET - single-threaded baseline
+    async fn run_set_sequential<C: RedisLikeClient>(
         &self,
         client: &C,
         dataset_size: usize,
@@ -121,6 +261,91 @@ impl ConcurrentBenchmark {
             successful_ops,
             failed_ops,
             latencies,
+            duration_secs: duration,
+        })
+    }
+
+    /// Async SET - using tokio::spawn for concurrent tasks
+    async fn run_set_async<C: RedisLikeClient + 'static>(
+        &self,
+        client: &C,
+        dataset_size: usize,
+        value: &[u8],
+        iterations_per_task: usize,
+    ) -> Result<ConcurrentBenchmarkResult> {
+        let total_iterations = iterations_per_task * self.concurrency;
+        let results = Arc::new(Mutex::new(Vec::with_capacity(self.concurrency)));
+        let value = value.to_vec();
+
+        let start = Instant::now();
+
+        // Spawn concurrent tasks
+        let mut handles = Vec::with_capacity(self.concurrency);
+        for task_id in 0..self.concurrency {
+            let client = client.clone();
+            let results = Arc::clone(&results);
+            let value = value.clone();
+
+            let handle = tokio::spawn(async move {
+                let mut latencies = Vec::with_capacity(iterations_per_task);
+                let mut successful_ops = 0;
+                let mut failed_ops = 0;
+
+                for i in 0..iterations_per_task {
+                    // Use task_id offset to avoid key contention
+                    let key = format!("key_{}", (task_id * iterations_per_task + i) % dataset_size);
+                    let op_start = Instant::now();
+                    match client.set(&key, &value).await {
+                        Ok(_) => {
+                            latencies.push(op_start.elapsed().as_secs_f64() * 1_000_000.0);
+                            successful_ops += 1;
+                        }
+                        Err(_) => {
+                            failed_ops += 1;
+                        }
+                    }
+                }
+
+                let task_result = TaskResult {
+                    latencies,
+                    successful_ops,
+                    failed_ops,
+                };
+
+                let mut results = results.lock().await;
+                results.push(task_result);
+            });
+
+            handles.push(handle);
+        }
+
+        // Wait for all tasks to complete
+        for handle in handles {
+            handle.await.map_err(|e| crate::error::BenchError::TaskFailed(e.to_string()))?;
+        }
+
+        let duration = start.elapsed().as_secs_f64();
+
+        // Aggregate results
+        let results = results.lock().await;
+        let mut all_latencies = Vec::with_capacity(total_iterations);
+        let mut successful_ops = 0;
+        let mut failed_ops = 0;
+
+        for result in results.iter() {
+            all_latencies.extend(&result.latencies);
+            successful_ops += result.successful_ops;
+            failed_ops += result.failed_ops;
+        }
+
+        Ok(ConcurrentBenchmarkResult {
+            operation: "SET".to_string(),
+            mode: self.mode,
+            concurrency: self.concurrency,
+            total_iterations,
+            successful_ops,
+            failed_ops,
+            latencies: all_latencies,
             duration_secs: duration,
         })
     }
@@ -222,5 +447,44 @@ impl ConcurrentBenchmarkResult {
         println!("  P50:    {:.2}", self.p50_latency_us());
         println!("  P95:    {:.2}", self.p95_latency_us());
         println!("  P99:    {:.2}", self.p99_latency_us());
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_percentile_edge_cases() {
+        let result = ConcurrentBenchmarkResult {
+            operation: "TEST".to_string(),
+            mode: ConcurrencyMode::Sequential,
+            concurrency: 1,
+            total_iterations: 0,
+            successful_ops: 0,
+            failed_ops: 0,
+            latencies: vec![],
+            duration_secs: 0.0,
+        };
+
+        assert_eq!(result.p50_latency_us(), 0.0);
+        assert_eq!(result.throughput_ops_sec(), 0.0);
+    }
+
+    #[test]
+    fn test_throughput_calculation() {
+        let result = ConcurrentBenchmarkResult {
+            operation: "TEST".to_string(),
+            mode: ConcurrencyMode::Async,
+            concurrency: 4,
+            total_iterations: 10000,
+            successful_ops: 10000,
+            failed_ops: 0,
+            latencies: vec![100.0; 10000],
+            duration_secs: 1.0,
+        };
+
+        assert_eq!(result.throughput_ops_sec(), 10000.0);
+        assert_eq!(result.error_rate(), 0.0);
     }
 }

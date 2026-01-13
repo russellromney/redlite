@@ -4,7 +4,6 @@
 //! realistic workload simulation (e.g., "80% read, 20% write caching pattern")
 
 use serde::{Deserialize, Serialize};
-use std::collections::HashMap;
 use crate::error::Result;
 
 /// A single operation in a scenario with its relative weight

@@ -190,7 +190,7 @@ pub struct BenchmarkRunner<C: RedisLikeClient> {
     config: BenchmarkConfig,
 }
 
-impl<C: RedisLikeClient> BenchmarkRunner<C> {
+impl<C: RedisLikeClient + 'static> BenchmarkRunner<C> {
     pub fn new(client: C, config: BenchmarkConfig) -> Self {
         BenchmarkRunner { client, config }
     }

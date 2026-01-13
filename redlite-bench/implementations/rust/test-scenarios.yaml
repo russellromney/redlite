@@ -1,0 +1,28 @@
+workloads:
+  - name: "read_heavy"
+    description: "80% read, 20% write - typical caching pattern"
+    operations:
+      - type: "GET"
+        weight: 70.0
+      - type: "SET"
+        weight: 20.0
+      - type: "INCR"
+        weight: 10.0
+
+  - name: "write_heavy"
+    description: "20% read, 80% write - logging/analytics pattern"
+    operations:
+      - type: "SET"
+        weight: 50.0
+      - type: "LPUSH"
+        weight: 30.0
+      - type: "GET"
+        weight: 20.0
+
+  - name: "balanced"
+    description: "50/50 read/write mix"
+    operations:
+      - type: "GET"
+        weight: 50.0
+      - type: "SET"
+        weight: 50.0
