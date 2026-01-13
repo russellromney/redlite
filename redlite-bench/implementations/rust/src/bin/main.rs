@@ -7,7 +7,7 @@ use redlite_bench::benchmark::{BenchmarkConfig, BenchmarkRunner};
 use redlite_bench::client::{RedisClient, RedliteEmbeddedClient};
 use redlite_bench::concurrency::ConcurrencyMode;
 use redlite_bench::output::{OutputFormat, format_benchmark_result, write_output};
-use redlite_bench::scenarios::{load_scenarios, find_scenario};
+use redlite_bench::scenarios::{load_scenarios, find_scenario, execute_setup};
 
 #[derive(Parser)]
 #[command(name = "redlite-bench")]
@@ -601,7 +601,7 @@ async fn main() -> anyhow::Result<()> {
                         println!("Connecting to Redis at {}...", redis_url);
                     }
                     let client = RedisClient::new(&redis_url)?;
-                    run_scenario_benchmark(&client, &scenario, &normalized, dataset_size, iterations, backend_name).await?
+                    run_scenario_benchmark(&client, &scenario, &normalized, dataset_size, iterations, backend_name, is_json).await?
                 }
                 _ => {
                     let client = if memory || db_path.is_none() {
@@ -616,7 +616,7 @@ async fn main() -> anyhow::Result<()> {
                         }
                         RedliteEmbeddedClient::new_file(&path)?
                     };
-                    run_scenario_benchmark(&client, &scenario, &normalized, dataset_size, iterations, backend_name).await?
+                    run_scenario_benchmark(&client, &scenario, &normalized, dataset_size, iterations, backend_name, is_json).await?
                 }
             };
 
@@ -639,6 +639,7 @@ async fn run_scenario_benchmark<C: redlite_bench::client::RedisLikeClient>(
     dataset_size: usize,
     iterations: usize,
     backend_name: &str,
+    is_json: bool,
 ) -> anyhow::Result<redlite_bench::benchmark::BenchmarkResult> {
     use rand::Rng;
     use std::time::Instant;
@@ -651,10 +652,29 @@ async fn run_scenario_benchmark<C: redlite_bench::client::RedisLikeClient>(
         1,
     );
 
-    // Populate initial data for reads
-    let value = redlite_bench::benchmark::generate_value();
-    for i in 0..dataset_size {
-        client.set(&format!("key_{}", i), &value).await?;
+    // Execute setup if scenario specifies it, otherwise fall back to basic string population
+    if let Some(ref setup) = scenario.setup {
+        if !is_json {
+            println!("Executing scenario setup...");
+        }
+        let stats = execute_setup(client, setup).await?;
+        if !is_json {
+            println!("Setup complete: {} keys in {}ms", stats.total_keys(), stats.total_duration_ms);
+            if stats.strings > 0 { println!("  - {} strings", stats.strings); }
+            if stats.counters > 0 { println!("  - {} counters", stats.counters); }
+            if stats.lists > 0 { println!("  - {} lists", stats.lists); }
+            if stats.hashes > 0 { println!("  - {} hashes", stats.hashes); }
+            if stats.sets > 0 { println!("  - {} sets", stats.sets); }
+            if stats.sorted_sets > 0 { println!("  - {} sorted sets", stats.sorted_sets); }
+            if stats.streams > 0 { println!("  - {} streams", stats.streams); }
+            println!();
+        }
+    } else {
+        // Fall back to basic string population for scenarios without setup
+        let value = redlite_bench::benchmark::generate_value();
+        for i in 0..dataset_size {
+            client.set(&format!("key_{}", i), &value).await?;
+        }
     }
 
     // Run warmup (1000 iterations)
