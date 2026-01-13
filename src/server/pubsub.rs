@@ -81,6 +81,27 @@ impl ConnectionState {
         matches!(self, ConnectionState::Transaction { .. })
     }
 
+    /// Alias for is_transaction (for API consistency)
+    pub fn in_transaction(&self) -> bool {
+        self.is_transaction()
+    }
+
+    /// Get exact channel subscription count
+    pub fn channel_subscription_count(&self) -> usize {
+        match self {
+            ConnectionState::Subscribed { channels, .. } => channels.len(),
+            _ => 0,
+        }
+    }
+
+    /// Get pattern subscription count
+    pub fn pattern_subscription_count(&self) -> usize {
+        match self {
+            ConnectionState::Subscribed { patterns, .. } => patterns.len(),
+            _ => 0,
+        }
+    }
+
     /// Get watched keys (if in Normal or Transaction mode)
     pub fn watched_keys(&self) -> Option<&HashMap<String, u64>> {
         match self {

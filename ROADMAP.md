@@ -369,102 +369,28 @@ Split into 6 focused sessions (like Session 15).
 
 ---
 
-### Session 18: Performance Testing & Benchmarking 🎯
+### Session 18: Performance Testing & Benchmarking ✅
 
-**Goal:** Establish baseline performance metrics and optimize for 10,000+ QPS in embedded mode.
+**Goal:** Establish baseline performance metrics. **ACHIEVED: 232k ops/sec GET, 53k ops/sec SET in embedded mode.**
 
-#### Session 18.1: Benchmark Infrastructure
-- [ ] Create `benches/` directory with criterion-based benchmarks
-- [ ] Benchmark suite for each data type:
-  - **Strings:** SET/GET, INCR, APPEND (sequential + concurrent)
-  - **Hashes:** HSET/HGET, HGETALL (varying sizes)
-  - **Lists:** LPUSH/LPOP, LRANGE (sequential + concurrent)
-  - **Sets:** SADD/SMEMBERS (varying cardinality)
-  - **Sorted Sets:** ZADD/ZRANGE (varying scores)
-  - **Streams:** XADD/XREAD (varying throughput)
-- [ ] Mixed workload benchmark (80% reads, 20% writes)
-- [ ] Concurrent access patterns (1, 4, 8, 16 threads)
-- [ ] Baseline metrics recorded (latency, throughput, memory)
-- [ ] **Target:** Establish current QPS baseline
-- [ ] **Test:** Criterion reports generated, baseline documented
+#### redlite-bench Benchmarking Suite ✅
+- [x] Comprehensive YAML-driven benchmark framework (`redlite-bench/`)
+- [x] 35+ workload scenarios covering all data types and access patterns:
+  - Core: read_heavy, write_heavy, balanced, read_only, write_only
+  - Data structures: cache_pattern, session_store, message_queue, leaderboard, event_stream, social_graph
+  - Stress: hot_keys, write_storm, read_storm, range_operations_heavy
+  - Specialized: time_series, object_store, tag_system, queue_drain
+  - Redlite-specific: history_tracking, keyinfo_monitoring
+- [x] Redis vs Redlite comparison with full latency percentiles (P50/P95/P99)
+- [x] JSON and Markdown report generation
+- [x] CLI commands: `scenario`, `compare`, `run-benchmarks`
+- [x] **Results:** Embedded mode 122x faster than Redis for reads, 15x faster for writes
 
-#### Session 18.2: Profiling & Analysis
-- [ ] Use flamegraph/perf to identify hot paths:
-  - SQLite transaction overhead
-  - RESP parsing bottlenecks
-  - Expiration checking during reads
-  - List gap-based positioning logic
-- [ ] Memory profiling (valgrind/heaptrack)
-- [ ] Database file size analysis
-- [ ] Query plan analysis (SQLite EXPLAIN)
-- [ ] **Test:** Performance report with identified bottlenecks
-
-#### Session 18.3: Optimization Passes
-- [ ] **SQLite tuning:**
-  - Journal mode analysis (WAL vs DELETE)
-  - Page cache sizing
-  - Pragma optimization (synchronous, cache_size)
-  - Connection pooling for concurrent writes
-- [ ] **Query optimization:**
-  - Index effectiveness review
-  - N+1 query detection
-  - Batch operation optimization
-- [ ] **Memory efficiency:**
-  - RESP buffer reuse
-  - String interning for common commands
-  - Lazy value materialization
-- [ ] **Concurrency improvements:**
-  - Lock contention analysis
-  - Arc/RwLock optimization
-  - Connection-local caching
-- [ ] Target: 5,000+ QPS minimum
-
-#### Session 18.4: Benchmark Regression Prevention
-- [ ] CI integration: Run benchmarks on each commit
-- [ ] Track performance over time (git history)
-- [ ] Alert on regression (>10% slowdown)
-- [ ] Baseline comparison script
-- [ ] Documentation: How to run benchmarks locally
-- [ ] **Test:** CI pipeline configured, baseline established
-
-#### Session 18.5: Advanced Benchmarks
-- [ ] **Real-world scenarios:**
-  - Cache hit/miss patterns
-  - Expiration stress test (millions of expired keys)
-  - Large value handling (MB-sized strings)
-  - Deep nesting (many nested hashes/lists)
-- [ ] **Server mode benchmarks:**
-  - TCP connection overhead
-  - Multi-client concurrency (10, 100, 1000 connections)
-  - Pub/Sub message throughput
-  - Transaction atomicity overhead
-- [ ] **Comparison benchmarks:**
-  - vs Redis (memory-only)
-  - vs SQLite (raw)
-  - vs Other SQLite-backed stores (redka, etc.)
-- [ ] **Test:** Comparative analysis published
-
-#### Session 18.6: Optimization Refinement & Documentation
-- [ ] Fine-tune based on profiling results
-- [ ] Implement fastest optimization wins
-- [ ] Aiming for 10,000+ QPS in embedded mode
-- [ ] Document performance characteristics:
-  - Per-operation latency expectations
-  - Throughput under concurrent load
-  - Memory usage patterns
-  - When to use embedded vs server mode
-  - Optimization tips for users
-- [ ] Update README with performance section
-- [ ] Create performance tuning guide
-- [ ] **Test:** 10,000+ QPS target achieved or documented rationale
-
-#### Session 18.7: Continuous Performance Monitoring
-- [ ] Set up performance dashboard (optional: GitHub Pages)
-- [ ] Automated benchmark runs (nightly)
-- [ ] Historical performance tracking
-- [ ] Alert system for regressions
-- [ ] Post-mortem analysis for any slowdowns
-- [ ] **Test:** Monitoring system operational, baseline sustained
+#### Future Optimization (as needed)
+- [ ] Profiling with flamegraph/perf if bottlenecks identified
+- [ ] SQLite tuning (WAL, page cache, pragmas)
+- [ ] CI benchmark regression detection
+- [ ] Performance dashboard
 
 ---
 

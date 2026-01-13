@@ -1,5 +1,8 @@
 use std::collections::HashMap;
+use std::net::SocketAddr;
 use std::sync::{Arc, RwLock};
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::time::Duration;
 use tokio::io::AsyncWriteExt;
 use tokio::net::{TcpListener, TcpStream};
 use tokio::sync::broadcast;
@@ -9,18 +12,63 @@ use crate::error::KvError;
 use crate::resp::{RespReader, RespValue};
 use crate::types::{StreamId, ZMember};
 
+mod connection;
 mod pubsub;
+use connection::{ConnectionInfo, ConnectionPool, ConnectionType};
 use pubsub::{
     cmd_publish, cmd_subscribe, cmd_unsubscribe, cmd_psubscribe, cmd_punsubscribe,
     cmd_watch, cmd_unwatch,
     receive_pubsub_message, ConnectionState, PubSubMessage, QueuedCommand,
 };
 
+/// Global pause state for CLIENT PAUSE
+struct PauseState {
+    paused: AtomicBool,
+    pause_until_ms: std::sync::Mutex<i64>,
+}
+
+impl PauseState {
+    fn new() -> Self {
+        Self {
+            paused: AtomicBool::new(false),
+            pause_until_ms: std::sync::Mutex::new(0),
+        }
+    }
+
+    fn is_paused(&self) -> bool {
+        if !self.paused.load(Ordering::SeqCst) {
+            return false;
+        }
+        let until = *self.pause_until_ms.lock().unwrap();
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_millis() as i64;
+        if now >= until {
+            self.paused.store(false, Ordering::SeqCst);
+            false
+        } else {
+            true
+        }
+    }
+
+    fn pause(&self, ms: i64) {
+        let until = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_millis() as i64 + ms;
+        *self.pause_until_ms.lock().unwrap() = until;
+        self.paused.store(true, Ordering::SeqCst);
+    }
+}
+
 pub struct Server {
     db: Db,
     notifier: Arc<RwLock<HashMap<String, broadcast::Sender<()>>>>,
     pubsub_channels: Arc<RwLock<HashMap<String, broadcast::Sender<PubSubMessage>>>>,
     password: Option<Arc<String>>,
+    connection_pool: ConnectionPool,
+    pause_state: Arc<PauseState>,
 }
 
 impl Server {
@@ -30,6 +78,8 @@ impl Server {
             notifier: Arc::new(RwLock::new(HashMap::new())),
             pubsub_channels: Arc::new(RwLock::new(HashMap::new())),
             password: password.map(Arc::new),
+            connection_pool: ConnectionPool::new(),
+            pause_state: Arc::new(PauseState::new()),
         }
     }
 
@@ -48,9 +98,20 @@ impl Server {
             let notifier = Arc::clone(&self.notifier);
             let pubsub_channels = Arc::clone(&self.pubsub_channels);
             let password = self.password.clone();
+            let pool = self.connection_pool.clone_handle();
+            let pause_state = Arc::clone(&self.pause_state);
 
             tokio::spawn(async move {
-                if let Err(e) = handle_connection(socket, session, notifier, pubsub_channels, password).await {
+                if let Err(e) = handle_connection(
+                    socket,
+                    session,
+                    notifier,
+                    pubsub_channels,
+                    password,
+                    pool,
+                    pause_state,
+                    peer_addr,
+                ).await {
                     tracing::error!("Connection error: {}", e);
                 }
             });
@@ -64,9 +125,30 @@ async fn handle_connection(
     notifier: Arc<RwLock<HashMap<String, broadcast::Sender<()>>>>,
     pubsub_channels: Arc<RwLock<HashMap<String, broadcast::Sender<PubSubMessage>>>>,
     password: Option<Arc<String>>,
+    pool: ConnectionPool,
+    pause_state: Arc<PauseState>,
+    peer_addr: SocketAddr,
 ) -> std::io::Result<()> {
     // Attach notifier to database for server mode
     db.with_notifier(notifier);
+
+    // Register this connection
+    let conn_id = pool.next_id();
+    let conn_info = ConnectionInfo::new(conn_id, peer_addr);
+    let conn_handle = pool.register(conn_info);
+
+    // Use a guard to ensure cleanup on exit
+    struct ConnectionGuard<'a> {
+        pool: &'a ConnectionPool,
+        id: u64,
+    }
+    impl Drop for ConnectionGuard<'_> {
+        fn drop(&mut self) {
+            self.pool.unregister(self.id);
+            tracing::debug!("Connection {} unregistered", self.id);
+        }
+    }
+    let _guard = ConnectionGuard { pool: &pool, id: conn_id };
 
     let (reader, mut writer) = socket.into_split();
     let mut reader = RespReader::new(reader);
@@ -75,12 +157,28 @@ async fn handle_connection(
     let mut authenticated = password.is_none();
 
     loop {
+        // Check for CLIENT PAUSE
+        while pause_state.is_paused() {
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+
         if state.is_subscribed() {
+            // Update connection type to PubSub
+            if let Ok(mut info) = conn_handle.write() {
+                info.connection_type = ConnectionType::PubSub;
+            }
+
             // Subscription mode: handle commands and messages with tokio::select!
             tokio::select! {
                 cmd_result = reader.read_command() => {
                     match cmd_result? {
                         Some(args) => {
+                            // Update connection tracking
+                            if let Ok(mut info) = conn_handle.write() {
+                                info.touch();
+                                info.increment_command_count();
+                            }
+
                             let response = execute_subscription_command(
                                 &mut state,
                                 &args,
@@ -88,6 +186,12 @@ async fn handle_connection(
                             ).await;
                             writer.write_all(&response.encode()).await?;
                             writer.flush().await?;
+
+                            // Update sub counts
+                            if let Ok(mut info) = conn_handle.write() {
+                                info.sub_count = state.subscription_count();
+                                info.psub_count = state.pattern_subscription_count();
+                            }
 
                             // Check for QUIT
                             if !args.is_empty() {
@@ -111,6 +215,12 @@ async fn handle_connection(
             // Normal mode: standard command processing
             match reader.read_command().await? {
                 Some(args) => {
+                    // Update connection tracking
+                    if let Ok(mut info) = conn_handle.write() {
+                        info.touch();
+                        info.increment_command_count();
+                    }
+
                     let response = execute_normal_command(
                         &mut state,
                         &mut db,
@@ -118,9 +228,18 @@ async fn handle_connection(
                         &pubsub_channels,
                         &mut authenticated,
                         &password,
+                        &conn_handle,
+                        &pool,
+                        &pause_state,
                     ).await;
                     writer.write_all(&response.encode()).await?;
                     writer.flush().await?;
+
+                    // Update connection info after command
+                    if let Ok(mut info) = conn_handle.write() {
+                        info.db = db.current_db();
+                        info.multi_count = if state.in_transaction() { 1 } else { -1 };
+                    }
 
                     // Check for QUIT
                     if !args.is_empty() {
@@ -146,6 +265,9 @@ async fn execute_normal_command(
     pubsub_channels: &Arc<RwLock<HashMap<String, broadcast::Sender<PubSubMessage>>>>,
     authenticated: &mut bool,
     password: &Option<Arc<String>>,
+    conn_handle: &Arc<RwLock<ConnectionInfo>>,
+    pool: &ConnectionPool,
+    pause_state: &Arc<PauseState>,
 ) -> RespValue {
     if args.is_empty() {
         return RespValue::error("empty command");
@@ -198,7 +320,7 @@ async fn execute_normal_command(
         "PSUBSCRIBE" => cmd_psubscribe(state, cmd_args, pubsub_channels),
         "PUBLISH" => cmd_publish(cmd_args, pubsub_channels),
         "MULTI" => cmd_multi(state),
-        _ => execute_command(db, args).await,
+        _ => execute_command(db, args, conn_handle, pool, pause_state).await,
     }
 }
 
@@ -241,7 +363,13 @@ async fn execute_subscription_command(
     }
 }
 
-async fn execute_command(db: &mut Db, args: &[Vec<u8>]) -> RespValue {
+async fn execute_command(
+    db: &mut Db,
+    args: &[Vec<u8>],
+    conn_handle: &Arc<RwLock<ConnectionInfo>>,
+    pool: &ConnectionPool,
+    pause_state: &Arc<PauseState>,
+) -> RespValue {
     if args.is_empty() {
         return RespValue::error("empty command");
     }
@@ -256,7 +384,7 @@ async fn execute_command(db: &mut Db, args: &[Vec<u8>]) -> RespValue {
         "COMMAND" => cmd_command(),
         "QUIT" => RespValue::ok(),
         "SELECT" => cmd_select(db, cmd_args),
-        "CLIENT" => cmd_client(cmd_args),
+        "CLIENT" => cmd_client(cmd_args, conn_handle, pool, pause_state),
         "DBSIZE" => cmd_dbsize(db),
         "FLUSHDB" => cmd_flushdb(db),
         "INFO" => cmd_info(db, cmd_args),
@@ -490,7 +618,12 @@ fn cmd_info(db: &Db, args: &[Vec<u8>]) -> RespValue {
     RespValue::BulkString(Some(info.into_bytes()))
 }
 
-fn cmd_client(args: &[Vec<u8>]) -> RespValue {
+fn cmd_client(
+    args: &[Vec<u8>],
+    conn_handle: &Arc<RwLock<ConnectionInfo>>,
+    pool: &ConnectionPool,
+    pause_state: &Arc<PauseState>,
+) -> RespValue {
     if args.is_empty() {
         return RespValue::error("wrong number of arguments for 'client' command");
     }
@@ -505,34 +638,152 @@ fn cmd_client(args: &[Vec<u8>]) -> RespValue {
             if args.len() != 2 {
                 return RespValue::error("wrong number of arguments for 'client|setname' command");
             }
-            // In a full implementation, we would store this per-connection
-            // For now, just return OK to indicate success
+            let name = match std::str::from_utf8(&args[1]) {
+                Ok(s) => s.to_string(),
+                Err(_) => return RespValue::error("ERR Client names cannot contain spaces, newlines or other special characters"),
+            };
+            // Validate name: no spaces or special characters
+            if name.contains(' ') || name.contains('\n') || name.contains('\r') {
+                return RespValue::error("ERR Client names cannot contain spaces, newlines or other special characters");
+            }
+            if let Ok(mut info) = conn_handle.write() {
+                info.name = if name.is_empty() { None } else { Some(name) };
+            }
             RespValue::ok()
         }
         "GETNAME" => {
             if args.len() != 1 {
                 return RespValue::error("wrong number of arguments for 'client|getname' command");
             }
-            // In a full implementation, we would return the per-connection name
-            // For now, return null (no name set)
-            RespValue::null()
+            if let Ok(info) = conn_handle.read() {
+                match &info.name {
+                    Some(name) => RespValue::BulkString(Some(name.as_bytes().to_vec())),
+                    None => RespValue::null(),
+                }
+            } else {
+                RespValue::null()
+            }
         }
         "LIST" => {
-            if !args[1..].is_empty() {
-                // Optional filters not implemented yet
-                return RespValue::error("CLIENT LIST filters not yet supported");
+            // Parse optional filters: TYPE <type> or ID <id> [<id>...]
+            let mut filter_type: Option<ConnectionType> = None;
+            let mut filter_ids: Option<Vec<u64>> = None;
+            let mut i = 1;
+
+            while i < args.len() {
+                let arg = String::from_utf8_lossy(&args[i]).to_uppercase();
+                match arg.as_str() {
+                    "TYPE" => {
+                        if i + 1 >= args.len() {
+                            return RespValue::error("ERR syntax error");
+                        }
+                        let type_str = String::from_utf8_lossy(&args[i + 1]).to_uppercase();
+                        filter_type = match type_str.as_str() {
+                            "NORMAL" => Some(ConnectionType::Normal),
+                            "PUBSUB" => Some(ConnectionType::PubSub),
+                            "MASTER" => Some(ConnectionType::Master),
+                            "REPLICA" | "SLAVE" => Some(ConnectionType::Replica),
+                            _ => return RespValue::error(format!("ERR Unknown client type '{}' in CLIENT LIST TYPE", type_str)),
+                        };
+                        i += 2;
+                    }
+                    "ID" => {
+                        let mut ids = Vec::new();
+                        i += 1;
+                        while i < args.len() {
+                            let id_str = String::from_utf8_lossy(&args[i]);
+                            // Check if this looks like another keyword
+                            if id_str.to_uppercase() == "TYPE" {
+                                break;
+                            }
+                            match id_str.parse::<u64>() {
+                                Ok(id) => ids.push(id),
+                                Err(_) => return RespValue::error("ERR Invalid client ID"),
+                            }
+                            i += 1;
+                        }
+                        if ids.is_empty() {
+                            return RespValue::error("ERR syntax error");
+                        }
+                        filter_ids = Some(ids);
+                    }
+                    _ => return RespValue::error("ERR syntax error"),
+                }
             }
-            // Return a minimal client list format
-            // In a full implementation, we would enumerate active connections
-            let list = "id=1 addr=127.0.0.1:12345 fd=7 name= age=0 idle=0 flags=N db=0 sub=0 psub=0 multi=-1 qbuf=0 qbuf-free=0 argv-mem=0 obl=0 oll=0 omem=0 tot-mem=0 events=r cmd=client\r\n";
-            RespValue::BulkString(Some(list.as_bytes().to_vec()))
+
+            let list = pool.format_list(filter_type, filter_ids.as_deref());
+            // Add trailing newline for Redis compatibility
+            let output = if list.is_empty() { String::new() } else { format!("{}\n", list) };
+            RespValue::BulkString(Some(output.into_bytes()))
         }
         "ID" => {
-            // Return a fixed client ID for now
-            // In a full implementation, each connection would have a unique ID
-            RespValue::Integer(1)
+            if let Ok(info) = conn_handle.read() {
+                RespValue::Integer(info.id as i64)
+            } else {
+                RespValue::Integer(-1)
+            }
         }
-        _ => RespValue::error(format!("Unknown CLIENT subcommand '{}'", subcommand)),
+        "KILL" => {
+            // CLIENT KILL [ID id] [TYPE type] [ADDR addr:port] [SKIPME yes/no]
+            // For now, we implement CLIENT KILL ID <id>
+            if args.len() < 3 {
+                return RespValue::error("ERR syntax error");
+            }
+            let sub = String::from_utf8_lossy(&args[1]).to_uppercase();
+            if sub != "ID" {
+                return RespValue::error("ERR syntax error. Try CLIENT KILL ID <id>");
+            }
+            let id_str = String::from_utf8_lossy(&args[2]);
+            match id_str.parse::<u64>() {
+                Ok(id) => {
+                    // Check if connection exists
+                    if pool.get(id).is_some() {
+                        // Mark it for disconnection (remove from pool)
+                        pool.unregister(id);
+                        RespValue::Integer(1)
+                    } else {
+                        RespValue::error("ERR No such client")
+                    }
+                }
+                Err(_) => RespValue::error("ERR Invalid client ID"),
+            }
+        }
+        "PAUSE" => {
+            if args.len() != 2 {
+                return RespValue::error("wrong number of arguments for 'client|pause' command");
+            }
+            let timeout_str = String::from_utf8_lossy(&args[1]);
+            match timeout_str.parse::<i64>() {
+                Ok(ms) if ms >= 0 => {
+                    pause_state.pause(ms);
+                    RespValue::ok()
+                }
+                Ok(_) => RespValue::error("ERR timeout is negative"),
+                Err(_) => RespValue::error("ERR timeout is not an integer or out of range"),
+            }
+        }
+        "UNPAUSE" => {
+            // Unpause all clients
+            pause_state.paused.store(false, Ordering::SeqCst);
+            RespValue::ok()
+        }
+        "INFO" => {
+            // Return info about current connection
+            if let Ok(info) = conn_handle.read() {
+                RespValue::BulkString(Some(info.format_list_entry().into_bytes()))
+            } else {
+                RespValue::error("ERR unable to get client info")
+            }
+        }
+        "NO-EVICT" => {
+            // Stub for compatibility - we don't support eviction
+            RespValue::ok()
+        }
+        "REPLY" => {
+            // Stub for compatibility - always ON
+            RespValue::ok()
+        }
+        _ => RespValue::error(format!("ERR Unknown subcommand or wrong number of arguments for '{}'", subcommand)),
     }
 }
 
@@ -4158,13 +4409,150 @@ async fn execute_transaction(state: &mut ConnectionState, db: &mut Db) -> RespVa
         let mut full_args = vec![queued_cmd.cmd.as_bytes().to_vec()];
         full_args.extend(queued_cmd.args);
 
-        // Execute the command
-        let result = execute_command(db, &full_args).await;
+        // Execute the command (using transaction-safe version)
+        let result = execute_command_in_transaction(db, &full_args).await;
         results.push(result);
     }
 
     // Return array of results
     RespValue::Array(Some(results))
+}
+
+/// Execute a command within a transaction context
+/// CLIENT commands return stubs since they require per-connection state
+async fn execute_command_in_transaction(db: &mut Db, args: &[Vec<u8>]) -> RespValue {
+    if args.is_empty() {
+        return RespValue::error("empty command");
+    }
+
+    let cmd = String::from_utf8_lossy(&args[0]).to_uppercase();
+    let cmd_args = &args[1..];
+
+    match cmd.as_str() {
+        // CLIENT commands return stubs in transactions
+        "CLIENT" => {
+            if cmd_args.is_empty() {
+                return RespValue::error("wrong number of arguments for 'client' command");
+            }
+            let subcommand = String::from_utf8_lossy(&cmd_args[0]).to_uppercase();
+            match subcommand.as_str() {
+                "SETNAME" => RespValue::ok(),
+                "GETNAME" => RespValue::null(),
+                "ID" => RespValue::Integer(0),
+                "LIST" => RespValue::BulkString(Some(Vec::new())),
+                _ => RespValue::error(format!("ERR Unknown subcommand or wrong number of arguments for '{}'", subcommand)),
+            }
+        }
+        // Server commands
+        "PING" => cmd_ping(cmd_args),
+        "ECHO" => cmd_echo(cmd_args),
+        "COMMAND" => cmd_command(),
+        "QUIT" => RespValue::ok(),
+        "SELECT" => cmd_select(db, cmd_args),
+        "DBSIZE" => cmd_dbsize(db),
+        "FLUSHDB" => cmd_flushdb(db),
+        "INFO" => cmd_info(db, cmd_args),
+        // String commands
+        "GET" => cmd_get(db, cmd_args),
+        "SET" => cmd_set(db, cmd_args),
+        "DEL" => cmd_del(db, cmd_args),
+        "TYPE" => cmd_type(db, cmd_args),
+        "TTL" => cmd_ttl(db, cmd_args),
+        "PTTL" => cmd_pttl(db, cmd_args),
+        "EXISTS" => cmd_exists(db, cmd_args),
+        "EXPIRE" => cmd_expire(db, cmd_args),
+        "KEYS" => cmd_keys(db, cmd_args),
+        "SCAN" => cmd_scan(db, cmd_args),
+        // String operations
+        "INCR" => cmd_incr(db, cmd_args),
+        "DECR" => cmd_decr(db, cmd_args),
+        "INCRBY" => cmd_incrby(db, cmd_args),
+        "DECRBY" => cmd_decrby(db, cmd_args),
+        "INCRBYFLOAT" => cmd_incrbyfloat(db, cmd_args),
+        "MGET" => cmd_mget(db, cmd_args),
+        "MSET" => cmd_mset(db, cmd_args),
+        "APPEND" => cmd_append(db, cmd_args),
+        "STRLEN" => cmd_strlen(db, cmd_args),
+        "GETRANGE" => cmd_getrange(db, cmd_args),
+        "SETRANGE" => cmd_setrange(db, cmd_args),
+        // Hash operations
+        "HSET" => cmd_hset(db, cmd_args),
+        "HGET" => cmd_hget(db, cmd_args),
+        "HMGET" => cmd_hmget(db, cmd_args),
+        "HGETALL" => cmd_hgetall(db, cmd_args),
+        "HDEL" => cmd_hdel(db, cmd_args),
+        "HEXISTS" => cmd_hexists(db, cmd_args),
+        "HKEYS" => cmd_hkeys(db, cmd_args),
+        "HVALS" => cmd_hvals(db, cmd_args),
+        "HLEN" => cmd_hlen(db, cmd_args),
+        "HINCRBY" => cmd_hincrby(db, cmd_args),
+        "HINCRBYFLOAT" => cmd_hincrbyfloat(db, cmd_args),
+        "HSETNX" => cmd_hsetnx(db, cmd_args),
+        // List operations
+        "LPUSH" => cmd_lpush(db, cmd_args),
+        "RPUSH" => cmd_rpush(db, cmd_args),
+        "LPOP" => cmd_lpop(db, cmd_args),
+        "RPOP" => cmd_rpop(db, cmd_args),
+        "LLEN" => cmd_llen(db, cmd_args),
+        "LRANGE" => cmd_lrange(db, cmd_args),
+        "LINDEX" => cmd_lindex(db, cmd_args),
+        "LSET" => cmd_lset(db, cmd_args),
+        "LTRIM" => cmd_ltrim(db, cmd_args),
+        "LREM" => cmd_lrem(db, cmd_args),
+        "LINSERT" => cmd_linsert(db, cmd_args),
+        // Set operations
+        "SADD" => cmd_sadd(db, cmd_args),
+        "SREM" => cmd_srem(db, cmd_args),
+        "SMEMBERS" => cmd_smembers(db, cmd_args),
+        "SISMEMBER" => cmd_sismember(db, cmd_args),
+        "SCARD" => cmd_scard(db, cmd_args),
+        "SPOP" => cmd_spop(db, cmd_args),
+        "SRANDMEMBER" => cmd_srandmember(db, cmd_args),
+        "SDIFF" => cmd_sdiff(db, cmd_args),
+        "SINTER" => cmd_sinter(db, cmd_args),
+        "SUNION" => cmd_sunion(db, cmd_args),
+        "SMOVE" => cmd_smove(db, cmd_args),
+        "SDIFFSTORE" => cmd_sdiffstore(db, cmd_args),
+        "SINTERSTORE" => cmd_sinterstore(db, cmd_args),
+        "SUNIONSTORE" => cmd_sunionstore(db, cmd_args),
+        // Sorted set operations
+        "ZADD" => cmd_zadd(db, cmd_args),
+        "ZREM" => cmd_zrem(db, cmd_args),
+        "ZSCORE" => cmd_zscore(db, cmd_args),
+        "ZRANK" => cmd_zrank(db, cmd_args),
+        "ZREVRANK" => cmd_zrevrank(db, cmd_args),
+        "ZCARD" => cmd_zcard(db, cmd_args),
+        "ZRANGE" => cmd_zrange(db, cmd_args),
+        "ZREVRANGE" => cmd_zrevrange(db, cmd_args),
+        "ZRANGEBYSCORE" => cmd_zrangebyscore(db, cmd_args),
+        "ZCOUNT" => cmd_zcount(db, cmd_args),
+        "ZINCRBY" => cmd_zincrby(db, cmd_args),
+        "ZREMRANGEBYRANK" => cmd_zremrangebyrank(db, cmd_args),
+        "ZREMRANGEBYSCORE" => cmd_zremrangebyscore(db, cmd_args),
+        // Custom commands
+        "VACUUM" => cmd_vacuum(db),
+        "AUTOVACUUM" => cmd_autovacuum(db, cmd_args),
+        "KEYINFO" => cmd_keyinfo(db, cmd_args),
+        "HISTORY" => cmd_history(db, cmd_args),
+        // Stream commands
+        "XADD" => cmd_xadd(db, cmd_args),
+        "XLEN" => cmd_xlen(db, cmd_args),
+        "XRANGE" => cmd_xrange(db, cmd_args),
+        "XREVRANGE" => cmd_xrevrange(db, cmd_args),
+        "XREAD" => cmd_xread(db, cmd_args).await,
+        "XTRIM" => cmd_xtrim(db, cmd_args),
+        "XDEL" => cmd_xdel(db, cmd_args),
+        "XINFO" => cmd_xinfo(db, cmd_args),
+        // Stream consumer group commands
+        "XGROUP" => cmd_xgroup(db, cmd_args),
+        "XREADGROUP" => cmd_xreadgroup(db, cmd_args).await,
+        "XACK" => cmd_xack(db, cmd_args),
+        "XPENDING" => cmd_xpending(db, cmd_args),
+        "XCLAIM" => cmd_xclaim(db, cmd_args),
+        // Blocking commands not allowed in transactions (checked earlier), but handle anyway
+        "BLPOP" | "BRPOP" => RespValue::error("ERR blocking commands not allowed in transaction"),
+        _ => RespValue::error(format!("unknown command '{}'", cmd)),
+    }
 }
 
 #[cfg(test)]

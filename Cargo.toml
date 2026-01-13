@@ -46,26 +46,15 @@ brunch = "0.5"
 lto = true
 codegen-units = 1
 
-[[bench]]
-name = "redlite_benchmarks"
-harness = false
+# Benchmarks disabled - enable after creating bench files
+# [[bench]]
+# name = "redlite_benchmarks"
+# harness = false
 
-[[bench]]
-name = "brunch_scaling"
-harness = false
+# [[bench]]
+# name = "test_server_connection"
+# harness = false
 
-[[bench]]
-name = "comprehensive_comparison"
-harness = false
-
-[[bench]]
-name = "test_concurrent"
-harness = false
-
-[[bench]]
-name = "test_server_connection"
-harness = false
-
-[[bench]]
-name = "test_step_by_step"
-harness = false
+# [[bench]]
+# name = "test_step_by_step"
+# harness = false

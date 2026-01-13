@@ -2652,16 +2652,16 @@ fn test_client_setname() {
 }
 
 #[test]
-fn test_client_getname() {
+fn test_client_getname_persistent() {
     let _server = start_server(16462);
 
-    // Set name first
-    redis_cli(16462, &["CLIENT", "SETNAME", "testclient"]);
-
-    // Get name - currently returns nil due to per-connection storage limitation
-    let result = redis_cli(16462, &["CLIENT", "GETNAME"]);
-    // In a full implementation this would return "testclient"
-    // For now it returns nil due to architecture limitations
+    // SETNAME and GETNAME in same connection via pipeline
+    let results = redis_cli_pipeline(16462, &[
+        &["CLIENT", "SETNAME", "testclient"],
+        &["CLIENT", "GETNAME"],
+    ]);
+    assert_eq!(results[0], "OK");
+    assert_eq!(results[1], "testclient");
 }
 
 #[test]
@@ -2670,7 +2670,9 @@ fn test_client_list() {
 
     let result = redis_cli(16463, &["CLIENT", "LIST"]);
     assert!(!result.is_empty());
-    assert!(result.contains("id=") || result.contains("addr="));
+    assert!(result.contains("id="));
+    assert!(result.contains("addr="));
+    assert!(result.contains("flags="));
 }
 
 #[test]
@@ -2678,6 +2680,177 @@ fn test_client_id() {
     let _server = start_server(16464);
 
     let result = redis_cli(16464, &["CLIENT", "ID"]);
-    assert_eq!(result, "1"); // Currently returns fixed ID
+    // Parse as integer - should be a valid positive number
+    let id: i64 = result.parse().expect("CLIENT ID should return a number");
+    assert!(id > 0, "CLIENT ID should be positive");
+}
+
+#[test]
+fn test_client_id_unique_per_connection() {
+    let _server = start_server(16465);
+
+    // Each call creates a new connection, so IDs should increment
+    let id1: i64 = redis_cli(16465, &["CLIENT", "ID"]).parse().unwrap();
+    let id2: i64 = redis_cli(16465, &["CLIENT", "ID"]).parse().unwrap();
+    let id3: i64 = redis_cli(16465, &["CLIENT", "ID"]).parse().unwrap();
+
+    // All IDs should be positive and unique
+    assert!(id1 > 0);
+    assert!(id2 > 0);
+    assert!(id3 > 0);
+    assert_ne!(id1, id2);
+    assert_ne!(id2, id3);
+    assert_ne!(id1, id3);
+}
+
+#[test]
+fn test_client_list_shows_all_metadata() {
+    let _server = start_server(16466);
+
+    // Set a name first via pipeline to see it in the list
+    let results = redis_cli_pipeline(16466, &[
+        &["CLIENT", "SETNAME", "testclient"],
+        &["CLIENT", "LIST"],
+    ]);
+
+    let list = &results[1];
+    assert!(list.contains("id="));
+    assert!(list.contains("addr="));
+    assert!(list.contains("name=testclient"));
+    assert!(list.contains("age="));
+    assert!(list.contains("idle="));
+    assert!(list.contains("flags="));
+    assert!(list.contains("db="));
+    assert!(list.contains("sub="));
+    assert!(list.contains("psub="));
+}
+
+#[test]
+fn test_client_list_type_filter() {
+    let _server = start_server(16467);
+
+    // Normal connections should show with TYPE normal filter
+    let result = redis_cli(16467, &["CLIENT", "LIST", "TYPE", "normal"]);
+    // Should contain at least one connection (ours)
+    assert!(result.contains("id="));
+}
+
+#[test]
+fn test_client_list_type_pubsub_empty() {
+    let _server = start_server(16468);
+
+    // No pubsub connections exist, so list should be empty
+    let result = redis_cli(16468, &["CLIENT", "LIST", "TYPE", "pubsub"]);
+    // Empty result or no pubsub connections
+    assert!(!result.contains("flags=P"));
+}
+
+#[test]
+fn test_client_list_id_filter() {
+    let _server = start_server(16469);
+
+    // Get our connection ID first
+    let results = redis_cli_pipeline(16469, &[
+        &["CLIENT", "ID"],
+        &["CLIENT", "LIST"],
+    ]);
+
+    let our_id = &results[0];
+    let full_list = &results[1];
+
+    // Our ID should be in the list
+    assert!(full_list.contains(&format!("id={}", our_id)));
+}
+
+#[test]
+fn test_client_kill_nonexistent() {
+    let _server = start_server(16470);
+
+    // Try to kill a non-existent connection
+    let result = redis_cli(16470, &["CLIENT", "KILL", "ID", "99999"]);
+    // Should return error
+    assert!(result.contains("ERR") || result.contains("No such client"));
+}
+
+#[test]
+fn test_client_pause_and_unpause() {
+    let _server = start_server(16471);
+
+    // Test CLIENT PAUSE
+    let result = redis_cli(16471, &["CLIENT", "PAUSE", "100"]);
+    assert_eq!(result, "OK");
+
+    // Test CLIENT UNPAUSE
+    let result = redis_cli(16471, &["CLIENT", "UNPAUSE"]);
+    assert_eq!(result, "OK");
+}
+
+#[test]
+fn test_client_pause_invalid_timeout() {
+    let _server = start_server(16472);
+
+    // Test CLIENT PAUSE with negative timeout
+    let result = redis_cli(16472, &["CLIENT", "PAUSE", "-1"]);
+    assert!(result.contains("ERR"));
+
+    // Test CLIENT PAUSE with invalid timeout
+    let result = redis_cli(16472, &["CLIENT", "PAUSE", "notanumber"]);
+    assert!(result.contains("ERR"));
+}
+
+#[test]
+fn test_client_info() {
+    let _server = start_server(16473);
+
+    // CLIENT INFO should return info about current connection
+    let result = redis_cli(16473, &["CLIENT", "INFO"]);
+    assert!(result.contains("id="));
+    assert!(result.contains("addr="));
+}
+
+#[test]
+fn test_client_name_persistence() {
+    let _server = start_server(16474);
+
+    // Set a name and verify it persists within the same connection
+    let results = redis_cli_pipeline(16474, &[
+        &["CLIENT", "SETNAME", "myname"],
+        &["CLIENT", "GETNAME"],
+        &["PING"],
+        &["CLIENT", "GETNAME"],
+    ]);
+
+    assert_eq!(results[0], "OK");
+    assert_eq!(results[1], "myname");
+    assert_eq!(results[2], "PONG");
+    // Name should still be set after other commands
+    assert_eq!(results[3], "myname");
+}
+
+#[test]
+fn test_client_setname_with_spaces_rejected() {
+    let _server = start_server(16475);
+
+    // Names with spaces should be rejected
+    let result = redis_cli(16475, &["CLIENT", "SETNAME", "name with spaces"]);
+    assert!(result.contains("ERR"));
+}
+
+#[test]
+fn test_client_reply_stub() {
+    let _server = start_server(16476);
+
+    // CLIENT REPLY should return OK (stub)
+    let result = redis_cli(16476, &["CLIENT", "REPLY", "ON"]);
+    assert_eq!(result, "OK");
+}
+
+#[test]
+fn test_client_noevict_stub() {
+    let _server = start_server(16477);
+
+    // CLIENT NO-EVICT should return OK (stub)
+    let result = redis_cli(16477, &["CLIENT", "NO-EVICT", "ON"]);
+    assert_eq!(result, "OK");
 }
 

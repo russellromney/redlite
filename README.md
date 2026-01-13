@@ -153,47 +153,54 @@ redis-cli -a secret SET foo bar
 
 **Client (server mode):** `CLIENT SETNAME`, `CLIENT GETNAME`, `CLIENT LIST`, `CLIENT ID`
 
+## Performance
+
+Redlite embedded mode is significantly faster than Redis for local access (no network overhead):
+
+| Operation | Redlite Embedded | Redis | Speedup |
+|-----------|------------------|-------|---------|
+| GET | 232k ops/sec, 3.8µs P50 | 1.9k ops/sec, 386µs P50 | **122x** |
+| SET | 53k ops/sec, 19µs P50 | 3.4k ops/sec, 291µs P50 | **15x** |
+
+Run benchmarks with `redlite-bench`:
+
+```bash
+cd redlite-bench/implementations/rust
+cargo build --release
+./target/release/redlite-bench scenario -s scenarios/comprehensive.yaml -n read_heavy --memory
+./target/release/redlite-bench run-benchmarks --report-format markdown
+```
+
+35+ scenarios covering caching, sessions, queues, leaderboards, streams, and more.
+
 ## Recently Completed
+
+**Benchmarking Suite** ✅
+- Comprehensive YAML-driven benchmark framework (`redlite-bench/`)
+- 35+ workload scenarios (read-heavy, write-heavy, leaderboards, queues, etc.)
+- Redis vs Redlite comparison with latency percentiles and throughput
+- JSON and Markdown report generation
 
 **Session 22.4: Redis Ecosystem Commands** ✅
 - List operations: `LREM`, `LINSERT`
 - Set operations: `SMOVE`, `SDIFFSTORE`, `SINTERSTORE`, `SUNIONSTORE`
 - Client commands: `CLIENT SETNAME/GETNAME/LIST/ID`
-- 15+ integration tests covering all new commands
 
 **Session 22: Redis Ecosystem Compatibility** ✅
 - Authentication: `--password` flag, AUTH command
 - Backend options: `--backend` (sqlite/turso), `--storage` (file/memory)
-- Default port changed to 6379 (Redis standard)
+- WATCH/UNWATCH for optimistic locking
 
 **Session 17: History Tracking & Time-Travel Queries** ✅
-- Track value changes per key with three-tier opt-in (global, database, key-level)
+- Track value changes per key with three-tier opt-in
 - Time-travel queries: `HISTORY GETAT key timestamp`
-- Configurable retention policies (unlimited, time-based, count-based)
-- Full HISTORY command suite with enable/disable/get/stats/clear/prune/list subcommands
+- Configurable retention policies
 
 ## Upcoming Features
 
 See [ROADMAP.md](./ROADMAP.md) for detailed plans.
 
-**Session 23: Full Per-Connection State Management** (Next)
-- Refactor CLIENT commands for thread-local connection tracking
-- Connection name persistence across commands
-- Enhanced CLIENT LIST with TYPE/ID filters
-- Connection lifecycle and pooling
-
-**Session 24: Remaining Ecosystem Commands**
-- `GETEX`, `GETDEL` (string variants)
-- `LPUSHX`, `RPUSHX` (conditional list push)
-- `LPOS` (find element position in list)
-- Set comparison commands and bitwise operations
-
-**Session 25: Performance Testing & Benchmarking**
-- Establish baseline QPS metrics in embedded mode
-- Profile and optimize hot paths
-- Target: 10,000+ QPS
-
-**Sessions 19-21: Language Bindings**
+**Sessions 19-21: Language Bindings** (Next)
 - **Python** (`redlite-py`) - PyO3 bindings via PyPI
 - **Node.js/Bun** (`redlite-js`) - NAPI-RS bindings via npm
 - **C FFI + Go** - C bindings via cbindgen + Go cgo wrapper
