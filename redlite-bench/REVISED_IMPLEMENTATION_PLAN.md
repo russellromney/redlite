@@ -21,21 +21,30 @@
   - Arc<Mutex> for result aggregation
   - 'static bound on generic type
 
-**Comprehensive Scenario YAML Files**: COMPLETE
-- [x] Created `scenarios/comprehensive.yaml` with 28 workloads:
-  - 5 core scenarios: read_heavy, write_heavy, truly_balanced, read_only, write_only
-  - 7 data structure specific: cache_pattern, session_store, message_queue, leaderboard, event_stream, social_graph, counter_pattern
-  - 5 stress scenarios: hot_keys, write_storm, read_storm, mixed_storm, range_operations_heavy
-  - 4 specialized patterns: pub_sub_pattern, time_series, object_store, tag_system
-  - 2 Redlite-specific: history_tracking, keyinfo_monitoring
-  - 5 pure baselines: get_only, set_only, lpush_only, hset_only, incr_only
+**Comprehensive Scenario YAML Files with Setup**: COMPLETE
+- [x] Created `scenarios/comprehensive.yaml` with 32 workloads including setup specifications
+- [x] Added setup schema to YAML: strings, lists, hashes, sets, sorted_sets, streams, counters
+- [x] Each scenario now specifies what data needs to be pre-populated
+- [x] Fixed all scenarios to be logically consistent (reads have corresponding setup)
+
+**Bulk Setup Infrastructure**: COMPLETE
+- [x] Added setup structs to scenarios.rs: ScenarioSetup, StringSetup, ListSetup, etc.
+- [x] Implemented `execute_setup()` function for fast data population
+- [x] Uses bulk operations for efficiency:
+  - MSET in batches of 1000 for strings/counters
+  - LPUSH with multiple values per call for lists
+  - SADD with multiple members for sets
+  - ZADD with multiple score/member pairs for sorted sets
+- [x] Returns SetupStats with timing and counts
 
 ### Files Modified
 - `src/concurrency.rs` - Added LPUSH/HSET concurrent implementations (+200 lines)
 - `src/benchmark/mod.rs` - Updated concurrent methods to use new implementations
+- `src/scenarios.rs` - Added setup structs and execute_setup() function (+280 lines)
+- `src/lib.rs` - Exported new setup types and functions
 
 ### Files Created
-- `scenarios/comprehensive.yaml` - 28 comprehensive workload scenarios
+- `scenarios/comprehensive.yaml` - 32 comprehensive workload scenarios with setup specs
 
 ### Build & Test Status
 - cargo build --release: SUCCESS
@@ -105,10 +114,10 @@
 ---
 
 ## Next Session Tasks
-1. SQLite results storage (Phase 5) - optional, JSON works well as alternative
+1. Integrate setup execution into CLI scenario runner (call execute_setup before benchmark)
 2. Run comprehensive benchmarks comparing Redis vs Redlite embedded performance
-3. Documentation and usage examples
-4. Consider adding more concurrent operations (SADD, ZADD, XADD) if needed
+3. SQLite results storage (optional - JSON works well as alternative)
+4. Documentation and usage examples
 
 ---
 
