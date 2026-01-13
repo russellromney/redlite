@@ -1001,51 +1001,110 @@ Test Coverage:
 - 1000 watched keys per connection tested
 - Edge cases: special chars, long names, 1MB+ values, DB isolation
 
-#### Session 22.4: Additional Redis Commands
-- [ ] CLIENT SETNAME/GETNAME - Connection naming
-- [ ] CLIENT LIST - List connections
-- [ ] LREM - Remove elements from list by value
-- [ ] LINSERT - Insert before/after element
-- [ ] SMOVE - Move member between sets
-- [ ] *STORE commands (SDIFFSTORE, SINTERSTORE, SUNIONSTORE)
+#### Session 22.4: Additional Redis Commands ✅
+- [x] CLIENT SETNAME/GETNAME - Connection naming (basic per-session)
+- [x] CLIENT LIST - List connections with metadata
+- [x] CLIENT ID - Get connection identifier
+- [x] LREM - Remove elements from list by value (count directional support)
+- [x] LINSERT - Insert before/after element (gap-based positioning, auto-rebalance)
+- [x] SMOVE - Move member between sets (atomic)
+- [x] SDIFFSTORE - Set difference with result persistence
+- [x] SINTERSTORE - Set intersection with result persistence
+- [x] SUNIONSTORE - Set union with result persistence
+- [x] Integration tests (15 new tests, all passing)
+- [x] **Test:** 270 unit tests + 285+ integration tests passing
 
 ---
 
-### Session 23: SQLite Ecosystem Integration 🎯
+### Session 23: Per-Connection State & Enhanced Client Commands 🎯
+
+**Goal:** Full per-connection state management for CLIENT commands and connection pooling.
+
+#### Session 23.1: Thread-Local Connection State
+- [ ] Refactor server to track per-connection state in Arc<RwLock<>>
+- [ ] Connection names persisted across commands
+- [ ] Connection IDs with incrementing counter
+- [ ] Age and idle time tracking
+
+#### Session 23.2: Enhanced CLIENT Commands
+- [ ] CLIENT LIST with TYPE filter (NORMAL, PUBSUB, MASTER, REPLICA)
+- [ ] CLIENT LIST with ID filter for specific connections
+- [ ] Connection metadata: qbuf, obl, omem, tot-mem estimates
+- [ ] Connection flags: N, A, b, c, d, x, P, etc.
+
+#### Session 23.3: Connection Lifecycle
+- [ ] CLIENT KILL - Terminate connection by ID or pattern
+- [ ] CLIENT UNBLOCK - Unblock client from blocking operation
+- [ ] CLIENT PAUSE - Pause all client connections
+- [ ] Connection statistics and monitoring
+
+---
+
+### Session 24: SQLite Ecosystem Integration 🎯
 
 **Goal:** Leverage SQLite's unique capabilities for features Redis can't provide.
 
-#### Session 23.1: Backup & Recovery
+#### Session 24.1: Backup & Recovery
 - [ ] BACKUP command - Hot backup to path (VACUUM INTO)
 - [ ] CHECKPOINT command - Force WAL checkpoint
 - [ ] RESTORE command - Restore from backup
 - [ ] Point-in-time recovery documentation
 
-#### Session 23.2: Litestream Integration
+#### Session 24.2: Litestream Integration
 - [ ] Documentation for Litestream setup
 - [ ] LITESTREAM STATUS command (if Litestream detected)
 - [ ] S3/GCS/Azure replication examples
 - [ ] Disaster recovery playbook
 
-#### Session 23.3: Read Replicas
+#### Session 24.3: Read Replicas
 - [ ] `--readonly` flag for replica mode
 - [ ] Connection to primary for writes
 - [ ] WAL-based replication documentation
 - [ ] Multi-region deployment guide
 
-#### Session 23.4: Full-Text Search (FTS5)
+#### Session 24.4: Full-Text Search (FTS5)
 - [ ] FT.CREATE index - Create FTS index on keys
 - [ ] FT.SEARCH query - Full-text search
 - [ ] FT.ADD key - Add key to index
 - [ ] FT.DEL key - Remove from index
 - [ ] Automatic index sync on writes
 
-#### Session 23.5: Geospatial (R*Tree)
+#### Session 24.5: Geospatial (R*Tree)
 - [ ] GEOADD key longitude latitude member
 - [ ] GEOPOS key member [member ...]
 - [ ] GEODIST key member1 member2 [unit]
 - [ ] GEORADIUS key longitude latitude radius unit
 - [ ] GEOSEARCH key FROMMEMBER/FROMLONLAT ...
+
+---
+
+### Session 25: Remaining Ecosystem Commands 🎯
+
+**Goal:** Implement commonly-used Redis commands to increase compatibility.
+
+#### Session 25.1: String Variants
+- [ ] GETEX key [EX seconds | PX milliseconds | EXAT timestamp | PXAT timestamp | PERSIST]
+- [ ] GETDEL key - Get and delete atomically
+- [ ] SETEX key seconds value - Set with TTL
+- [ ] PSETEX key milliseconds value - Set with millisecond TTL
+- [ ] LCS key1 key2 [LEN | IDX] - Longest common subsequence
+
+#### Session 25.2: List Variants
+- [ ] LPUSHX key [element ...] - Push only if key exists
+- [ ] RPUSHX key [element ...] - Push only if key exists
+- [ ] LPOS key element [RANK rank | COUNT num-matches | MAXLEN len]
+- [ ] LMOVE source destination LEFT|RIGHT LEFT|RIGHT
+
+#### Session 25.3: Set Bitwise Operations
+- [ ] BITCOUNT key [start end [BYTE|BIT]]
+- [ ] BITFIELD key [GET type offset] [SET type offset value] [INCRBY type offset increment]
+- [ ] BITOP AND|OR|XOR|NOT destkey [key ...]
+- [ ] BITPOS key bit [start [end [BYTE|BIT]]]
+
+#### Session 25.4: String Bit Operations
+- [ ] SETBIT key offset value
+- [ ] GETBIT key offset
+- [ ] Comprehensive bit manipulation test suite
 
 ---
 

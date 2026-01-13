@@ -10,11 +10,11 @@ SQLite-backed Redis-compatible embedded key-value store written in Rust.
 - **Disk is cheap** - Persistent storage without Redis's memory constraints
 - **SQLite foundation** - ACID transactions, durability, zero config
 - **Redis compatible** - Existing clients just work (for most operations)
-- **Easy backup** - SQLite WAL files work with [litestream](https://litestream.io) or similar tools
+- **Easy backup** - SQLite WAL files work with [litestream](https://litestream.io)/[walsync](https://litestream.io) or similar tools
 
 ## Differences from Redis
 
-**Embedded mode** is fully Redis-compatible for strings, hashes, lists, sets, sorted sets, and streams.
+**Embedded mode** is fully Redis-compatible for strings, hashes, lists, sets, sorted sets, and streams (reading & writing - non-blocking)
 
 **Server mode only** features (not available in embedded mode):
 - **Pub/Sub** - At-most-once, fire-and-forget (messages not persisted if no subscribers)
@@ -133,9 +133,9 @@ redis-cli -a secret SET foo bar
 
 **Hashes:** `HSET`, `HGET`, `HSETNX`, `HMGET`, `HGETALL`, `HDEL`, `HEXISTS`, `HKEYS`, `HVALS`, `HLEN`, `HINCRBY`, `HINCRBYFLOAT`
 
-**Lists:** `LPUSH`, `RPUSH`, `LPOP`, `RPOP`, `LLEN`, `LRANGE`, `LINDEX`, `LSET`, `LTRIM`
+**Lists:** `LPUSH`, `RPUSH`, `LPOP`, `RPOP`, `LLEN`, `LRANGE`, `LINDEX`, `LSET`, `LTRIM`, `LREM`, `LINSERT`
 
-**Sets:** `SADD`, `SREM`, `SMEMBERS`, `SISMEMBER`, `SCARD`, `SPOP`, `SRANDMEMBER`, `SDIFF`, `SINTER`, `SUNION`
+**Sets:** `SADD`, `SREM`, `SMEMBERS`, `SISMEMBER`, `SCARD`, `SPOP`, `SRANDMEMBER`, `SDIFF`, `SINTER`, `SUNION`, `SMOVE`, `SDIFFSTORE`, `SINTERSTORE`, `SUNIONSTORE`
 
 **Sorted Sets:** `ZADD`, `ZREM`, `ZSCORE`, `ZRANK`, `ZREVRANK`, `ZCARD`, `ZRANGE`, `ZREVRANGE` (WITHSCORES), `ZRANGEBYSCORE`, `ZCOUNT`, `ZINCRBY`, `ZREMRANGEBYRANK`, `ZREMRANGEBYSCORE`
 
@@ -151,7 +151,15 @@ redis-cli -a secret SET foo bar
 
 **Server:** `PING`, `ECHO`, `QUIT`, `COMMAND`, `SELECT`, `DBSIZE`, `FLUSHDB`, `INFO`
 
+**Client (server mode):** `CLIENT SETNAME`, `CLIENT GETNAME`, `CLIENT LIST`, `CLIENT ID`
+
 ## Recently Completed
+
+**Session 22.4: Redis Ecosystem Commands** ✅
+- List operations: `LREM`, `LINSERT`
+- Set operations: `SMOVE`, `SDIFFSTORE`, `SINTERSTORE`, `SUNIONSTORE`
+- Client commands: `CLIENT SETNAME/GETNAME/LIST/ID`
+- 15+ integration tests covering all new commands
 
 **Session 22: Redis Ecosystem Compatibility** ✅
 - Authentication: `--password` flag, AUTH command
@@ -168,12 +176,19 @@ redis-cli -a secret SET foo bar
 
 See [ROADMAP.md](./ROADMAP.md) for detailed plans.
 
-**Session 22.3: WATCH/UNWATCH** (Next)
-- Optimistic locking for transactions
-- Per-connection watched keys tracking
-- EXEC returns nil if watched keys were modified
+**Session 23: Full Per-Connection State Management** (Next)
+- Refactor CLIENT commands for thread-local connection tracking
+- Connection name persistence across commands
+- Enhanced CLIENT LIST with TYPE/ID filters
+- Connection lifecycle and pooling
 
-**Session 18: Performance Testing & Benchmarking**
+**Session 24: Remaining Ecosystem Commands**
+- `GETEX`, `GETDEL` (string variants)
+- `LPUSHX`, `RPUSHX` (conditional list push)
+- `LPOS` (find element position in list)
+- Set comparison commands and bitwise operations
+
+**Session 25: Performance Testing & Benchmarking**
 - Establish baseline QPS metrics in embedded mode
 - Profile and optimize hot paths
 - Target: 10,000+ QPS
