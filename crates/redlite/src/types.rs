@@ -74,6 +74,28 @@ impl SetOptions {
     }
 }
 
+/// Direction for list operations (LMOVE, BLMOVE)
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ListDirection {
+    Left,
+    Right,
+}
+
+/// Options for GETEX command
+#[derive(Debug, Clone, Copy)]
+pub enum GetExOption {
+    /// EX seconds - set expiration in seconds
+    Ex(i64),
+    /// PX milliseconds - set expiration in milliseconds
+    Px(i64),
+    /// EXAT unix-time-seconds - set expiration at unix timestamp
+    ExAt(i64),
+    /// PXAT unix-time-milliseconds - set expiration at unix timestamp in milliseconds
+    PxAt(i64),
+    /// PERSIST - remove expiration
+    Persist,
+}
+
 /// Metadata about a key (returned by KEYINFO)
 #[derive(Debug, Clone)]
 pub struct KeyInfo {

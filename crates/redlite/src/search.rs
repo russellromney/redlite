@@ -785,6 +785,558 @@ fn expr_to_explain(expr: &QueryExpr) -> ExplainNode {
     }
 }
 
+// ============================================================================
+// APPLY and FILTER Expression Evaluation for FT.AGGREGATE
+// ============================================================================
+
+/// Value type for expression evaluation
+#[derive(Debug, Clone, PartialEq)]
+pub enum ExprValue {
+    Number(f64),
+    String(String),
+    Bool(bool),
+    Null,
+}
+
+impl ExprValue {
+    pub fn as_number(&self) -> Option<f64> {
+        match self {
+            ExprValue::Number(n) => Some(*n),
+            ExprValue::String(s) => s.parse().ok(),
+            _ => None,
+        }
+    }
+
+    pub fn as_string(&self) -> String {
+        match self {
+            ExprValue::Number(n) => n.to_string(),
+            ExprValue::String(s) => s.clone(),
+            ExprValue::Bool(b) => if *b { "1" } else { "0" }.to_string(),
+            ExprValue::Null => String::new(),
+        }
+    }
+
+    pub fn as_bool(&self) -> bool {
+        match self {
+            ExprValue::Bool(b) => *b,
+            ExprValue::Number(n) => *n != 0.0,
+            ExprValue::String(s) => !s.is_empty() && s != "0",
+            ExprValue::Null => false,
+        }
+    }
+}
+
+/// APPLY expression AST
+#[derive(Debug, Clone, PartialEq)]
+pub enum ApplyExpr {
+    /// Field reference: @fieldname
+    Field(String),
+    /// Literal number: 1.5
+    Number(f64),
+    /// Literal string: "text"
+    LiteralString(String),
+    /// Binary arithmetic: @a + @b, @price * 1.1
+    BinaryOp {
+        left: Box<ApplyExpr>,
+        op: BinaryOp,
+        right: Box<ApplyExpr>,
+    },
+    /// Unary minus: -@field
+    Negate(Box<ApplyExpr>),
+    /// String function: upper(@field), lower(@field)
+    StringFunc {
+        func: StringFunc,
+        arg: Box<ApplyExpr>,
+    },
+}
+
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum BinaryOp {
+    Add,
+    Sub,
+    Mul,
+    Div,
+    Mod,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum StringFunc {
+    Upper,
+    Lower,
+}
+
+/// FILTER expression AST
+#[derive(Debug, Clone, PartialEq)]
+pub enum FilterExpr {
+    /// Comparison: @field > 5, @count == 10
+    Comparison {
+        left: ApplyExpr,
+        op: CompareOp,
+        right: ApplyExpr,
+    },
+    /// Logical AND: expr1 AND expr2
+    And(Box<FilterExpr>, Box<FilterExpr>),
+    /// Logical OR: expr1 OR expr2
+    Or(Box<FilterExpr>, Box<FilterExpr>),
+    /// Logical NOT: NOT expr
+    Not(Box<FilterExpr>),
+    /// Parenthesized expression
+    Paren(Box<FilterExpr>),
+}
+
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum CompareOp {
+    Eq,      // == or =
+    Ne,      // != or <>
+    Lt,      // <
+    Le,      // <=
+    Gt,      // >
+    Ge,      // >=
+}
+
+/// Parse an APPLY expression string into an AST
+pub fn parse_apply_expr(input: &str) -> Result<ApplyExpr, String> {
+    let input = input.trim();
+    if input.is_empty() {
+        return Err("Empty expression".to_string());
+    }
+    parse_apply_additive(input)
+}
+
+fn parse_apply_additive(input: &str) -> Result<ApplyExpr, String> {
+    let input = input.trim();
+
+    // Find + or - at the top level (not inside parentheses or strings)
+    let mut depth = 0;
+    let mut in_string = false;
+    let chars: Vec<char> = input.chars().collect();
+
+    // Scan from right to left to get left-associativity
+    for i in (0..chars.len()).rev() {
+        let c = chars[i];
+        match c {
+            '"' if i == 0 || chars[i-1] != '\\' => in_string = !in_string,
+            '(' if !in_string => depth += 1,
+            ')' if !in_string => depth -= 1,
+            '+' | '-' if !in_string && depth == 0 && i > 0 => {
+                // Check it's not part of a number (e.g., 1.5e-10)
+                let prev = chars[i-1];
+                if prev == 'e' || prev == 'E' {
+                    continue;
+                }
+                let left = &input[..i];
+                let right = &input[i+1..];
+                let left_expr = parse_apply_additive(left)?;
+                let right_expr = parse_apply_multiplicative(right)?;
+                let op = if c == '+' { BinaryOp::Add } else { BinaryOp::Sub };
+                return Ok(ApplyExpr::BinaryOp {
+                    left: Box::new(left_expr),
+                    op,
+                    right: Box::new(right_expr),
+                });
+            }
+            _ => {}
+        }
+    }
+
+    parse_apply_multiplicative(input)
+}
+
+fn parse_apply_multiplicative(input: &str) -> Result<ApplyExpr, String> {
+    let input = input.trim();
+
+    let mut depth = 0;
+    let mut in_string = false;
+    let chars: Vec<char> = input.chars().collect();
+
+    for i in (0..chars.len()).rev() {
+        let c = chars[i];
+        match c {
+            '"' if i == 0 || chars[i-1] != '\\' => in_string = !in_string,
+            '(' if !in_string => depth += 1,
+            ')' if !in_string => depth -= 1,
+            '*' | '/' | '%' if !in_string && depth == 0 => {
+                let left = &input[..i];
+                let right = &input[i+1..];
+                if left.trim().is_empty() {
+                    continue;
+                }
+                let left_expr = parse_apply_multiplicative(left)?;
+                let right_expr = parse_apply_unary(right)?;
+                let op = match c {
+                    '*' => BinaryOp::Mul,
+                    '/' => BinaryOp::Div,
+                    '%' => BinaryOp::Mod,
+                    _ => unreachable!(),
+                };
+                return Ok(ApplyExpr::BinaryOp {
+                    left: Box::new(left_expr),
+                    op,
+                    right: Box::new(right_expr),
+                });
+            }
+            _ => {}
+        }
+    }
+
+    parse_apply_unary(input)
+}
+
+fn parse_apply_unary(input: &str) -> Result<ApplyExpr, String> {
+    let input = input.trim();
+
+    if input.starts_with('-') && input.len() > 1 {
+        let rest = &input[1..];
+        // Make sure it's not a negative number
+        if !rest.trim().chars().next().map(|c| c.is_ascii_digit()).unwrap_or(false) {
+            let inner = parse_apply_unary(rest)?;
+            return Ok(ApplyExpr::Negate(Box::new(inner)));
+        }
+    }
+
+    parse_apply_primary(input)
+}
+
+fn parse_apply_primary(input: &str) -> Result<ApplyExpr, String> {
+    let input = input.trim();
+
+    // Parenthesized expression
+    if input.starts_with('(') && input.ends_with(')') {
+        return parse_apply_additive(&input[1..input.len()-1]);
+    }
+
+    // String function: upper(...) or lower(...)
+    let input_lower = input.to_lowercase();
+    if input_lower.starts_with("upper(") && input.ends_with(')') {
+        let arg = &input[6..input.len()-1];
+        let arg_expr = parse_apply_expr(arg)?;
+        return Ok(ApplyExpr::StringFunc {
+            func: StringFunc::Upper,
+            arg: Box::new(arg_expr),
+        });
+    }
+    if input_lower.starts_with("lower(") && input.ends_with(')') {
+        let arg = &input[6..input.len()-1];
+        let arg_expr = parse_apply_expr(arg)?;
+        return Ok(ApplyExpr::StringFunc {
+            func: StringFunc::Lower,
+            arg: Box::new(arg_expr),
+        });
+    }
+
+    // Field reference: @fieldname
+    if input.starts_with('@') {
+        let field = input[1..].to_string();
+        if field.is_empty() {
+            return Err("Empty field reference".to_string());
+        }
+        return Ok(ApplyExpr::Field(field));
+    }
+
+    // String literal: "text"
+    if input.starts_with('"') && input.ends_with('"') && input.len() >= 2 {
+        let s = input[1..input.len()-1].replace("\\\"", "\"");
+        return Ok(ApplyExpr::LiteralString(s));
+    }
+
+    // Number
+    if let Ok(n) = input.parse::<f64>() {
+        return Ok(ApplyExpr::Number(n));
+    }
+
+    // Bare identifier - treat as string literal
+    Ok(ApplyExpr::LiteralString(input.to_string()))
+}
+
+/// Evaluate an APPLY expression against a row
+pub fn evaluate_apply_expr(
+    expr: &ApplyExpr,
+    row: &std::collections::HashMap<String, String>,
+) -> ExprValue {
+    match expr {
+        ApplyExpr::Field(name) => {
+            match row.get(name) {
+                Some(v) => {
+                    if let Ok(n) = v.parse::<f64>() {
+                        ExprValue::Number(n)
+                    } else {
+                        ExprValue::String(v.clone())
+                    }
+                }
+                None => ExprValue::Null,
+            }
+        }
+        ApplyExpr::Number(n) => ExprValue::Number(*n),
+        ApplyExpr::LiteralString(s) => ExprValue::String(s.clone()),
+        ApplyExpr::BinaryOp { left, op, right } => {
+            let left_val = evaluate_apply_expr(left, row);
+            let right_val = evaluate_apply_expr(right, row);
+
+            // Try numeric operation first
+            if let (Some(l), Some(r)) = (left_val.as_number(), right_val.as_number()) {
+                let result = match op {
+                    BinaryOp::Add => l + r,
+                    BinaryOp::Sub => l - r,
+                    BinaryOp::Mul => l * r,
+                    BinaryOp::Div => if r != 0.0 { l / r } else { f64::NAN },
+                    BinaryOp::Mod => if r != 0.0 { l % r } else { f64::NAN },
+                };
+                ExprValue::Number(result)
+            } else if *op == BinaryOp::Add {
+                // String concatenation for + with non-numbers
+                ExprValue::String(format!("{}{}", left_val.as_string(), right_val.as_string()))
+            } else {
+                ExprValue::Null
+            }
+        }
+        ApplyExpr::Negate(inner) => {
+            let val = evaluate_apply_expr(inner, row);
+            if let Some(n) = val.as_number() {
+                ExprValue::Number(-n)
+            } else {
+                ExprValue::Null
+            }
+        }
+        ApplyExpr::StringFunc { func, arg } => {
+            let val = evaluate_apply_expr(arg, row);
+            let s = val.as_string();
+            match func {
+                StringFunc::Upper => ExprValue::String(s.to_uppercase()),
+                StringFunc::Lower => ExprValue::String(s.to_lowercase()),
+            }
+        }
+    }
+}
+
+/// Parse a FILTER expression string into an AST
+pub fn parse_filter_expr(input: &str) -> Result<FilterExpr, String> {
+    let input = input.trim();
+    if input.is_empty() {
+        return Err("Empty filter expression".to_string());
+    }
+    parse_filter_or(input)
+}
+
+fn parse_filter_or(input: &str) -> Result<FilterExpr, String> {
+    let input = input.trim();
+
+    // Find OR at the top level
+    let mut depth = 0;
+    let mut in_string = false;
+    let chars: Vec<char> = input.chars().collect();
+
+    for i in 0..chars.len().saturating_sub(1) {
+        let c = chars[i];
+        match c {
+            '"' if i == 0 || chars[i-1] != '\\' => in_string = !in_string,
+            '(' if !in_string => depth += 1,
+            ')' if !in_string => depth -= 1,
+            'O' | 'o' if !in_string && depth == 0 => {
+                if i + 2 < chars.len() {
+                    let next = chars[i + 1];
+                    if (next == 'R' || next == 'r') &&
+                       (i + 2 >= chars.len() || !chars[i + 2].is_alphanumeric()) &&
+                       (i == 0 || !chars[i - 1].is_alphanumeric()) {
+                        let left = input[..i].trim();
+                        let right = input[i + 2..].trim();
+                        if !left.is_empty() && !right.is_empty() {
+                            let left_expr = parse_filter_or(left)?;
+                            let right_expr = parse_filter_and(right)?;
+                            return Ok(FilterExpr::Or(Box::new(left_expr), Box::new(right_expr)));
+                        }
+                    }
+                }
+            }
+            '|' if !in_string && depth == 0 => {
+                if i + 1 < chars.len() && chars[i + 1] == '|' {
+                    let left = input[..i].trim();
+                    let right = input[i + 2..].trim();
+                    if !left.is_empty() && !right.is_empty() {
+                        let left_expr = parse_filter_or(left)?;
+                        let right_expr = parse_filter_and(right)?;
+                        return Ok(FilterExpr::Or(Box::new(left_expr), Box::new(right_expr)));
+                    }
+                }
+            }
+            _ => {}
+        }
+    }
+
+    parse_filter_and(input)
+}
+
+fn parse_filter_and(input: &str) -> Result<FilterExpr, String> {
+    let input = input.trim();
+
+    let mut depth = 0;
+    let mut in_string = false;
+    let chars: Vec<char> = input.chars().collect();
+
+    for i in 0..chars.len().saturating_sub(2) {
+        let c = chars[i];
+        match c {
+            '"' if i == 0 || chars[i-1] != '\\' => in_string = !in_string,
+            '(' if !in_string => depth += 1,
+            ')' if !in_string => depth -= 1,
+            'A' | 'a' if !in_string && depth == 0 => {
+                if i + 3 <= chars.len() {
+                    let next1 = chars[i + 1];
+                    let next2 = chars[i + 2];
+                    if (next1 == 'N' || next1 == 'n') && (next2 == 'D' || next2 == 'd') &&
+                       (i + 3 >= chars.len() || !chars[i + 3].is_alphanumeric()) &&
+                       (i == 0 || !chars[i - 1].is_alphanumeric()) {
+                        let left = input[..i].trim();
+                        let right = input[i + 3..].trim();
+                        if !left.is_empty() && !right.is_empty() {
+                            let left_expr = parse_filter_and(left)?;
+                            let right_expr = parse_filter_not(right)?;
+                            return Ok(FilterExpr::And(Box::new(left_expr), Box::new(right_expr)));
+                        }
+                    }
+                }
+            }
+            '&' if !in_string && depth == 0 => {
+                if i + 1 < chars.len() && chars[i + 1] == '&' {
+                    let left = input[..i].trim();
+                    let right = input[i + 2..].trim();
+                    if !left.is_empty() && !right.is_empty() {
+                        let left_expr = parse_filter_and(left)?;
+                        let right_expr = parse_filter_not(right)?;
+                        return Ok(FilterExpr::And(Box::new(left_expr), Box::new(right_expr)));
+                    }
+                }
+            }
+            _ => {}
+        }
+    }
+
+    parse_filter_not(input)
+}
+
+fn parse_filter_not(input: &str) -> Result<FilterExpr, String> {
+    let input = input.trim();
+
+    let input_lower = input.to_lowercase();
+    if input_lower.starts_with("not ") {
+        let rest = &input[4..];
+        let inner = parse_filter_not(rest)?;
+        return Ok(FilterExpr::Not(Box::new(inner)));
+    }
+    if input.starts_with('!') && input.len() > 1 {
+        let rest = &input[1..];
+        let inner = parse_filter_not(rest)?;
+        return Ok(FilterExpr::Not(Box::new(inner)));
+    }
+
+    parse_filter_primary(input)
+}
+
+fn parse_filter_primary(input: &str) -> Result<FilterExpr, String> {
+    let input = input.trim();
+
+    // Parenthesized expression
+    if input.starts_with('(') && input.ends_with(')') {
+        let inner = &input[1..input.len()-1];
+        let expr = parse_filter_or(inner)?;
+        return Ok(FilterExpr::Paren(Box::new(expr)));
+    }
+
+    // Comparison expression - find the operator
+    let ops = [
+        ("==", CompareOp::Eq),
+        ("!=", CompareOp::Ne),
+        ("<=", CompareOp::Le),
+        (">=", CompareOp::Ge),
+        ("<>", CompareOp::Ne),
+        ("<", CompareOp::Lt),
+        (">", CompareOp::Gt),
+        ("=", CompareOp::Eq),
+    ];
+
+    for (op_str, op) in &ops {
+        // Find operator not inside strings or parentheses
+        let mut depth = 0;
+        let mut in_string = false;
+        let chars: Vec<char> = input.chars().collect();
+
+        for i in 0..chars.len() {
+            let c = chars[i];
+            match c {
+                '"' if i == 0 || chars[i-1] != '\\' => in_string = !in_string,
+                '(' if !in_string => depth += 1,
+                ')' if !in_string => depth -= 1,
+                _ if !in_string && depth == 0 => {
+                    if input[i..].starts_with(op_str) {
+                        let left = &input[..i];
+                        let right = &input[i + op_str.len()..];
+                        if !left.trim().is_empty() && !right.trim().is_empty() {
+                            let left_expr = parse_apply_expr(left)?;
+                            let right_expr = parse_apply_expr(right)?;
+                            return Ok(FilterExpr::Comparison {
+                                left: left_expr,
+                                op: *op,
+                                right: right_expr,
+                            });
+                        }
+                    }
+                }
+                _ => {}
+            }
+        }
+    }
+
+    Err(format!("Invalid filter expression: {}", input))
+}
+
+/// Evaluate a FILTER expression against a row
+pub fn evaluate_filter_expr(
+    expr: &FilterExpr,
+    row: &std::collections::HashMap<String, String>,
+) -> bool {
+    match expr {
+        FilterExpr::Comparison { left, op, right } => {
+            let left_val = evaluate_apply_expr(left, row);
+            let right_val = evaluate_apply_expr(right, row);
+
+            // Try numeric comparison first
+            if let (Some(l), Some(r)) = (left_val.as_number(), right_val.as_number()) {
+                return match op {
+                    CompareOp::Eq => (l - r).abs() < f64::EPSILON,
+                    CompareOp::Ne => (l - r).abs() >= f64::EPSILON,
+                    CompareOp::Lt => l < r,
+                    CompareOp::Le => l <= r,
+                    CompareOp::Gt => l > r,
+                    CompareOp::Ge => l >= r,
+                };
+            }
+
+            // Fall back to string comparison
+            let l = left_val.as_string();
+            let r = right_val.as_string();
+            match op {
+                CompareOp::Eq => l == r,
+                CompareOp::Ne => l != r,
+                CompareOp::Lt => l < r,
+                CompareOp::Le => l <= r,
+                CompareOp::Gt => l > r,
+                CompareOp::Ge => l >= r,
+            }
+        }
+        FilterExpr::And(left, right) => {
+            evaluate_filter_expr(left, row) && evaluate_filter_expr(right, row)
+        }
+        FilterExpr::Or(left, right) => {
+            evaluate_filter_expr(left, row) || evaluate_filter_expr(right, row)
+        }
+        FilterExpr::Not(inner) => {
+            !evaluate_filter_expr(inner, row)
+        }
+        FilterExpr::Paren(inner) => {
+            evaluate_filter_expr(inner, row)
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -897,5 +1449,618 @@ mod tests {
     fn test_grouped_or() {
         let result = parse_query("(hello | world) test", false).unwrap();
         assert!(result.fts_query.is_some());
+    }
+
+    // ========================================================================
+    // APPLY Expression Tests
+    // ========================================================================
+
+    #[test]
+    fn test_apply_field_reference() {
+        let expr = parse_apply_expr("@price").unwrap();
+        assert_eq!(expr, ApplyExpr::Field("price".to_string()));
+    }
+
+    #[test]
+    fn test_apply_number_literal() {
+        let expr = parse_apply_expr("1.5").unwrap();
+        assert_eq!(expr, ApplyExpr::Number(1.5));
+    }
+
+    #[test]
+    fn test_apply_negative_number() {
+        let expr = parse_apply_expr("-10").unwrap();
+        assert_eq!(expr, ApplyExpr::Number(-10.0));
+    }
+
+    #[test]
+    fn test_apply_arithmetic_multiply() {
+        let expr = parse_apply_expr("@price * 1.1").unwrap();
+        match expr {
+            ApplyExpr::BinaryOp { left, op, right } => {
+                assert_eq!(*left, ApplyExpr::Field("price".to_string()));
+                assert_eq!(op, BinaryOp::Mul);
+                assert_eq!(*right, ApplyExpr::Number(1.1));
+            }
+            _ => panic!("Expected BinaryOp"),
+        }
+    }
+
+    #[test]
+    fn test_apply_arithmetic_add_fields() {
+        let expr = parse_apply_expr("@a + @b").unwrap();
+        match expr {
+            ApplyExpr::BinaryOp { left, op, right } => {
+                assert_eq!(*left, ApplyExpr::Field("a".to_string()));
+                assert_eq!(op, BinaryOp::Add);
+                assert_eq!(*right, ApplyExpr::Field("b".to_string()));
+            }
+            _ => panic!("Expected BinaryOp"),
+        }
+    }
+
+    #[test]
+    fn test_apply_arithmetic_complex() {
+        // @a + @b * 2 should parse as @a + (@b * 2) due to precedence
+        let expr = parse_apply_expr("@a + @b * 2").unwrap();
+        match expr {
+            ApplyExpr::BinaryOp { left, op: BinaryOp::Add, right } => {
+                assert_eq!(*left, ApplyExpr::Field("a".to_string()));
+                match *right {
+                    ApplyExpr::BinaryOp { left: inner_left, op: BinaryOp::Mul, right: inner_right } => {
+                        assert_eq!(*inner_left, ApplyExpr::Field("b".to_string()));
+                        assert_eq!(*inner_right, ApplyExpr::Number(2.0));
+                    }
+                    _ => panic!("Expected inner BinaryOp"),
+                }
+            }
+            _ => panic!("Expected BinaryOp"),
+        }
+    }
+
+    #[test]
+    fn test_apply_upper_function() {
+        let expr = parse_apply_expr("upper(@name)").unwrap();
+        match expr {
+            ApplyExpr::StringFunc { func: StringFunc::Upper, arg } => {
+                assert_eq!(*arg, ApplyExpr::Field("name".to_string()));
+            }
+            _ => panic!("Expected StringFunc"),
+        }
+    }
+
+    #[test]
+    fn test_apply_lower_function() {
+        let expr = parse_apply_expr("lower(@title)").unwrap();
+        match expr {
+            ApplyExpr::StringFunc { func: StringFunc::Lower, arg } => {
+                assert_eq!(*arg, ApplyExpr::Field("title".to_string()));
+            }
+            _ => panic!("Expected StringFunc"),
+        }
+    }
+
+    #[test]
+    fn test_apply_parentheses() {
+        let expr = parse_apply_expr("(@a + @b) * 2").unwrap();
+        match expr {
+            ApplyExpr::BinaryOp { left, op: BinaryOp::Mul, right } => {
+                match *left {
+                    ApplyExpr::BinaryOp { left: inner_left, op: BinaryOp::Add, right: inner_right } => {
+                        assert_eq!(*inner_left, ApplyExpr::Field("a".to_string()));
+                        assert_eq!(*inner_right, ApplyExpr::Field("b".to_string()));
+                    }
+                    _ => panic!("Expected inner BinaryOp"),
+                }
+                assert_eq!(*right, ApplyExpr::Number(2.0));
+            }
+            _ => panic!("Expected BinaryOp"),
+        }
+    }
+
+    #[test]
+    fn test_apply_evaluate_field() {
+        let mut row = std::collections::HashMap::new();
+        row.insert("price".to_string(), "100".to_string());
+
+        let expr = parse_apply_expr("@price").unwrap();
+        let result = evaluate_apply_expr(&expr, &row);
+        assert_eq!(result.as_number(), Some(100.0));
+    }
+
+    #[test]
+    fn test_apply_evaluate_multiply() {
+        let mut row = std::collections::HashMap::new();
+        row.insert("price".to_string(), "100".to_string());
+
+        let expr = parse_apply_expr("@price * 1.1").unwrap();
+        let result = evaluate_apply_expr(&expr, &row);
+        assert!((result.as_number().unwrap() - 110.0).abs() < 0.001);
+    }
+
+    #[test]
+    fn test_apply_evaluate_add_fields() {
+        let mut row = std::collections::HashMap::new();
+        row.insert("a".to_string(), "10".to_string());
+        row.insert("b".to_string(), "20".to_string());
+
+        let expr = parse_apply_expr("@a + @b").unwrap();
+        let result = evaluate_apply_expr(&expr, &row);
+        assert_eq!(result.as_number(), Some(30.0));
+    }
+
+    #[test]
+    fn test_apply_evaluate_division() {
+        let mut row = std::collections::HashMap::new();
+        row.insert("total".to_string(), "100".to_string());
+        row.insert("count".to_string(), "4".to_string());
+
+        let expr = parse_apply_expr("@total / @count").unwrap();
+        let result = evaluate_apply_expr(&expr, &row);
+        assert_eq!(result.as_number(), Some(25.0));
+    }
+
+    #[test]
+    fn test_apply_evaluate_upper() {
+        let mut row = std::collections::HashMap::new();
+        row.insert("name".to_string(), "hello".to_string());
+
+        let expr = parse_apply_expr("upper(@name)").unwrap();
+        let result = evaluate_apply_expr(&expr, &row);
+        assert_eq!(result.as_string(), "HELLO");
+    }
+
+    #[test]
+    fn test_apply_evaluate_lower() {
+        let mut row = std::collections::HashMap::new();
+        row.insert("name".to_string(), "HELLO".to_string());
+
+        let expr = parse_apply_expr("lower(@name)").unwrap();
+        let result = evaluate_apply_expr(&expr, &row);
+        assert_eq!(result.as_string(), "hello");
+    }
+
+    #[test]
+    fn test_apply_evaluate_null_field() {
+        let row = std::collections::HashMap::new();
+
+        let expr = parse_apply_expr("@missing").unwrap();
+        let result = evaluate_apply_expr(&expr, &row);
+        assert_eq!(result, ExprValue::Null);
+    }
+
+    #[test]
+    fn test_apply_evaluate_string_concat() {
+        let mut row = std::collections::HashMap::new();
+        row.insert("first".to_string(), "Hello".to_string());
+        row.insert("last".to_string(), "World".to_string());
+
+        let expr = parse_apply_expr("@first + @last").unwrap();
+        let result = evaluate_apply_expr(&expr, &row);
+        assert_eq!(result.as_string(), "HelloWorld");
+    }
+
+    // ========================================================================
+    // FILTER Expression Tests
+    // ========================================================================
+
+    #[test]
+    fn test_filter_comparison_gt() {
+        let expr = parse_filter_expr("@count > 5").unwrap();
+        match expr {
+            FilterExpr::Comparison { left, op, right } => {
+                assert_eq!(left, ApplyExpr::Field("count".to_string()));
+                assert_eq!(op, CompareOp::Gt);
+                assert_eq!(right, ApplyExpr::Number(5.0));
+            }
+            _ => panic!("Expected Comparison"),
+        }
+    }
+
+    #[test]
+    fn test_filter_comparison_le() {
+        let expr = parse_filter_expr("@price <= 100").unwrap();
+        match expr {
+            FilterExpr::Comparison { left, op, right } => {
+                assert_eq!(left, ApplyExpr::Field("price".to_string()));
+                assert_eq!(op, CompareOp::Le);
+                assert_eq!(right, ApplyExpr::Number(100.0));
+            }
+            _ => panic!("Expected Comparison"),
+        }
+    }
+
+    #[test]
+    fn test_filter_comparison_eq() {
+        let expr = parse_filter_expr("@status == \"active\"").unwrap();
+        match expr {
+            FilterExpr::Comparison { left, op, right } => {
+                assert_eq!(left, ApplyExpr::Field("status".to_string()));
+                assert_eq!(op, CompareOp::Eq);
+                assert_eq!(right, ApplyExpr::LiteralString("active".to_string()));
+            }
+            _ => panic!("Expected Comparison"),
+        }
+    }
+
+    #[test]
+    fn test_filter_comparison_ne() {
+        let expr = parse_filter_expr("@value != 0").unwrap();
+        match expr {
+            FilterExpr::Comparison { left, op, right } => {
+                assert_eq!(left, ApplyExpr::Field("value".to_string()));
+                assert_eq!(op, CompareOp::Ne);
+                assert_eq!(right, ApplyExpr::Number(0.0));
+            }
+            _ => panic!("Expected Comparison"),
+        }
+    }
+
+    #[test]
+    fn test_filter_logical_and() {
+        let expr = parse_filter_expr("@a > 5 AND @b < 10").unwrap();
+        match expr {
+            FilterExpr::And(left, right) => {
+                match *left {
+                    FilterExpr::Comparison { op: CompareOp::Gt, .. } => {}
+                    _ => panic!("Expected Comparison for left"),
+                }
+                match *right {
+                    FilterExpr::Comparison { op: CompareOp::Lt, .. } => {}
+                    _ => panic!("Expected Comparison for right"),
+                }
+            }
+            _ => panic!("Expected And"),
+        }
+    }
+
+    #[test]
+    fn test_filter_logical_or() {
+        let expr = parse_filter_expr("@a > 5 OR @b < 10").unwrap();
+        match expr {
+            FilterExpr::Or(_, _) => {}
+            _ => panic!("Expected Or"),
+        }
+    }
+
+    #[test]
+    fn test_filter_logical_not() {
+        let expr = parse_filter_expr("NOT @active == 0").unwrap();
+        match expr {
+            FilterExpr::Not(_) => {}
+            _ => panic!("Expected Not"),
+        }
+    }
+
+    #[test]
+    fn test_filter_parentheses() {
+        let expr = parse_filter_expr("(@a > 5 OR @b > 5) AND @c < 10").unwrap();
+        match expr {
+            FilterExpr::And(left, _) => {
+                match *left {
+                    FilterExpr::Paren(inner) => {
+                        match *inner {
+                            FilterExpr::Or(_, _) => {}
+                            _ => panic!("Expected Or inside Paren"),
+                        }
+                    }
+                    _ => panic!("Expected Paren"),
+                }
+            }
+            _ => panic!("Expected And"),
+        }
+    }
+
+    #[test]
+    fn test_filter_evaluate_gt_true() {
+        let mut row = std::collections::HashMap::new();
+        row.insert("count".to_string(), "10".to_string());
+
+        let expr = parse_filter_expr("@count > 5").unwrap();
+        assert!(evaluate_filter_expr(&expr, &row));
+    }
+
+    #[test]
+    fn test_filter_evaluate_gt_false() {
+        let mut row = std::collections::HashMap::new();
+        row.insert("count".to_string(), "3".to_string());
+
+        let expr = parse_filter_expr("@count > 5").unwrap();
+        assert!(!evaluate_filter_expr(&expr, &row));
+    }
+
+    #[test]
+    fn test_filter_evaluate_eq_string() {
+        let mut row = std::collections::HashMap::new();
+        row.insert("status".to_string(), "active".to_string());
+
+        let expr = parse_filter_expr("@status == \"active\"").unwrap();
+        assert!(evaluate_filter_expr(&expr, &row));
+    }
+
+    #[test]
+    fn test_filter_evaluate_and() {
+        let mut row = std::collections::HashMap::new();
+        row.insert("a".to_string(), "10".to_string());
+        row.insert("b".to_string(), "5".to_string());
+
+        let expr = parse_filter_expr("@a > 5 AND @b < 10").unwrap();
+        assert!(evaluate_filter_expr(&expr, &row));
+    }
+
+    #[test]
+    fn test_filter_evaluate_or() {
+        let mut row = std::collections::HashMap::new();
+        row.insert("a".to_string(), "3".to_string());
+        row.insert("b".to_string(), "5".to_string());
+
+        // a > 5 is false, b < 10 is true, so OR should be true
+        let expr = parse_filter_expr("@a > 5 OR @b < 10").unwrap();
+        assert!(evaluate_filter_expr(&expr, &row));
+    }
+
+    #[test]
+    fn test_filter_evaluate_not() {
+        let mut row = std::collections::HashMap::new();
+        row.insert("active".to_string(), "1".to_string());
+
+        // active == 0 is false, NOT false is true
+        let expr = parse_filter_expr("NOT @active == 0").unwrap();
+        assert!(evaluate_filter_expr(&expr, &row));
+    }
+
+    #[test]
+    fn test_filter_evaluate_complex() {
+        let mut row = std::collections::HashMap::new();
+        row.insert("price".to_string(), "50".to_string());
+        row.insert("count".to_string(), "10".to_string());
+        row.insert("status".to_string(), "active".to_string());
+
+        // (price > 20 AND count >= 10) OR status != "active"
+        // (true AND true) OR false = true
+        let expr = parse_filter_expr("(@price > 20 AND @count >= 10) OR @status != \"active\"").unwrap();
+        assert!(evaluate_filter_expr(&expr, &row));
+    }
+
+    #[test]
+    fn test_filter_double_ampersand() {
+        let expr = parse_filter_expr("@a > 5 && @b < 10").unwrap();
+        match expr {
+            FilterExpr::And(_, _) => {}
+            _ => panic!("Expected And from &&"),
+        }
+    }
+
+    #[test]
+    fn test_filter_double_pipe() {
+        let expr = parse_filter_expr("@a > 5 || @b < 10").unwrap();
+        match expr {
+            FilterExpr::Or(_, _) => {}
+            _ => panic!("Expected Or from ||"),
+        }
+    }
+
+    // ========================================================================
+    // Phase 1: Query Parser Edge Cases
+    // ========================================================================
+
+    #[test]
+    fn test_query_empty() {
+        let result = parse_query("", false).unwrap();
+        assert!(result.fts_query.is_none());
+    }
+
+    #[test]
+    fn test_query_whitespace_only() {
+        let result = parse_query("   ", false).unwrap();
+        assert!(result.fts_query.is_none());
+    }
+
+    #[test]
+    fn test_query_single_term() {
+        let result = parse_query("test", false).unwrap();
+        assert_eq!(result.fts_query, Some("test".to_string()));
+    }
+
+    #[test]
+    fn test_query_unicode_japanese() {
+        let result = parse_query("日本語", false).unwrap();
+        assert_eq!(result.fts_query, Some("日本語".to_string()));
+    }
+
+    #[test]
+    fn test_query_unicode_arabic() {
+        let result = parse_query("مرحبا", false).unwrap();
+        assert_eq!(result.fts_query, Some("مرحبا".to_string()));
+    }
+
+    #[test]
+    fn test_query_unicode_emoji() {
+        let result = parse_query("🎉", false).unwrap();
+        assert_eq!(result.fts_query, Some("🎉".to_string()));
+    }
+
+    #[test]
+    fn test_query_unicode_mixed() {
+        let result = parse_query("hello 世界 مرحبا", false).unwrap();
+        assert!(result.fts_query.is_some());
+        let query = result.fts_query.unwrap();
+        assert!(query.contains("hello"));
+        assert!(query.contains("世界"));
+        assert!(query.contains("مرحبا"));
+    }
+
+    #[test]
+    fn test_query_very_long() {
+        // Generate a query with 100 terms
+        let terms: Vec<&str> = (0..100).map(|_| "term").collect();
+        let long_query = terms.join(" ");
+        let result = parse_query(&long_query, false).unwrap();
+        assert!(result.fts_query.is_some());
+    }
+
+    #[test]
+    fn test_query_nested_parentheses() {
+        let result = parse_query("((a | b) c) | d", false).unwrap();
+        assert!(result.fts_query.is_some());
+    }
+
+    #[test]
+    fn test_query_deeply_nested_parentheses() {
+        let result = parse_query("(((a | b))) c", false).unwrap();
+        assert!(result.fts_query.is_some());
+    }
+
+    #[test]
+    fn test_query_operator_precedence_or_and() {
+        // a | b c should be parsed as (a) OR (b AND c)
+        let result = parse_query("a | b c", false).unwrap();
+        assert!(result.fts_query.is_some());
+        let query = result.fts_query.unwrap();
+        // OR has lower precedence, so b c should be grouped
+        assert!(query.contains("OR"));
+        assert!(query.contains("AND"));
+    }
+
+    #[test]
+    fn test_query_phrase_with_special_chars() {
+        let result = parse_query("\"hello, world!\"", false).unwrap();
+        assert!(result.fts_query.is_some());
+        assert!(result.fts_query.unwrap().contains("hello, world!"));
+    }
+
+    #[test]
+    fn test_query_phrase_with_apostrophe() {
+        let result = parse_query("\"test's value\"", false).unwrap();
+        assert!(result.fts_query.is_some());
+    }
+
+    #[test]
+    fn test_query_prefix_short_stem() {
+        let result = parse_query("a*", false).unwrap();
+        assert!(result.fts_query.is_some());
+        assert!(result.fts_query.unwrap().contains("a*"));
+    }
+
+    #[test]
+    fn test_query_prefix_two_chars() {
+        let result = parse_query("ab*", false).unwrap();
+        assert!(result.fts_query.is_some());
+        assert!(result.fts_query.unwrap().contains("ab*"));
+    }
+
+    #[test]
+    fn test_query_field_scoped_with_or() {
+        let result = parse_query("@title:(a | b)", false).unwrap();
+        assert!(result.fts_query.is_some());
+        assert!(result.search_fields.contains(&"title".to_string()));
+    }
+
+    #[test]
+    fn test_query_field_scoped_with_not() {
+        let result = parse_query("@title:hello -@body:world", false).unwrap();
+        assert!(result.fts_query.is_some());
+    }
+
+    #[test]
+    fn test_query_numeric_range_zero() {
+        let result = parse_query("@value:[0 0]", false).unwrap();
+        assert_eq!(result.numeric_filters.len(), 1);
+        let filter = &result.numeric_filters[0];
+        assert_eq!(filter.min, NumericBound::Inclusive(0.0));
+        assert_eq!(filter.max, NumericBound::Inclusive(0.0));
+    }
+
+    #[test]
+    fn test_query_numeric_range_infinity() {
+        let result = parse_query("@value:[-inf +inf]", false).unwrap();
+        assert_eq!(result.numeric_filters.len(), 1);
+        let filter = &result.numeric_filters[0];
+        assert_eq!(filter.min, NumericBound::Unbounded);
+        assert_eq!(filter.max, NumericBound::Unbounded);
+    }
+
+    #[test]
+    fn test_query_numeric_range_negative() {
+        let result = parse_query("@temp:[-50 50]", false).unwrap();
+        assert_eq!(result.numeric_filters.len(), 1);
+        let filter = &result.numeric_filters[0];
+        assert_eq!(filter.min, NumericBound::Inclusive(-50.0));
+        assert_eq!(filter.max, NumericBound::Inclusive(50.0));
+    }
+
+    #[test]
+    fn test_query_tag_empty() {
+        let result = parse_query("@category:{}", false).unwrap();
+        assert_eq!(result.tag_filters.len(), 1);
+        // Empty tag filter should have no tags or empty
+    }
+
+    #[test]
+    fn test_query_tag_with_spaces_quoted() {
+        // Tags with spaces must be quoted
+        let result = parse_query("@category:{\"science fiction\"|fantasy}", false).unwrap();
+        assert_eq!(result.tag_filters.len(), 1);
+        let filter = &result.tag_filters[0];
+        assert!(filter.tags.contains(&"science fiction".to_string()));
+        assert!(filter.tags.contains(&"fantasy".to_string()));
+    }
+
+    #[test]
+    fn test_query_tag_unquoted_simple() {
+        let result = parse_query("@category:{electronics|books}", false).unwrap();
+        assert_eq!(result.tag_filters.len(), 1);
+        let filter = &result.tag_filters[0];
+        assert!(filter.tags.contains(&"electronics".to_string()));
+        assert!(filter.tags.contains(&"books".to_string()));
+    }
+
+    #[test]
+    fn test_query_mixed_all_types() {
+        let result = parse_query("@title:hello @price:[10 100] @category:{books}", false).unwrap();
+        assert!(result.fts_query.is_some());
+        assert_eq!(result.numeric_filters.len(), 1);
+        assert_eq!(result.tag_filters.len(), 1);
+    }
+
+    #[test]
+    fn test_query_multiple_or() {
+        let result = parse_query("a | b | c | d", false).unwrap();
+        assert!(result.fts_query.is_some());
+    }
+
+    #[test]
+    fn test_query_multiple_not() {
+        let result = parse_query("hello -world -foo", false).unwrap();
+        assert!(result.fts_query.is_some());
+    }
+
+    #[test]
+    fn test_query_mixed_operators() {
+        let result = parse_query("(a | b) -c d", false).unwrap();
+        assert!(result.fts_query.is_some());
+    }
+
+    // ========================================================================
+    // BM25 Scoring Related Tests (parser side)
+    // ========================================================================
+
+    #[test]
+    fn test_query_multiple_same_term() {
+        // Multiple occurrences of same term
+        let result = parse_query("test test test", false).unwrap();
+        assert!(result.fts_query.is_some());
+    }
+
+    #[test]
+    fn test_query_phrase_vs_terms() {
+        // Phrase match should be different from individual terms
+        let phrase_result = parse_query("\"hello world\"", false).unwrap();
+        let terms_result = parse_query("hello world", false).unwrap();
+
+        // Phrase should have quotes in the FTS5 query
+        assert!(phrase_result.fts_query.unwrap().contains("\"hello world\""));
+        // Terms should have AND
+        assert!(terms_result.fts_query.unwrap().contains("AND"));
     }
 }

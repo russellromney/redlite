@@ -85,26 +85,15 @@ async fn main() -> anyhow::Result<()> {
         }
         #[cfg(feature = "turso")]
         "turso" => {
-            let db = match storage.as_str() {
-                "memory" => {
-                    tracing::info!("Using Turso in-memory database");
-                    TursoDb::open_memory()?
-                }
-                "file" => {
-                    tracing::info!("Using Turso file database: {}", args.db);
-                    TursoDb::open(&args.db)?
-                }
-                _ => {
-                    anyhow::bail!("Invalid storage type: {}. Use 'file' or 'memory'", storage);
-                }
-            };
-
-            if args.password.is_some() {
-                tracing::info!("Authentication enabled");
-            }
-
-            let server = Server::new(db, args.password);
-            server.run(&args.addr).await?;
+            // TursoDb currently only supports a minimal subset of Redis commands
+            // and doesn't implement the full interface needed for server mode
+            // (missing: session(), with_notifier(), select(), keys(), expire(), etc.)
+            // Use --backend=sqlite for full server functionality.
+            anyhow::bail!(
+                "Turso backend is not yet supported in server mode. \
+                TursoDb implements a minimal Redis subset for embedded/benchmark use only. \
+                Use --backend=sqlite for full server functionality."
+            );
         }
         #[cfg(not(feature = "turso"))]
         "turso" => {

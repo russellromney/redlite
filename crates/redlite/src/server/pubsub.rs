@@ -64,9 +64,9 @@ impl ConnectionState {
     pub fn subscription_count(&self) -> usize {
         match self {
             ConnectionState::Normal { .. } => 0,
-            ConnectionState::Subscribed { channels, patterns, .. } => {
-                channels.len() + patterns.len()
-            }
+            ConnectionState::Subscribed {
+                channels, patterns, ..
+            } => channels.len() + patterns.len(),
             ConnectionState::Transaction { .. } => 0,
         }
     }
@@ -224,12 +224,10 @@ pub fn cmd_subscribe(
         }
 
         // Get or create broadcast channel
-        let sender = pubsub_map
-            .entry(channel.clone())
-            .or_insert_with(|| {
-                let (tx, _) = broadcast::channel(128);
-                tx
-            });
+        let sender = pubsub_map.entry(channel.clone()).or_insert_with(|| {
+            let (tx, _) = broadcast::channel(128);
+            tx
+        });
 
         // Subscribe
         let receiver = sender.subscribe();
@@ -394,12 +392,10 @@ pub fn cmd_psubscribe(
 
         // Create a special channel key for patterns
         let pattern_key = format!("pattern:{}", pattern);
-        let sender = pubsub_map
-            .entry(pattern_key)
-            .or_insert_with(|| {
-                let (tx, _) = broadcast::channel(128);
-                tx
-            });
+        let sender = pubsub_map.entry(pattern_key).or_insert_with(|| {
+            let (tx, _) = broadcast::channel(128);
+            tx
+        });
 
         // Subscribe
         let receiver = sender.subscribe();
@@ -639,8 +635,8 @@ fn glob_match(text: &str, pattern: &str) -> bool {
                 }
 
                 // Find next match position
-                let remaining_pattern = std::str::from_utf8(&pattern_bytes[pattern_idx..])
-                    .unwrap_or("");
+                let remaining_pattern =
+                    std::str::from_utf8(&pattern_bytes[pattern_idx..]).unwrap_or("");
                 while text_idx <= text_bytes.len() {
                     if glob_match(&text[text_idx..], remaining_pattern) {
                         return true;

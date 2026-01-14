@@ -1,8 +1,8 @@
 use std::collections::HashMap;
 use std::net::SocketAddr;
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, RwLock};
 use std::time::{SystemTime, UNIX_EPOCH};
-use std::sync::atomic::{AtomicU64, Ordering};
 
 /// Connection type (mode)
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -207,13 +207,15 @@ impl ConnectionPool {
     /// Get all connections with optional ID filter
     pub fn get_by_ids(&self, ids: &[u64]) -> Vec<Arc<RwLock<ConnectionInfo>>> {
         let conns = self.connections.read().unwrap();
-        ids.iter()
-            .filter_map(|id| conns.get(id).cloned())
-            .collect()
+        ids.iter().filter_map(|id| conns.get(id).cloned()).collect()
     }
 
     /// Format all connections for CLIENT LIST
-    pub fn format_list(&self, filter_type: Option<ConnectionType>, filter_ids: Option<&[u64]>) -> String {
+    pub fn format_list(
+        &self,
+        filter_type: Option<ConnectionType>,
+        filter_ids: Option<&[u64]>,
+    ) -> String {
         let conns = match (filter_type, filter_ids) {
             (Some(ty), _) => self.get_by_type(ty),
             (None, Some(ids)) => self.get_by_ids(ids),

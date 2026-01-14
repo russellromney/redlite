@@ -24,9 +24,10 @@ impl<R: AsyncReadExt + Unpin> RespReader<R> {
             return Err(io::Error::new(io::ErrorKind::InvalidData, "expected array"));
         }
 
-        let count: usize = line[1..].trim().parse().map_err(|_| {
-            io::Error::new(io::ErrorKind::InvalidData, "invalid array length")
-        })?;
+        let count: usize = line[1..]
+            .trim()
+            .parse()
+            .map_err(|_| io::Error::new(io::ErrorKind::InvalidData, "invalid array length"))?;
 
         let mut args = Vec::with_capacity(count);
         for _ in 0..count {

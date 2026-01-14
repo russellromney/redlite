@@ -18,6 +18,11 @@ See [COMMANDS.md](https://github.com/russellromney/redlite/blob/main/COMMANDS.md
 - ✅ **Sorted Sets** - ZADD, ZREM, ZRANGE, ZRANGEBYSCORE, etc.
 - ✅ **Streams** - XADD, XREAD, XRANGE, XGROUP, XREADGROUP, etc.
 
+### Search & Vectors
+
+- ✅ **RediSearch** - FT.CREATE, FT.SEARCH, FT.INFO, FT.AGGREGATE, FT.ALTER, FT.DROPINDEX, aliases, synonyms, suggestions
+- ✅ **Vector Search** - VADD, VSIM, VREM, VCARD, VDIM, VGET, VGETALL, VGETATTRIBUTES, VSETATTRIBUTES (requires `--features vectors`)
+
 ### Transactions & Scripting
 
 - ✅ **Transactions** - MULTI, EXEC, DISCARD, WATCH, UNWATCH

@@ -7,9 +7,9 @@ use tokio::sync::broadcast;
 
 use crate::error::{KvError, Result};
 use crate::types::{
-    ConsumerGroupInfo, ConsumerInfo, FtsLevel, FtsResult, FtsStats, HistoryEntry, HistoryStats,
-    KeyInfo, KeyType, PendingEntry, PendingSummary, RetentionType, SetOptions, StreamEntry,
-    StreamId, StreamInfo, ZMember,
+    ConsumerGroupInfo, ConsumerInfo, FtsLevel, FtsResult, FtsStats, GetExOption, HistoryEntry,
+    HistoryStats, KeyInfo, KeyType, ListDirection, PendingEntry, PendingSummary, RetentionType,
+    SetOptions, StreamEntry, StreamId, StreamInfo, ZMember,
 };
 #[cfg(feature = "vectors")]
 use crate::types::{VectorInput, VectorQuantization, VectorSetInfo, VectorSimResult};
@@ -817,6 +817,181 @@ impl Db {
         Ok((next_cursor, rows))
     }
 
+    /// HSCAN key cursor [MATCH pattern] [COUNT count] - cursor-based iteration over hash fields
+    pub fn hscan(
+        &self,
+        key: &str,
+        cursor: u64,
+        pattern: Option<&str>,
+        count: usize,
+    ) -> Result<(u64, Vec<(String, Vec<u8>)>)> {
+        let conn = self.core.conn.lock().unwrap_or_else(|e| e.into_inner());
+
+        let key_id = match self.get_hash_key_id(&conn, key)? {
+            Some(id) => id,
+            None => return Ok((0, Vec::new())),
+        };
+
+        let sql = match pattern {
+            Some(_) => {
+                "SELECT field, value FROM hashes
+                 WHERE key_id = ?1 AND field GLOB ?2
+                 ORDER BY field
+                 LIMIT ?3 OFFSET ?4"
+            }
+            None => {
+                "SELECT field, value FROM hashes
+                 WHERE key_id = ?1
+                 ORDER BY field
+                 LIMIT ?2 OFFSET ?3"
+            }
+        };
+
+        let mut stmt = conn.prepare(sql)?;
+
+        let rows: Vec<(String, Vec<u8>)> = match pattern {
+            Some(p) => {
+                let iter = stmt.query_map(
+                    params![key_id, p, count as i64, cursor as i64],
+                    |row| Ok((row.get(0)?, row.get(1)?)),
+                )?;
+                iter.filter_map(|r| r.ok()).collect()
+            }
+            None => {
+                let iter = stmt.query_map(
+                    params![key_id, count as i64, cursor as i64],
+                    |row| Ok((row.get(0)?, row.get(1)?)),
+                )?;
+                iter.filter_map(|r| r.ok()).collect()
+            }
+        };
+
+        let next_cursor = if rows.len() < count {
+            0
+        } else {
+            cursor + count as u64
+        };
+
+        Ok((next_cursor, rows))
+    }
+
+    /// SSCAN key cursor [MATCH pattern] [COUNT count] - cursor-based iteration over set members
+    pub fn sscan(
+        &self,
+        key: &str,
+        cursor: u64,
+        pattern: Option<&str>,
+        count: usize,
+    ) -> Result<(u64, Vec<Vec<u8>>)> {
+        let conn = self.core.conn.lock().unwrap_or_else(|e| e.into_inner());
+
+        let key_id = match self.get_set_key_id(&conn, key)? {
+            Some(id) => id,
+            None => return Ok((0, Vec::new())),
+        };
+
+        // For sets, pattern matching works on string representation of members
+        let sql = match pattern {
+            Some(_) => {
+                "SELECT member FROM sets
+                 WHERE key_id = ?1 AND CAST(member AS TEXT) GLOB ?2
+                 ORDER BY member
+                 LIMIT ?3 OFFSET ?4"
+            }
+            None => {
+                "SELECT member FROM sets
+                 WHERE key_id = ?1
+                 ORDER BY member
+                 LIMIT ?2 OFFSET ?3"
+            }
+        };
+
+        let mut stmt = conn.prepare(sql)?;
+
+        let rows: Vec<Vec<u8>> = match pattern {
+            Some(p) => {
+                let iter = stmt.query_map(
+                    params![key_id, p, count as i64, cursor as i64],
+                    |row| row.get(0),
+                )?;
+                iter.filter_map(|r| r.ok()).collect()
+            }
+            None => {
+                let iter = stmt.query_map(
+                    params![key_id, count as i64, cursor as i64],
+                    |row| row.get(0),
+                )?;
+                iter.filter_map(|r| r.ok()).collect()
+            }
+        };
+
+        let next_cursor = if rows.len() < count {
+            0
+        } else {
+            cursor + count as u64
+        };
+
+        Ok((next_cursor, rows))
+    }
+
+    /// ZSCAN key cursor [MATCH pattern] [COUNT count] - cursor-based iteration over sorted set members
+    pub fn zscan(
+        &self,
+        key: &str,
+        cursor: u64,
+        pattern: Option<&str>,
+        count: usize,
+    ) -> Result<(u64, Vec<(Vec<u8>, f64)>)> {
+        let conn = self.core.conn.lock().unwrap_or_else(|e| e.into_inner());
+
+        let key_id = match self.get_zset_key_id(&conn, key)? {
+            Some(id) => id,
+            None => return Ok((0, Vec::new())),
+        };
+
+        let sql = match pattern {
+            Some(_) => {
+                "SELECT member, score FROM zsets
+                 WHERE key_id = ?1 AND CAST(member AS TEXT) GLOB ?2
+                 ORDER BY score, member
+                 LIMIT ?3 OFFSET ?4"
+            }
+            None => {
+                "SELECT member, score FROM zsets
+                 WHERE key_id = ?1
+                 ORDER BY score, member
+                 LIMIT ?2 OFFSET ?3"
+            }
+        };
+
+        let mut stmt = conn.prepare(sql)?;
+
+        let rows: Vec<(Vec<u8>, f64)> = match pattern {
+            Some(p) => {
+                let iter = stmt.query_map(
+                    params![key_id, p, count as i64, cursor as i64],
+                    |row| Ok((row.get(0)?, row.get(1)?)),
+                )?;
+                iter.filter_map(|r| r.ok()).collect()
+            }
+            None => {
+                let iter = stmt.query_map(
+                    params![key_id, count as i64, cursor as i64],
+                    |row| Ok((row.get(0)?, row.get(1)?)),
+                )?;
+                iter.filter_map(|r| r.ok()).collect()
+            }
+        };
+
+        let next_cursor = if rows.len() < count {
+            0
+        } else {
+            cursor + count as u64
+        };
+
+        Ok((next_cursor, rows))
+    }
+
     // --- Session 3: String Operations ---
 
     /// INCR key - increment by 1, creates key with value 0 if not exists
@@ -1218,6 +1393,274 @@ impl Db {
         self.set(key, &new_value, None)?;
 
         Ok(new_len)
+    }
+
+    // --- Session 26: Additional String/Key Commands ---
+
+    /// GETEX key [EX seconds | PX milliseconds | EXAT unix-time-seconds | PXAT unix-time-milliseconds | PERSIST]
+    /// Get value and optionally set/clear expiration
+    pub fn getex(&self, key: &str, ttl_option: Option<GetExOption>) -> Result<Option<Vec<u8>>> {
+        self.maybe_autovacuum();
+        let conn = self.core.conn.lock().unwrap_or_else(|e| e.into_inner());
+        let db = self.selected_db;
+        let now = Self::now_ms();
+
+        // First check if the key exists and get its type
+        let key_info: std::result::Result<(i64, i32, Option<i64>), _> = conn.query_row(
+            "SELECT id, type, expire_at FROM keys WHERE db = ?1 AND key = ?2",
+            params![db, key],
+            |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+        );
+
+        match key_info {
+            Ok((key_id, key_type, expire_at)) => {
+                // Check expiration
+                if let Some(exp) = expire_at {
+                    if exp <= now {
+                        // Lazy delete - drop lock first
+                        drop(conn);
+                        let _ = self.del(&[key]);
+                        return Ok(None);
+                    }
+                }
+
+                // Check type - must be string
+                if key_type != KeyType::String as i32 {
+                    return Err(KvError::WrongType);
+                }
+
+                // Get the string value
+                let result: std::result::Result<Vec<u8>, _> = conn.query_row(
+                    "SELECT value FROM strings WHERE key_id = ?1",
+                    params![key_id],
+                    |row| row.get(0),
+                );
+
+                // Apply TTL option if provided
+                if let Some(opt) = ttl_option {
+                    let new_expire: Option<i64> = match opt {
+                        GetExOption::Ex(seconds) => Some(now + seconds * 1000),
+                        GetExOption::Px(milliseconds) => Some(now + milliseconds),
+                        GetExOption::ExAt(unix_seconds) => Some(unix_seconds * 1000),
+                        GetExOption::PxAt(unix_milliseconds) => Some(unix_milliseconds),
+                        GetExOption::Persist => None,
+                    };
+
+                    conn.execute(
+                        "UPDATE keys SET expire_at = ?1, updated_at = ?2, version = version + 1 WHERE id = ?3",
+                        params![new_expire, now, key_id],
+                    )?;
+                }
+
+                match result {
+                    Ok(value) => Ok(Some(value)),
+                    Err(rusqlite::Error::QueryReturnedNoRows) => Ok(None),
+                    Err(e) => Err(e.into()),
+                }
+            }
+            Err(rusqlite::Error::QueryReturnedNoRows) => Ok(None),
+            Err(e) => Err(e.into()),
+        }
+    }
+
+    /// GETDEL key - get value and delete key
+    pub fn getdel(&self, key: &str) -> Result<Option<Vec<u8>>> {
+        // Get the value first
+        let value = self.get(key)?;
+        // Delete the key if it existed
+        if value.is_some() {
+            let _ = self.del(&[key]);
+        }
+        Ok(value)
+    }
+
+    /// SETEX key seconds value - set key with expiration in seconds
+    pub fn setex(&self, key: &str, seconds: i64, value: &[u8]) -> Result<()> {
+        if seconds <= 0 {
+            return Err(KvError::InvalidExpireTime);
+        }
+        self.set(key, value, Some(Duration::from_secs(seconds as u64)))
+    }
+
+    /// PSETEX key milliseconds value - set key with expiration in milliseconds
+    pub fn psetex(&self, key: &str, milliseconds: i64, value: &[u8]) -> Result<()> {
+        if milliseconds <= 0 {
+            return Err(KvError::InvalidExpireTime);
+        }
+        self.set(key, value, Some(Duration::from_millis(milliseconds as u64)))
+    }
+
+    /// PERSIST key - remove expiration from key
+    pub fn persist(&self, key: &str) -> Result<bool> {
+        let conn = self.core.conn.lock().unwrap_or_else(|e| e.into_inner());
+        let db = self.selected_db;
+        let now = Self::now_ms();
+
+        let count = conn.execute(
+            "UPDATE keys
+             SET expire_at = NULL, updated_at = ?1, version = version + 1
+             WHERE db = ?2 AND key = ?3
+             AND (expire_at IS NULL OR expire_at > ?1)",
+            params![now, db, key],
+        )?;
+
+        Ok(count > 0)
+    }
+
+    /// PEXPIRE key milliseconds - set TTL in milliseconds
+    pub fn pexpire(&self, key: &str, milliseconds: i64) -> Result<bool> {
+        let conn = self.core.conn.lock().unwrap_or_else(|e| e.into_inner());
+        let db = self.selected_db;
+        let now = Self::now_ms();
+        let expire_at = now + milliseconds;
+
+        let count = conn.execute(
+            "UPDATE keys
+             SET expire_at = ?1, updated_at = ?2, version = version + 1
+             WHERE db = ?3 AND key = ?4
+             AND (expire_at IS NULL OR expire_at > ?2)",
+            params![expire_at, now, db, key],
+        )?;
+
+        Ok(count > 0)
+    }
+
+    /// EXPIREAT key unix-time-seconds - set expiration at unix timestamp
+    pub fn expireat(&self, key: &str, unix_seconds: i64) -> Result<bool> {
+        let conn = self.core.conn.lock().unwrap_or_else(|e| e.into_inner());
+        let db = self.selected_db;
+        let now = Self::now_ms();
+        let expire_at = unix_seconds * 1000; // Convert to milliseconds
+
+        let count = conn.execute(
+            "UPDATE keys
+             SET expire_at = ?1, updated_at = ?2, version = version + 1
+             WHERE db = ?3 AND key = ?4
+             AND (expire_at IS NULL OR expire_at > ?2)",
+            params![expire_at, now, db, key],
+        )?;
+
+        Ok(count > 0)
+    }
+
+    /// PEXPIREAT key unix-time-milliseconds - set expiration at unix timestamp in milliseconds
+    pub fn pexpireat(&self, key: &str, unix_milliseconds: i64) -> Result<bool> {
+        let conn = self.core.conn.lock().unwrap_or_else(|e| e.into_inner());
+        let db = self.selected_db;
+        let now = Self::now_ms();
+
+        let count = conn.execute(
+            "UPDATE keys
+             SET expire_at = ?1, updated_at = ?2, version = version + 1
+             WHERE db = ?3 AND key = ?4
+             AND (expire_at IS NULL OR expire_at > ?2)",
+            params![unix_milliseconds, now, db, key],
+        )?;
+
+        Ok(count > 0)
+    }
+
+    /// RENAME key newkey - rename a key
+    pub fn rename(&self, key: &str, newkey: &str) -> Result<()> {
+        let conn = self.core.conn.lock().unwrap_or_else(|e| e.into_inner());
+        let db = self.selected_db;
+        let now = Self::now_ms();
+
+        // Check if source key exists
+        let key_info: std::result::Result<(i64, Option<i64>), _> = conn.query_row(
+            "SELECT id, expire_at FROM keys WHERE db = ?1 AND key = ?2",
+            params![db, key],
+            |row| Ok((row.get(0)?, row.get(1)?)),
+        );
+
+        match key_info {
+            Ok((key_id, expire_at)) => {
+                // Check expiration
+                if let Some(exp) = expire_at {
+                    if exp <= now {
+                        drop(conn);
+                        let _ = self.del(&[key]);
+                        return Err(KvError::NoSuchKey);
+                    }
+                }
+
+                // Delete destination key if exists
+                conn.execute(
+                    "DELETE FROM keys WHERE db = ?1 AND key = ?2",
+                    params![db, newkey],
+                )?;
+
+                // Rename the key
+                conn.execute(
+                    "UPDATE keys SET key = ?1, updated_at = ?2, version = version + 1 WHERE id = ?3",
+                    params![newkey, now, key_id],
+                )?;
+
+                drop(conn);
+                // Record history
+                let _ = self.record_history(db, key, "RENAME", None);
+                let _ = self.record_history(db, newkey, "RENAME", None);
+
+                Ok(())
+            }
+            Err(rusqlite::Error::QueryReturnedNoRows) => Err(KvError::NoSuchKey),
+            Err(e) => Err(e.into()),
+        }
+    }
+
+    /// RENAMENX key newkey - rename key only if newkey doesn't exist
+    pub fn renamenx(&self, key: &str, newkey: &str) -> Result<bool> {
+        let conn = self.core.conn.lock().unwrap_or_else(|e| e.into_inner());
+        let db = self.selected_db;
+        let now = Self::now_ms();
+
+        // Check if source key exists
+        let key_info: std::result::Result<(i64, Option<i64>), _> = conn.query_row(
+            "SELECT id, expire_at FROM keys WHERE db = ?1 AND key = ?2",
+            params![db, key],
+            |row| Ok((row.get(0)?, row.get(1)?)),
+        );
+
+        match key_info {
+            Ok((key_id, expire_at)) => {
+                // Check expiration
+                if let Some(exp) = expire_at {
+                    if exp <= now {
+                        drop(conn);
+                        let _ = self.del(&[key]);
+                        return Err(KvError::NoSuchKey);
+                    }
+                }
+
+                // Check if destination key exists
+                let dest_exists: bool = conn
+                    .query_row(
+                        "SELECT 1 FROM keys WHERE db = ?1 AND key = ?2 AND (expire_at IS NULL OR expire_at > ?3)",
+                        params![db, newkey, now],
+                        |_| Ok(true),
+                    )
+                    .unwrap_or(false);
+
+                if dest_exists {
+                    return Ok(false);
+                }
+
+                // Rename the key
+                conn.execute(
+                    "UPDATE keys SET key = ?1, updated_at = ?2, version = version + 1 WHERE id = ?3",
+                    params![newkey, now, key_id],
+                )?;
+
+                drop(conn);
+                // Record history
+                let _ = self.record_history(db, key, "RENAME", None);
+                let _ = self.record_history(db, newkey, "RENAME", None);
+
+                Ok(true)
+            }
+            Err(rusqlite::Error::QueryReturnedNoRows) => Err(KvError::NoSuchKey),
+            Err(e) => Err(e.into()),
+        }
     }
 
     // --- Session 6: Hash Operations ---
@@ -1929,6 +2372,393 @@ impl Db {
         }
 
         Ok(length)
+    }
+
+    /// LPUSHX key element [element ...] - prepend elements only if list exists
+    pub fn lpushx(&self, key: &str, values: &[&[u8]]) -> Result<i64> {
+        if values.is_empty() {
+            return Ok(0);
+        }
+
+        let conn = self.core.conn.lock().unwrap_or_else(|e| e.into_inner());
+
+        // Only proceed if list exists
+        let key_id = match self.get_list_key_id(&conn, key)? {
+            Some(id) => id,
+            None => return Ok(0),
+        };
+
+        // Get current min position (or start at LIST_GAP if empty)
+        let mut min_pos: i64 = conn
+            .query_row(
+                "SELECT MIN(pos) FROM lists WHERE key_id = ?1",
+                params![key_id],
+                |row| row.get::<_, Option<i64>>(0),
+            )
+            .unwrap_or(None)
+            .unwrap_or(Self::LIST_GAP);
+
+        // Check if we would overflow - rebalance if needed
+        let new_min = min_pos.saturating_sub((values.len() as i64) * Self::LIST_GAP);
+        if new_min < Self::LIST_POS_MIN_THRESHOLD {
+            self.rebalance_list(&conn, key_id)?;
+            min_pos = conn
+                .query_row(
+                    "SELECT MIN(pos) FROM lists WHERE key_id = ?1",
+                    params![key_id],
+                    |row| row.get::<_, Option<i64>>(0),
+                )
+                .unwrap_or(None)
+                .unwrap_or(Self::LIST_GAP);
+        }
+
+        // Insert values in reverse order
+        for (i, value) in values.iter().enumerate() {
+            let pos = min_pos - ((i as i64 + 1) * Self::LIST_GAP);
+            conn.execute(
+                "INSERT INTO lists (key_id, pos, value) VALUES (?1, ?2, ?3)",
+                params![key_id, pos, value],
+            )?;
+        }
+
+        // Get and return new length
+        let length: i64 = conn.query_row(
+            "SELECT COUNT(*) FROM lists WHERE key_id = ?1",
+            params![key_id],
+            |row| row.get(0),
+        )?;
+
+        // Update key timestamp
+        let now = Self::now_ms();
+        conn.execute(
+            "UPDATE keys SET updated_at = ?1, version = version + 1 WHERE id = ?2",
+            params![now, key_id],
+        )?;
+
+        drop(conn);
+        let _ = self.record_history(self.selected_db, key, "LPUSHX", None);
+
+        if self.is_server_mode() {
+            let key = key.to_string();
+            let db = self.clone();
+            tokio::spawn(async move {
+                let _ = db.notify_key(&key).await;
+            });
+        }
+
+        Ok(length)
+    }
+
+    /// RPUSHX key element [element ...] - append elements only if list exists
+    pub fn rpushx(&self, key: &str, values: &[&[u8]]) -> Result<i64> {
+        if values.is_empty() {
+            return Ok(0);
+        }
+
+        let conn = self.core.conn.lock().unwrap_or_else(|e| e.into_inner());
+
+        // Only proceed if list exists
+        let key_id = match self.get_list_key_id(&conn, key)? {
+            Some(id) => id,
+            None => return Ok(0),
+        };
+
+        // Get current max position (or start at 0 if empty)
+        let mut max_pos: i64 = conn
+            .query_row(
+                "SELECT MAX(pos) FROM lists WHERE key_id = ?1",
+                params![key_id],
+                |row| row.get::<_, Option<i64>>(0),
+            )
+            .unwrap_or(None)
+            .unwrap_or(0);
+
+        // Check if we would overflow - rebalance if needed
+        let new_max = max_pos.saturating_add((values.len() as i64) * Self::LIST_GAP);
+        if new_max > Self::LIST_POS_MAX_THRESHOLD {
+            self.rebalance_list(&conn, key_id)?;
+            max_pos = conn
+                .query_row(
+                    "SELECT MAX(pos) FROM lists WHERE key_id = ?1",
+                    params![key_id],
+                    |row| row.get::<_, Option<i64>>(0),
+                )
+                .unwrap_or(None)
+                .unwrap_or(0);
+        }
+
+        // Insert values in order
+        for (i, value) in values.iter().enumerate() {
+            let pos = max_pos + ((i as i64 + 1) * Self::LIST_GAP);
+            conn.execute(
+                "INSERT INTO lists (key_id, pos, value) VALUES (?1, ?2, ?3)",
+                params![key_id, pos, value],
+            )?;
+        }
+
+        // Get and return new length
+        let length: i64 = conn.query_row(
+            "SELECT COUNT(*) FROM lists WHERE key_id = ?1",
+            params![key_id],
+            |row| row.get(0),
+        )?;
+
+        // Update key timestamp
+        let now = Self::now_ms();
+        conn.execute(
+            "UPDATE keys SET updated_at = ?1, version = version + 1 WHERE id = ?2",
+            params![now, key_id],
+        )?;
+
+        drop(conn);
+        let _ = self.record_history(self.selected_db, key, "RPUSHX", None);
+
+        if self.is_server_mode() {
+            let key = key.to_string();
+            let db = self.clone();
+            tokio::spawn(async move {
+                let _ = db.notify_key(&key).await;
+            });
+        }
+
+        Ok(length)
+    }
+
+    /// LPOS key element [RANK rank] [COUNT count] [MAXLEN maxlen]
+    /// Find position of element in list. Returns first matching index, or None if not found.
+    pub fn lpos(
+        &self,
+        key: &str,
+        element: &[u8],
+        rank: Option<i64>,
+        count: Option<usize>,
+        maxlen: Option<usize>,
+    ) -> Result<Vec<i64>> {
+        let conn = self.core.conn.lock().unwrap_or_else(|e| e.into_inner());
+
+        let key_id = match self.get_list_key_id(&conn, key)? {
+            Some(id) => id,
+            None => return Ok(vec![]),
+        };
+
+        let rank = rank.unwrap_or(1);
+        let count = count.unwrap_or(1);
+
+        // Determine scan direction and starting point
+        let (order, skip_count) = if rank > 0 {
+            ("ASC", (rank - 1) as usize)
+        } else {
+            ("DESC", (-rank - 1) as usize)
+        };
+
+        // Build query with optional maxlen limit
+        let sql = if let Some(max) = maxlen {
+            format!(
+                "SELECT pos, value, (ROW_NUMBER() OVER (ORDER BY pos {})) - 1 as idx
+                 FROM lists WHERE key_id = ?1 ORDER BY pos {} LIMIT ?2",
+                order, order
+            )
+        } else {
+            format!(
+                "SELECT pos, value, (ROW_NUMBER() OVER (ORDER BY pos {})) - 1 as idx
+                 FROM lists WHERE key_id = ?1 ORDER BY pos {}",
+                order, order
+            )
+        };
+
+        let process_rows = |stmt: &mut rusqlite::Statement| -> Result<Vec<i64>> {
+            let mut rows = if let Some(max) = maxlen {
+                stmt.query(params![key_id, max as i64])?
+            } else {
+                stmt.query(params![key_id])?
+            };
+
+            let mut results = Vec::new();
+            let mut found = 0;
+            let mut skipped = 0;
+
+            while let Some(row) = rows.next()? {
+                let value: Vec<u8> = row.get(1)?;
+                let idx: i64 = row.get(2)?;
+
+                if value == element {
+                    if skipped < skip_count {
+                        skipped += 1;
+                    } else {
+                        // For negative rank, we need the absolute index from the start
+                        let actual_idx = if rank < 0 {
+                            // We scanned from end, but idx is the offset from end
+                            // Need to get actual count and compute
+                            idx
+                        } else {
+                            idx
+                        };
+                        results.push(actual_idx);
+                        found += 1;
+                        if found >= count {
+                            break;
+                        }
+                    }
+                }
+            }
+            Ok(results)
+        };
+
+        let mut stmt = conn.prepare(&sql)?;
+        let indices = process_rows(&mut stmt)?;
+
+        // If we scanned from end (negative rank), we need to convert indices
+        if rank < 0 && !indices.is_empty() {
+            let total: i64 = conn.query_row(
+                "SELECT COUNT(*) FROM lists WHERE key_id = ?1",
+                params![key_id],
+                |row| row.get(0),
+            )?;
+            return Ok(indices.into_iter().map(|i| total - 1 - i).collect());
+        }
+
+        Ok(indices)
+    }
+
+    /// LMOVE source destination LEFT|RIGHT LEFT|RIGHT
+    /// Atomically pop from source and push to destination
+    pub fn lmove(
+        &self,
+        source: &str,
+        destination: &str,
+        wherefrom: ListDirection,
+        whereto: ListDirection,
+    ) -> Result<Option<Vec<u8>>> {
+        let conn = self.core.conn.lock().unwrap_or_else(|e| e.into_inner());
+
+        // Get source key_id
+        let src_key_id = match self.get_list_key_id(&conn, source)? {
+            Some(id) => id,
+            None => return Ok(None),
+        };
+
+        // Pop element from source
+        let element = match wherefrom {
+            ListDirection::Left => {
+                // Get leftmost element
+                let result: std::result::Result<(i64, Vec<u8>), _> = conn.query_row(
+                    "SELECT pos, value FROM lists WHERE key_id = ?1 ORDER BY pos ASC LIMIT 1",
+                    params![src_key_id],
+                    |row| Ok((row.get(0)?, row.get(1)?)),
+                );
+                match result {
+                    Ok((pos, value)) => {
+                        conn.execute(
+                            "DELETE FROM lists WHERE key_id = ?1 AND pos = ?2",
+                            params![src_key_id, pos],
+                        )?;
+                        Some(value)
+                    }
+                    Err(rusqlite::Error::QueryReturnedNoRows) => None,
+                    Err(e) => return Err(e.into()),
+                }
+            }
+            ListDirection::Right => {
+                // Get rightmost element
+                let result: std::result::Result<(i64, Vec<u8>), _> = conn.query_row(
+                    "SELECT pos, value FROM lists WHERE key_id = ?1 ORDER BY pos DESC LIMIT 1",
+                    params![src_key_id],
+                    |row| Ok((row.get(0)?, row.get(1)?)),
+                );
+                match result {
+                    Ok((pos, value)) => {
+                        conn.execute(
+                            "DELETE FROM lists WHERE key_id = ?1 AND pos = ?2",
+                            params![src_key_id, pos],
+                        )?;
+                        Some(value)
+                    }
+                    Err(rusqlite::Error::QueryReturnedNoRows) => None,
+                    Err(e) => return Err(e.into()),
+                }
+            }
+        };
+
+        let element = match element {
+            Some(e) => e,
+            None => return Ok(None),
+        };
+
+        // Check if source is now empty and delete key if so
+        let src_count: i64 = conn.query_row(
+            "SELECT COUNT(*) FROM lists WHERE key_id = ?1",
+            params![src_key_id],
+            |row| row.get(0),
+        )?;
+        if src_count == 0 {
+            conn.execute("DELETE FROM keys WHERE id = ?1", params![src_key_id])?;
+        } else {
+            let now = Self::now_ms();
+            conn.execute(
+                "UPDATE keys SET updated_at = ?1, version = version + 1 WHERE id = ?2",
+                params![now, src_key_id],
+            )?;
+        }
+
+        // Get or create destination key
+        // Release and reacquire lock if source == dest to avoid deadlock
+        let dest_key_id = if source == destination && src_count > 0 {
+            src_key_id
+        } else {
+            // Need to release conn for get_or_create_list_key
+            drop(conn);
+            let conn = self.core.conn.lock().unwrap_or_else(|e| e.into_inner());
+            self.get_or_create_list_key(&conn, destination)?
+        };
+
+        let conn = self.core.conn.lock().unwrap_or_else(|e| e.into_inner());
+
+        // Push to destination
+        match whereto {
+            ListDirection::Left => {
+                let min_pos: i64 = conn
+                    .query_row(
+                        "SELECT MIN(pos) FROM lists WHERE key_id = ?1",
+                        params![dest_key_id],
+                        |row| row.get::<_, Option<i64>>(0),
+                    )
+                    .unwrap_or(None)
+                    .unwrap_or(Self::LIST_GAP);
+                let pos = min_pos - Self::LIST_GAP;
+                conn.execute(
+                    "INSERT INTO lists (key_id, pos, value) VALUES (?1, ?2, ?3)",
+                    params![dest_key_id, pos, element],
+                )?;
+            }
+            ListDirection::Right => {
+                let max_pos: i64 = conn
+                    .query_row(
+                        "SELECT MAX(pos) FROM lists WHERE key_id = ?1",
+                        params![dest_key_id],
+                        |row| row.get::<_, Option<i64>>(0),
+                    )
+                    .unwrap_or(None)
+                    .unwrap_or(0);
+                let pos = max_pos + Self::LIST_GAP;
+                conn.execute(
+                    "INSERT INTO lists (key_id, pos, value) VALUES (?1, ?2, ?3)",
+                    params![dest_key_id, pos, element],
+                )?;
+            }
+        }
+
+        // Update destination timestamp
+        let now = Self::now_ms();
+        conn.execute(
+            "UPDATE keys SET updated_at = ?1, version = version + 1 WHERE id = ?2",
+            params![now, dest_key_id],
+        )?;
+
+        drop(conn);
+        let _ = self.record_history(self.selected_db, source, "LMOVE", None);
+        let _ = self.record_history(self.selected_db, destination, "LMOVE", None);
+
+        Ok(Some(element))
     }
 
     /// LPOP key [count] - remove and return elements from head
@@ -16980,6 +17810,639 @@ mod tests {
         // Verify dest is a sorted set with 2 members
         let zcard = db.zcard("dest").unwrap();
         assert_eq!(zcard, 2);
+    }
+
+    // --- Session 26: Additional Command Tests ---
+
+    #[test]
+    fn test_getex_with_ex() {
+        let db = Db::open_memory().unwrap();
+        db.set("key", b"value", None).unwrap();
+
+        // Get with EX option
+        let result = db
+            .getex("key", Some(GetExOption::Ex(10)))
+            .unwrap();
+        assert_eq!(result, Some(b"value".to_vec()));
+
+        // Check TTL was set
+        let ttl = db.ttl("key").unwrap();
+        assert!(ttl >= 9 && ttl <= 10);
+    }
+
+    #[test]
+    fn test_getex_with_px() {
+        let db = Db::open_memory().unwrap();
+        db.set("key", b"value", None).unwrap();
+
+        // Get with PX option
+        let result = db
+            .getex("key", Some(GetExOption::Px(5000)))
+            .unwrap();
+        assert_eq!(result, Some(b"value".to_vec()));
+
+        // Check TTL was set
+        let pttl = db.pttl("key").unwrap();
+        assert!(pttl >= 4900 && pttl <= 5000);
+    }
+
+    #[test]
+    fn test_getex_with_persist() {
+        let db = Db::open_memory().unwrap();
+        db.set("key", b"value", Some(Duration::from_secs(60))).unwrap();
+
+        // Get with PERSIST option
+        let result = db
+            .getex("key", Some(GetExOption::Persist))
+            .unwrap();
+        assert_eq!(result, Some(b"value".to_vec()));
+
+        // Check TTL was removed
+        let ttl = db.ttl("key").unwrap();
+        assert_eq!(ttl, -1);
+    }
+
+    #[test]
+    fn test_getex_nonexistent() {
+        let db = Db::open_memory().unwrap();
+        let result = db.getex("nonexistent", None).unwrap();
+        assert_eq!(result, None);
+    }
+
+    #[test]
+    fn test_getdel() {
+        let db = Db::open_memory().unwrap();
+        db.set("key", b"value", None).unwrap();
+
+        // Get and delete
+        let result = db.getdel("key").unwrap();
+        assert_eq!(result, Some(b"value".to_vec()));
+
+        // Verify deleted
+        let result = db.get("key").unwrap();
+        assert_eq!(result, None);
+    }
+
+    #[test]
+    fn test_getdel_nonexistent() {
+        let db = Db::open_memory().unwrap();
+        let result = db.getdel("nonexistent").unwrap();
+        assert_eq!(result, None);
+    }
+
+    #[test]
+    fn test_setex() {
+        let db = Db::open_memory().unwrap();
+        db.setex("key", 10, b"value").unwrap();
+
+        let value = db.get("key").unwrap();
+        assert_eq!(value, Some(b"value".to_vec()));
+
+        let ttl = db.ttl("key").unwrap();
+        assert!(ttl >= 9 && ttl <= 10);
+    }
+
+    #[test]
+    fn test_setex_invalid_time() {
+        let db = Db::open_memory().unwrap();
+        let result = db.setex("key", 0, b"value");
+        assert!(matches!(result, Err(KvError::InvalidExpireTime)));
+
+        let result = db.setex("key", -1, b"value");
+        assert!(matches!(result, Err(KvError::InvalidExpireTime)));
+    }
+
+    #[test]
+    fn test_psetex() {
+        let db = Db::open_memory().unwrap();
+        db.psetex("key", 5000, b"value").unwrap();
+
+        let value = db.get("key").unwrap();
+        assert_eq!(value, Some(b"value".to_vec()));
+
+        let pttl = db.pttl("key").unwrap();
+        assert!(pttl >= 4900 && pttl <= 5000);
+    }
+
+    #[test]
+    fn test_psetex_invalid_time() {
+        let db = Db::open_memory().unwrap();
+        let result = db.psetex("key", 0, b"value");
+        assert!(matches!(result, Err(KvError::InvalidExpireTime)));
+    }
+
+    #[test]
+    fn test_persist() {
+        let db = Db::open_memory().unwrap();
+        db.set("key", b"value", Some(Duration::from_secs(60))).unwrap();
+
+        // Verify TTL exists
+        let ttl = db.ttl("key").unwrap();
+        assert!(ttl > 0);
+
+        // Persist
+        let result = db.persist("key").unwrap();
+        assert!(result);
+
+        // Verify TTL removed
+        let ttl = db.ttl("key").unwrap();
+        assert_eq!(ttl, -1);
+    }
+
+    #[test]
+    fn test_persist_nonexistent() {
+        let db = Db::open_memory().unwrap();
+        let result = db.persist("nonexistent").unwrap();
+        assert!(!result);
+    }
+
+    #[test]
+    fn test_pexpire() {
+        let db = Db::open_memory().unwrap();
+        db.set("key", b"value", None).unwrap();
+
+        let result = db.pexpire("key", 5000).unwrap();
+        assert!(result);
+
+        let pttl = db.pttl("key").unwrap();
+        assert!(pttl >= 4900 && pttl <= 5000);
+    }
+
+    #[test]
+    fn test_expireat() {
+        let db = Db::open_memory().unwrap();
+        db.set("key", b"value", None).unwrap();
+
+        // Set expiration 60 seconds in the future
+        let future_ts = (SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_secs() + 60) as i64;
+
+        let result = db.expireat("key", future_ts).unwrap();
+        assert!(result);
+
+        let ttl = db.ttl("key").unwrap();
+        assert!(ttl >= 58 && ttl <= 60);
+    }
+
+    #[test]
+    fn test_pexpireat() {
+        let db = Db::open_memory().unwrap();
+        db.set("key", b"value", None).unwrap();
+
+        // Set expiration 60 seconds in the future (in ms)
+        let future_ts = (SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_millis() + 60000) as i64;
+
+        let result = db.pexpireat("key", future_ts).unwrap();
+        assert!(result);
+
+        let pttl = db.pttl("key").unwrap();
+        assert!(pttl >= 59000 && pttl <= 60000);
+    }
+
+    #[test]
+    fn test_rename() {
+        let db = Db::open_memory().unwrap();
+        db.set("oldkey", b"value", None).unwrap();
+
+        db.rename("oldkey", "newkey").unwrap();
+
+        // Old key should not exist
+        let old = db.get("oldkey").unwrap();
+        assert_eq!(old, None);
+
+        // New key should have the value
+        let new = db.get("newkey").unwrap();
+        assert_eq!(new, Some(b"value".to_vec()));
+    }
+
+    #[test]
+    fn test_rename_nonexistent() {
+        let db = Db::open_memory().unwrap();
+        let result = db.rename("nonexistent", "newkey");
+        assert!(matches!(result, Err(KvError::NoSuchKey)));
+    }
+
+    #[test]
+    fn test_rename_overwrites_dest() {
+        let db = Db::open_memory().unwrap();
+        db.set("src", b"src_value", None).unwrap();
+        db.set("dest", b"dest_value", None).unwrap();
+
+        db.rename("src", "dest").unwrap();
+
+        // Dest should have src's value
+        let value = db.get("dest").unwrap();
+        assert_eq!(value, Some(b"src_value".to_vec()));
+
+        // Src should not exist
+        let src = db.get("src").unwrap();
+        assert_eq!(src, None);
+    }
+
+    #[test]
+    fn test_renamenx() {
+        let db = Db::open_memory().unwrap();
+        db.set("src", b"value", None).unwrap();
+
+        let result = db.renamenx("src", "dest").unwrap();
+        assert!(result);
+
+        // Src should not exist
+        let src = db.get("src").unwrap();
+        assert_eq!(src, None);
+
+        // Dest should have the value
+        let dest = db.get("dest").unwrap();
+        assert_eq!(dest, Some(b"value".to_vec()));
+    }
+
+    #[test]
+    fn test_renamenx_dest_exists() {
+        let db = Db::open_memory().unwrap();
+        db.set("src", b"src_value", None).unwrap();
+        db.set("dest", b"dest_value", None).unwrap();
+
+        let result = db.renamenx("src", "dest").unwrap();
+        assert!(!result);
+
+        // Both keys should still exist with original values
+        let src = db.get("src").unwrap();
+        assert_eq!(src, Some(b"src_value".to_vec()));
+
+        let dest = db.get("dest").unwrap();
+        assert_eq!(dest, Some(b"dest_value".to_vec()));
+    }
+
+    #[test]
+    fn test_renamenx_nonexistent() {
+        let db = Db::open_memory().unwrap();
+        let result = db.renamenx("nonexistent", "dest");
+        assert!(matches!(result, Err(KvError::NoSuchKey)));
+    }
+
+    // --- List command tests ---
+
+    #[test]
+    fn test_lpushx_exists() {
+        let db = Db::open_memory().unwrap();
+        // Create list first
+        db.lpush("mylist", &[b"initial"]).unwrap();
+
+        // LPUSHX should work
+        let len = db.lpushx("mylist", &[b"new1", b"new2"]).unwrap();
+        assert_eq!(len, 3);
+
+        // Verify order
+        let items = db.lrange("mylist", 0, -1).unwrap();
+        assert_eq!(items, vec![b"new2".to_vec(), b"new1".to_vec(), b"initial".to_vec()]);
+    }
+
+    #[test]
+    fn test_lpushx_not_exists() {
+        let db = Db::open_memory().unwrap();
+        // LPUSHX on non-existent key should return 0
+        let len = db.lpushx("nonexistent", &[b"value"]).unwrap();
+        assert_eq!(len, 0);
+
+        // List should not have been created
+        let exists = db.exists(&["nonexistent"]).unwrap();
+        assert_eq!(exists, 0);
+    }
+
+    #[test]
+    fn test_rpushx_exists() {
+        let db = Db::open_memory().unwrap();
+        // Create list first
+        db.rpush("mylist", &[b"initial"]).unwrap();
+
+        // RPUSHX should work
+        let len = db.rpushx("mylist", &[b"new1", b"new2"]).unwrap();
+        assert_eq!(len, 3);
+
+        // Verify order
+        let items = db.lrange("mylist", 0, -1).unwrap();
+        assert_eq!(items, vec![b"initial".to_vec(), b"new1".to_vec(), b"new2".to_vec()]);
+    }
+
+    #[test]
+    fn test_rpushx_not_exists() {
+        let db = Db::open_memory().unwrap();
+        // RPUSHX on non-existent key should return 0
+        let len = db.rpushx("nonexistent", &[b"value"]).unwrap();
+        assert_eq!(len, 0);
+    }
+
+    #[test]
+    fn test_lpos_basic() {
+        let db = Db::open_memory().unwrap();
+        db.rpush("mylist", &[b"a", b"b", b"c", b"d", b"c", b"e"]).unwrap();
+
+        // Find first occurrence of 'c'
+        let positions = db.lpos("mylist", b"c", None, None, None).unwrap();
+        assert_eq!(positions, vec![2]);
+    }
+
+    #[test]
+    fn test_lpos_not_found() {
+        let db = Db::open_memory().unwrap();
+        db.rpush("mylist", &[b"a", b"b", b"c"]).unwrap();
+
+        let positions = db.lpos("mylist", b"z", None, None, None).unwrap();
+        assert!(positions.is_empty());
+    }
+
+    #[test]
+    fn test_lpos_with_count() {
+        let db = Db::open_memory().unwrap();
+        db.rpush("mylist", &[b"a", b"b", b"c", b"d", b"c", b"e", b"c"]).unwrap();
+
+        // Find all occurrences of 'c'
+        let positions = db.lpos("mylist", b"c", None, Some(0), None).unwrap();
+        assert_eq!(positions, vec![2, 4, 6]);
+
+        // Find first 2 occurrences
+        let positions = db.lpos("mylist", b"c", None, Some(2), None).unwrap();
+        assert_eq!(positions, vec![2, 4]);
+    }
+
+    #[test]
+    fn test_lpos_nonexistent_list() {
+        let db = Db::open_memory().unwrap();
+        let positions = db.lpos("nonexistent", b"value", None, None, None).unwrap();
+        assert!(positions.is_empty());
+    }
+
+    #[test]
+    fn test_lmove_left_right() {
+        let db = Db::open_memory().unwrap();
+        db.rpush("src", &[b"a", b"b", b"c"]).unwrap();
+
+        // Move from left of src to right of dest
+        let result = db.lmove("src", "dest", ListDirection::Left, ListDirection::Right).unwrap();
+        assert_eq!(result, Some(b"a".to_vec()));
+
+        // Check src
+        let src_items = db.lrange("src", 0, -1).unwrap();
+        assert_eq!(src_items, vec![b"b".to_vec(), b"c".to_vec()]);
+
+        // Check dest
+        let dest_items = db.lrange("dest", 0, -1).unwrap();
+        assert_eq!(dest_items, vec![b"a".to_vec()]);
+    }
+
+    #[test]
+    fn test_lmove_right_left() {
+        let db = Db::open_memory().unwrap();
+        db.rpush("src", &[b"a", b"b", b"c"]).unwrap();
+
+        // Move from right of src to left of dest
+        let result = db.lmove("src", "dest", ListDirection::Right, ListDirection::Left).unwrap();
+        assert_eq!(result, Some(b"c".to_vec()));
+
+        // Check src
+        let src_items = db.lrange("src", 0, -1).unwrap();
+        assert_eq!(src_items, vec![b"a".to_vec(), b"b".to_vec()]);
+
+        // Check dest
+        let dest_items = db.lrange("dest", 0, -1).unwrap();
+        assert_eq!(dest_items, vec![b"c".to_vec()]);
+    }
+
+    #[test]
+    fn test_lmove_empty_source() {
+        let db = Db::open_memory().unwrap();
+
+        // Try to move from empty list
+        let result = db.lmove("empty", "dest", ListDirection::Left, ListDirection::Right).unwrap();
+        assert_eq!(result, None);
+    }
+
+    #[test]
+    fn test_lmove_same_list() {
+        let db = Db::open_memory().unwrap();
+        db.rpush("mylist", &[b"a", b"b", b"c"]).unwrap();
+
+        // Rotate - move from right to left (same list)
+        let result = db.lmove("mylist", "mylist", ListDirection::Right, ListDirection::Left).unwrap();
+        assert_eq!(result, Some(b"c".to_vec()));
+
+        // Check list is rotated
+        let items = db.lrange("mylist", 0, -1).unwrap();
+        assert_eq!(items, vec![b"c".to_vec(), b"a".to_vec(), b"b".to_vec()]);
+    }
+
+    // --- HSCAN, SSCAN, ZSCAN tests ---
+
+    #[test]
+    fn test_hscan_basic() {
+        let db = Db::open_memory().unwrap();
+
+        // Create hash with multiple fields
+        for i in 0..25 {
+            db.hset("myhash", &[(&format!("field{:02}", i), b"value")]).unwrap();
+        }
+
+        // First scan
+        let (cursor, pairs) = db.hscan("myhash", 0, None, 10).unwrap();
+        assert_eq!(pairs.len(), 10);
+        assert!(cursor > 0);
+
+        // Continue scanning
+        let (cursor2, pairs2) = db.hscan("myhash", cursor, None, 10).unwrap();
+        assert_eq!(pairs2.len(), 10);
+
+        // Final scan
+        let (cursor3, pairs3) = db.hscan("myhash", cursor2, None, 10).unwrap();
+        assert_eq!(pairs3.len(), 5);
+        assert_eq!(cursor3, 0); // Done
+    }
+
+    #[test]
+    fn test_hscan_match() {
+        let db = Db::open_memory().unwrap();
+
+        db.hset("myhash", &[
+            ("user:name", b"alice"),
+            ("user:email", b"alice@example.com"),
+            ("other:data", b"stuff"),
+        ]).unwrap();
+
+        let (_, pairs) = db.hscan("myhash", 0, Some("user:*"), 100).unwrap();
+        assert_eq!(pairs.len(), 2);
+        assert!(pairs.iter().any(|(f, _)| f == "user:name"));
+        assert!(pairs.iter().any(|(f, _)| f == "user:email"));
+    }
+
+    #[test]
+    fn test_hscan_empty() {
+        let db = Db::open_memory().unwrap();
+
+        // Non-existent key
+        let (cursor, pairs) = db.hscan("nokey", 0, None, 10).unwrap();
+        assert_eq!(cursor, 0);
+        assert!(pairs.is_empty());
+    }
+
+    #[test]
+    fn test_hscan_wrong_type() {
+        let db = Db::open_memory().unwrap();
+        db.set("string_key", b"value", None).unwrap();
+
+        let result = db.hscan("string_key", 0, None, 10);
+        assert!(matches!(result, Err(KvError::WrongType)));
+    }
+
+    #[test]
+    fn test_sscan_basic() {
+        let db = Db::open_memory().unwrap();
+
+        // Create set with multiple members
+        let members: Vec<&[u8]> = (0..25).map(|i| {
+            // Use static strings for the test
+            match i {
+                0 => b"member00".as_slice(), 1 => b"member01".as_slice(),
+                2 => b"member02".as_slice(), 3 => b"member03".as_slice(),
+                4 => b"member04".as_slice(), 5 => b"member05".as_slice(),
+                6 => b"member06".as_slice(), 7 => b"member07".as_slice(),
+                8 => b"member08".as_slice(), 9 => b"member09".as_slice(),
+                10 => b"member10".as_slice(), 11 => b"member11".as_slice(),
+                12 => b"member12".as_slice(), 13 => b"member13".as_slice(),
+                14 => b"member14".as_slice(), 15 => b"member15".as_slice(),
+                16 => b"member16".as_slice(), 17 => b"member17".as_slice(),
+                18 => b"member18".as_slice(), 19 => b"member19".as_slice(),
+                20 => b"member20".as_slice(), 21 => b"member21".as_slice(),
+                22 => b"member22".as_slice(), 23 => b"member23".as_slice(),
+                24 => b"member24".as_slice(), _ => unreachable!(),
+            }
+        }).collect();
+        db.sadd("myset", &members).unwrap();
+
+        // First scan
+        let (cursor, members) = db.sscan("myset", 0, None, 10).unwrap();
+        assert_eq!(members.len(), 10);
+        assert!(cursor > 0);
+
+        // Continue scanning
+        let (cursor2, members2) = db.sscan("myset", cursor, None, 10).unwrap();
+        assert_eq!(members2.len(), 10);
+
+        // Final scan
+        let (cursor3, members3) = db.sscan("myset", cursor2, None, 10).unwrap();
+        assert_eq!(members3.len(), 5);
+        assert_eq!(cursor3, 0); // Done
+    }
+
+    #[test]
+    fn test_sscan_match() {
+        let db = Db::open_memory().unwrap();
+
+        db.sadd("myset", &[b"user:alice".as_slice(), b"user:bob", b"other:data"]).unwrap();
+
+        let (_, members) = db.sscan("myset", 0, Some("user:*"), 100).unwrap();
+        assert_eq!(members.len(), 2);
+        assert!(members.contains(&b"user:alice".to_vec()));
+        assert!(members.contains(&b"user:bob".to_vec()));
+    }
+
+    #[test]
+    fn test_sscan_empty() {
+        let db = Db::open_memory().unwrap();
+
+        let (cursor, members) = db.sscan("nokey", 0, None, 10).unwrap();
+        assert_eq!(cursor, 0);
+        assert!(members.is_empty());
+    }
+
+    #[test]
+    fn test_sscan_wrong_type() {
+        let db = Db::open_memory().unwrap();
+        db.set("string_key", b"value", None).unwrap();
+
+        let result = db.sscan("string_key", 0, None, 10);
+        assert!(matches!(result, Err(KvError::WrongType)));
+    }
+
+    #[test]
+    fn test_zscan_basic() {
+        let db = Db::open_memory().unwrap();
+
+        // Create zset with multiple members
+        let members: Vec<ZMember> = (0..25).map(|i| {
+            ZMember::new(i as f64, format!("member{:02}", i).into_bytes())
+        }).collect();
+        db.zadd("myzset", &members).unwrap();
+
+        // First scan
+        let (cursor, pairs) = db.zscan("myzset", 0, None, 10).unwrap();
+        assert_eq!(pairs.len(), 10);
+        assert!(cursor > 0);
+
+        // Continue scanning
+        let (cursor2, pairs2) = db.zscan("myzset", cursor, None, 10).unwrap();
+        assert_eq!(pairs2.len(), 10);
+
+        // Final scan
+        let (cursor3, pairs3) = db.zscan("myzset", cursor2, None, 10).unwrap();
+        assert_eq!(pairs3.len(), 5);
+        assert_eq!(cursor3, 0); // Done
+    }
+
+    #[test]
+    fn test_zscan_match() {
+        let db = Db::open_memory().unwrap();
+
+        db.zadd("myzset", &[
+            ZMember::new(1.0, b"user:alice".to_vec()),
+            ZMember::new(2.0, b"user:bob".to_vec()),
+            ZMember::new(3.0, b"other:data".to_vec()),
+        ]).unwrap();
+
+        let (_, pairs) = db.zscan("myzset", 0, Some("user:*"), 100).unwrap();
+        assert_eq!(pairs.len(), 2);
+        assert!(pairs.iter().any(|(m, _)| m == b"user:alice"));
+        assert!(pairs.iter().any(|(m, _)| m == b"user:bob"));
+    }
+
+    #[test]
+    fn test_zscan_empty() {
+        let db = Db::open_memory().unwrap();
+
+        let (cursor, pairs) = db.zscan("nokey", 0, None, 10).unwrap();
+        assert_eq!(cursor, 0);
+        assert!(pairs.is_empty());
+    }
+
+    #[test]
+    fn test_zscan_wrong_type() {
+        let db = Db::open_memory().unwrap();
+        db.set("string_key", b"value", None).unwrap();
+
+        let result = db.zscan("string_key", 0, None, 10);
+        assert!(matches!(result, Err(KvError::WrongType)));
+    }
+
+    #[test]
+    fn test_zscan_returns_scores() {
+        let db = Db::open_memory().unwrap();
+
+        db.zadd("myzset", &[
+            ZMember::new(1.5, b"a".to_vec()),
+            ZMember::new(2.5, b"b".to_vec()),
+            ZMember::new(3.5, b"c".to_vec()),
+        ]).unwrap();
+
+        let (_, pairs) = db.zscan("myzset", 0, None, 10).unwrap();
+        assert_eq!(pairs.len(), 3);
+
+        // Verify scores are returned correctly (ordered by score)
+        assert_eq!(pairs[0], (b"a".to_vec(), 1.5));
+        assert_eq!(pairs[1], (b"b".to_vec(), 2.5));
+        assert_eq!(pairs[2], (b"c".to_vec(), 3.5));
     }
 
 }

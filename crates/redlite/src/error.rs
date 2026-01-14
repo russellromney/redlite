@@ -23,6 +23,9 @@ pub enum KvError {
     #[error("no such key")]
     NoSuchKey,
 
+    #[error("invalid expire time")]
+    InvalidExpireTime,
+
     #[error("invalid cursor")]
     InvalidCursor,
 

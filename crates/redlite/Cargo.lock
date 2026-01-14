@@ -1264,6 +1264,8 @@ dependencies = [
  "redis",
  "rmp-serde",
  "rusqlite",
+ "serde",
+ "serde_json",
  "sqlite-vec",
  "tempfile",
  "thiserror 1.0.69",

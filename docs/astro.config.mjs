@@ -32,6 +32,18 @@ export default defineConfig({
 					],
 				},
 				{
+					label: 'SDKs & Languages',
+					items: [
+						{ label: 'Overview', slug: 'sdks/overview' },
+						{ label: 'Python', slug: 'sdks/python' },
+						{ label: 'TypeScript/Node', slug: 'sdks/typescript' },
+						{ label: 'Rust', slug: 'sdks/rust' },
+						{ label: 'WASM/Edge', slug: 'sdks/wasm', badge: { text: 'Soon', variant: 'tip' } },
+						{ label: 'Go', slug: 'sdks/go', badge: { text: 'Planned', variant: 'caution' } },
+						{ label: 'Kotlin', slug: 'sdks/kotlin', badge: { text: 'Planned', variant: 'caution' } },
+					],
+				},
+				{
 					label: 'Usage',
 					items: [
 						{ label: 'Embedded (Library)', slug: 'usage/embedded' },

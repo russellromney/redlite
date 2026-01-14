@@ -32,6 +32,6 @@ pub use server::Server;
 pub use turso_db::TursoDb;
 pub use types::{
     FtField, FtFieldType, FtIndex, FtIndexInfo, FtOnType, FtSearchOptions, FtSearchResult,
-    FtSuggestion, HistoryConfig, HistoryEntry, HistoryLevel, KeyType, RetentionType, SetOptions,
-    StreamEntry, StreamId, ZMember,
+    FtSuggestion, GetExOption, HistoryConfig, HistoryEntry, HistoryLevel, KeyType, ListDirection,
+    RetentionType, SetOptions, StreamEntry, StreamId, ZMember,
 };

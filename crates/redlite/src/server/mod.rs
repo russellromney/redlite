@@ -10,7 +10,7 @@ use tokio::sync::broadcast;
 use crate::db::Db;
 use crate::error::KvError;
 use crate::resp::{RespReader, RespValue};
-use crate::types::{StreamId, ZMember};
+use crate::types::{GetExOption, ListDirection, StreamId, ZMember};
 
 mod connection;
 mod pubsub;
@@ -405,8 +405,17 @@ async fn execute_command(
         "PTTL" => cmd_pttl(db, cmd_args),
         "EXISTS" => cmd_exists(db, cmd_args),
         "EXPIRE" => cmd_expire(db, cmd_args),
+        "PEXPIRE" => cmd_pexpire(db, cmd_args),
+        "EXPIREAT" => cmd_expireat(db, cmd_args),
+        "PEXPIREAT" => cmd_pexpireat(db, cmd_args),
+        "PERSIST" => cmd_persist(db, cmd_args),
+        "RENAME" => cmd_rename(db, cmd_args),
+        "RENAMENX" => cmd_renamenx(db, cmd_args),
         "KEYS" => cmd_keys(db, cmd_args),
         "SCAN" => cmd_scan(db, cmd_args),
+        "HSCAN" => cmd_hscan(db, cmd_args),
+        "SSCAN" => cmd_sscan(db, cmd_args),
+        "ZSCAN" => cmd_zscan(db, cmd_args),
         // String operations
         "INCR" => cmd_incr(db, cmd_args),
         "DECR" => cmd_decr(db, cmd_args),
@@ -419,6 +428,10 @@ async fn execute_command(
         "STRLEN" => cmd_strlen(db, cmd_args),
         "GETRANGE" => cmd_getrange(db, cmd_args),
         "SETRANGE" => cmd_setrange(db, cmd_args),
+        "GETEX" => cmd_getex(db, cmd_args),
+        "GETDEL" => cmd_getdel(db, cmd_args),
+        "SETEX" => cmd_setex(db, cmd_args),
+        "PSETEX" => cmd_psetex(db, cmd_args),
         // Hash operations
         "HSET" => cmd_hset(db, cmd_args),
         "HGET" => cmd_hget(db, cmd_args),
@@ -446,6 +459,10 @@ async fn execute_command(
         "LTRIM" => cmd_ltrim(db, cmd_args),
         "LREM" => cmd_lrem(db, cmd_args),
         "LINSERT" => cmd_linsert(db, cmd_args),
+        "LPUSHX" => cmd_lpushx(db, cmd_args),
+        "RPUSHX" => cmd_rpushx(db, cmd_args),
+        "LPOS" => cmd_lpos(db, cmd_args),
+        "LMOVE" => cmd_lmove(db, cmd_args),
         // Set operations
         "SADD" => cmd_sadd(db, cmd_args),
         "SREM" => cmd_srem(db, cmd_args),
@@ -1134,6 +1151,217 @@ fn cmd_scan(db: &Db, args: &[Vec<u8>]) -> RespValue {
     }
 }
 
+fn cmd_hscan(db: &Db, args: &[Vec<u8>]) -> RespValue {
+    if args.len() < 2 {
+        return RespValue::error("wrong number of arguments for 'hscan' command");
+    }
+
+    let key = match std::str::from_utf8(&args[0]) {
+        Ok(k) => k,
+        Err(_) => return RespValue::error("invalid key"),
+    };
+
+    let cursor: u64 = match std::str::from_utf8(&args[1])
+        .ok()
+        .and_then(|s| s.parse().ok())
+    {
+        Some(c) => c,
+        None => return RespValue::error("invalid cursor"),
+    };
+
+    let mut pattern: Option<&str> = None;
+    let mut count: usize = 10;
+    let mut i = 2;
+
+    while i < args.len() {
+        let opt = String::from_utf8_lossy(&args[i]).to_uppercase();
+        match opt.as_str() {
+            "MATCH" => {
+                i += 1;
+                if i >= args.len() {
+                    return RespValue::error("syntax error");
+                }
+                match std::str::from_utf8(&args[i]) {
+                    Ok(p) => pattern = Some(p),
+                    Err(_) => return RespValue::error("invalid pattern"),
+                }
+            }
+            "COUNT" => {
+                i += 1;
+                if i >= args.len() {
+                    return RespValue::error("syntax error");
+                }
+                match std::str::from_utf8(&args[i])
+                    .ok()
+                    .and_then(|s| s.parse().ok())
+                {
+                    Some(c) => count = c,
+                    None => return RespValue::error("value is not an integer or out of range"),
+                }
+            }
+            _ => return RespValue::error("syntax error"),
+        }
+        i += 1;
+    }
+
+    match db.hscan(key, cursor, pattern, count) {
+        Ok((next_cursor, pairs)) => {
+            // Flatten field-value pairs: [field1, val1, field2, val2, ...]
+            let mut items: Vec<RespValue> = Vec::with_capacity(pairs.len() * 2);
+            for (field, value) in pairs {
+                items.push(RespValue::BulkString(Some(field.into_bytes())));
+                items.push(RespValue::BulkString(Some(value)));
+            }
+            RespValue::Array(Some(vec![
+                RespValue::BulkString(Some(next_cursor.to_string().into_bytes())),
+                RespValue::Array(Some(items)),
+            ]))
+        }
+        Err(KvError::WrongType) => RespValue::wrong_type(),
+        Err(e) => RespValue::error(e.to_string()),
+    }
+}
+
+fn cmd_sscan(db: &Db, args: &[Vec<u8>]) -> RespValue {
+    if args.len() < 2 {
+        return RespValue::error("wrong number of arguments for 'sscan' command");
+    }
+
+    let key = match std::str::from_utf8(&args[0]) {
+        Ok(k) => k,
+        Err(_) => return RespValue::error("invalid key"),
+    };
+
+    let cursor: u64 = match std::str::from_utf8(&args[1])
+        .ok()
+        .and_then(|s| s.parse().ok())
+    {
+        Some(c) => c,
+        None => return RespValue::error("invalid cursor"),
+    };
+
+    let mut pattern: Option<&str> = None;
+    let mut count: usize = 10;
+    let mut i = 2;
+
+    while i < args.len() {
+        let opt = String::from_utf8_lossy(&args[i]).to_uppercase();
+        match opt.as_str() {
+            "MATCH" => {
+                i += 1;
+                if i >= args.len() {
+                    return RespValue::error("syntax error");
+                }
+                match std::str::from_utf8(&args[i]) {
+                    Ok(p) => pattern = Some(p),
+                    Err(_) => return RespValue::error("invalid pattern"),
+                }
+            }
+            "COUNT" => {
+                i += 1;
+                if i >= args.len() {
+                    return RespValue::error("syntax error");
+                }
+                match std::str::from_utf8(&args[i])
+                    .ok()
+                    .and_then(|s| s.parse().ok())
+                {
+                    Some(c) => count = c,
+                    None => return RespValue::error("value is not an integer or out of range"),
+                }
+            }
+            _ => return RespValue::error("syntax error"),
+        }
+        i += 1;
+    }
+
+    match db.sscan(key, cursor, pattern, count) {
+        Ok((next_cursor, members)) => {
+            let items: Vec<RespValue> = members
+                .into_iter()
+                .map(|m| RespValue::BulkString(Some(m)))
+                .collect();
+            RespValue::Array(Some(vec![
+                RespValue::BulkString(Some(next_cursor.to_string().into_bytes())),
+                RespValue::Array(Some(items)),
+            ]))
+        }
+        Err(KvError::WrongType) => RespValue::wrong_type(),
+        Err(e) => RespValue::error(e.to_string()),
+    }
+}
+
+fn cmd_zscan(db: &Db, args: &[Vec<u8>]) -> RespValue {
+    if args.len() < 2 {
+        return RespValue::error("wrong number of arguments for 'zscan' command");
+    }
+
+    let key = match std::str::from_utf8(&args[0]) {
+        Ok(k) => k,
+        Err(_) => return RespValue::error("invalid key"),
+    };
+
+    let cursor: u64 = match std::str::from_utf8(&args[1])
+        .ok()
+        .and_then(|s| s.parse().ok())
+    {
+        Some(c) => c,
+        None => return RespValue::error("invalid cursor"),
+    };
+
+    let mut pattern: Option<&str> = None;
+    let mut count: usize = 10;
+    let mut i = 2;
+
+    while i < args.len() {
+        let opt = String::from_utf8_lossy(&args[i]).to_uppercase();
+        match opt.as_str() {
+            "MATCH" => {
+                i += 1;
+                if i >= args.len() {
+                    return RespValue::error("syntax error");
+                }
+                match std::str::from_utf8(&args[i]) {
+                    Ok(p) => pattern = Some(p),
+                    Err(_) => return RespValue::error("invalid pattern"),
+                }
+            }
+            "COUNT" => {
+                i += 1;
+                if i >= args.len() {
+                    return RespValue::error("syntax error");
+                }
+                match std::str::from_utf8(&args[i])
+                    .ok()
+                    .and_then(|s| s.parse().ok())
+                {
+                    Some(c) => count = c,
+                    None => return RespValue::error("value is not an integer or out of range"),
+                }
+            }
+            _ => return RespValue::error("syntax error"),
+        }
+        i += 1;
+    }
+
+    match db.zscan(key, cursor, pattern, count) {
+        Ok((next_cursor, pairs)) => {
+            // Flatten member-score pairs: [member1, score1, member2, score2, ...]
+            let mut items: Vec<RespValue> = Vec::with_capacity(pairs.len() * 2);
+            for (member, score) in pairs {
+                items.push(RespValue::BulkString(Some(member)));
+                items.push(RespValue::BulkString(Some(score.to_string().into_bytes())));
+            }
+            RespValue::Array(Some(vec![
+                RespValue::BulkString(Some(next_cursor.to_string().into_bytes())),
+                RespValue::Array(Some(items)),
+            ]))
+        }
+        Err(KvError::WrongType) => RespValue::wrong_type(),
+        Err(e) => RespValue::error(e.to_string()),
+    }
+}
+
 // --- String operations ---
 
 fn cmd_incr(db: &Db, args: &[Vec<u8>]) -> RespValue {
@@ -1370,6 +1598,303 @@ fn cmd_setrange(db: &Db, args: &[Vec<u8>]) -> RespValue {
 
     match db.setrange(key, offset, &args[2]) {
         Ok(len) => RespValue::Integer(len),
+        Err(e) => RespValue::error(e.to_string()),
+    }
+}
+
+fn cmd_getex(db: &Db, args: &[Vec<u8>]) -> RespValue {
+    if args.is_empty() {
+        return RespValue::error("wrong number of arguments for 'getex' command");
+    }
+
+    let key = match std::str::from_utf8(&args[0]) {
+        Ok(k) => k,
+        Err(_) => return RespValue::error("invalid key"),
+    };
+
+    // Parse options
+    let mut option: Option<GetExOption> = None;
+    let mut i = 1;
+    while i < args.len() {
+        let opt = String::from_utf8_lossy(&args[i]).to_uppercase();
+        match opt.as_str() {
+            "EX" => {
+                if i + 1 >= args.len() {
+                    return RespValue::error("syntax error");
+                }
+                i += 1;
+                let seconds: i64 = match std::str::from_utf8(&args[i])
+                    .ok()
+                    .and_then(|s| s.parse().ok())
+                {
+                    Some(s) => s,
+                    None => return RespValue::error("value is not an integer or out of range"),
+                };
+                option = Some(GetExOption::Ex(seconds));
+            }
+            "PX" => {
+                if i + 1 >= args.len() {
+                    return RespValue::error("syntax error");
+                }
+                i += 1;
+                let ms: i64 = match std::str::from_utf8(&args[i])
+                    .ok()
+                    .and_then(|s| s.parse().ok())
+                {
+                    Some(s) => s,
+                    None => return RespValue::error("value is not an integer or out of range"),
+                };
+                option = Some(GetExOption::Px(ms));
+            }
+            "EXAT" => {
+                if i + 1 >= args.len() {
+                    return RespValue::error("syntax error");
+                }
+                i += 1;
+                let ts: i64 = match std::str::from_utf8(&args[i])
+                    .ok()
+                    .and_then(|s| s.parse().ok())
+                {
+                    Some(s) => s,
+                    None => return RespValue::error("value is not an integer or out of range"),
+                };
+                option = Some(GetExOption::ExAt(ts));
+            }
+            "PXAT" => {
+                if i + 1 >= args.len() {
+                    return RespValue::error("syntax error");
+                }
+                i += 1;
+                let ts: i64 = match std::str::from_utf8(&args[i])
+                    .ok()
+                    .and_then(|s| s.parse().ok())
+                {
+                    Some(s) => s,
+                    None => return RespValue::error("value is not an integer or out of range"),
+                };
+                option = Some(GetExOption::PxAt(ts));
+            }
+            "PERSIST" => {
+                option = Some(GetExOption::Persist);
+            }
+            _ => return RespValue::error("syntax error"),
+        }
+        i += 1;
+    }
+
+    match db.getex(key, option) {
+        Ok(Some(value)) => RespValue::BulkString(Some(value)),
+        Ok(None) => RespValue::null(),
+        Err(KvError::WrongType) => RespValue::wrong_type(),
+        Err(e) => RespValue::error(e.to_string()),
+    }
+}
+
+fn cmd_getdel(db: &Db, args: &[Vec<u8>]) -> RespValue {
+    if args.len() != 1 {
+        return RespValue::error("wrong number of arguments for 'getdel' command");
+    }
+
+    let key = match std::str::from_utf8(&args[0]) {
+        Ok(k) => k,
+        Err(_) => return RespValue::error("invalid key"),
+    };
+
+    match db.getdel(key) {
+        Ok(Some(value)) => RespValue::BulkString(Some(value)),
+        Ok(None) => RespValue::null(),
+        Err(KvError::WrongType) => RespValue::wrong_type(),
+        Err(e) => RespValue::error(e.to_string()),
+    }
+}
+
+fn cmd_setex(db: &Db, args: &[Vec<u8>]) -> RespValue {
+    if args.len() != 3 {
+        return RespValue::error("wrong number of arguments for 'setex' command");
+    }
+
+    let key = match std::str::from_utf8(&args[0]) {
+        Ok(k) => k,
+        Err(_) => return RespValue::error("invalid key"),
+    };
+
+    let seconds: i64 = match std::str::from_utf8(&args[1])
+        .ok()
+        .and_then(|s| s.parse().ok())
+    {
+        Some(s) => s,
+        None => return RespValue::error("value is not an integer or out of range"),
+    };
+
+    match db.setex(key, seconds, &args[2]) {
+        Ok(()) => RespValue::ok(),
+        Err(KvError::InvalidExpireTime) => {
+            RespValue::error("invalid expire time in 'setex' command")
+        }
+        Err(e) => RespValue::error(e.to_string()),
+    }
+}
+
+fn cmd_psetex(db: &Db, args: &[Vec<u8>]) -> RespValue {
+    if args.len() != 3 {
+        return RespValue::error("wrong number of arguments for 'psetex' command");
+    }
+
+    let key = match std::str::from_utf8(&args[0]) {
+        Ok(k) => k,
+        Err(_) => return RespValue::error("invalid key"),
+    };
+
+    let milliseconds: i64 = match std::str::from_utf8(&args[1])
+        .ok()
+        .and_then(|s| s.parse().ok())
+    {
+        Some(s) => s,
+        None => return RespValue::error("value is not an integer or out of range"),
+    };
+
+    match db.psetex(key, milliseconds, &args[2]) {
+        Ok(()) => RespValue::ok(),
+        Err(KvError::InvalidExpireTime) => {
+            RespValue::error("invalid expire time in 'psetex' command")
+        }
+        Err(e) => RespValue::error(e.to_string()),
+    }
+}
+
+fn cmd_persist(db: &Db, args: &[Vec<u8>]) -> RespValue {
+    if args.len() != 1 {
+        return RespValue::error("wrong number of arguments for 'persist' command");
+    }
+
+    let key = match std::str::from_utf8(&args[0]) {
+        Ok(k) => k,
+        Err(_) => return RespValue::error("invalid key"),
+    };
+
+    match db.persist(key) {
+        Ok(true) => RespValue::Integer(1),
+        Ok(false) => RespValue::Integer(0),
+        Err(e) => RespValue::error(e.to_string()),
+    }
+}
+
+fn cmd_pexpire(db: &Db, args: &[Vec<u8>]) -> RespValue {
+    if args.len() != 2 {
+        return RespValue::error("wrong number of arguments for 'pexpire' command");
+    }
+
+    let key = match std::str::from_utf8(&args[0]) {
+        Ok(k) => k,
+        Err(_) => return RespValue::error("invalid key"),
+    };
+
+    let milliseconds: i64 = match std::str::from_utf8(&args[1])
+        .ok()
+        .and_then(|s| s.parse().ok())
+    {
+        Some(s) => s,
+        None => return RespValue::error("value is not an integer or out of range"),
+    };
+
+    match db.pexpire(key, milliseconds) {
+        Ok(true) => RespValue::Integer(1),
+        Ok(false) => RespValue::Integer(0),
+        Err(e) => RespValue::error(e.to_string()),
+    }
+}
+
+fn cmd_expireat(db: &Db, args: &[Vec<u8>]) -> RespValue {
+    if args.len() != 2 {
+        return RespValue::error("wrong number of arguments for 'expireat' command");
+    }
+
+    let key = match std::str::from_utf8(&args[0]) {
+        Ok(k) => k,
+        Err(_) => return RespValue::error("invalid key"),
+    };
+
+    let unix_seconds: i64 = match std::str::from_utf8(&args[1])
+        .ok()
+        .and_then(|s| s.parse().ok())
+    {
+        Some(s) => s,
+        None => return RespValue::error("value is not an integer or out of range"),
+    };
+
+    match db.expireat(key, unix_seconds) {
+        Ok(true) => RespValue::Integer(1),
+        Ok(false) => RespValue::Integer(0),
+        Err(e) => RespValue::error(e.to_string()),
+    }
+}
+
+fn cmd_pexpireat(db: &Db, args: &[Vec<u8>]) -> RespValue {
+    if args.len() != 2 {
+        return RespValue::error("wrong number of arguments for 'pexpireat' command");
+    }
+
+    let key = match std::str::from_utf8(&args[0]) {
+        Ok(k) => k,
+        Err(_) => return RespValue::error("invalid key"),
+    };
+
+    let unix_ms: i64 = match std::str::from_utf8(&args[1])
+        .ok()
+        .and_then(|s| s.parse().ok())
+    {
+        Some(s) => s,
+        None => return RespValue::error("value is not an integer or out of range"),
+    };
+
+    match db.pexpireat(key, unix_ms) {
+        Ok(true) => RespValue::Integer(1),
+        Ok(false) => RespValue::Integer(0),
+        Err(e) => RespValue::error(e.to_string()),
+    }
+}
+
+fn cmd_rename(db: &Db, args: &[Vec<u8>]) -> RespValue {
+    if args.len() != 2 {
+        return RespValue::error("wrong number of arguments for 'rename' command");
+    }
+
+    let key = match std::str::from_utf8(&args[0]) {
+        Ok(k) => k,
+        Err(_) => return RespValue::error("invalid key"),
+    };
+
+    let newkey = match std::str::from_utf8(&args[1]) {
+        Ok(k) => k,
+        Err(_) => return RespValue::error("invalid key"),
+    };
+
+    match db.rename(key, newkey) {
+        Ok(()) => RespValue::ok(),
+        Err(KvError::NoSuchKey) => RespValue::error("no such key"),
+        Err(e) => RespValue::error(e.to_string()),
+    }
+}
+
+fn cmd_renamenx(db: &Db, args: &[Vec<u8>]) -> RespValue {
+    if args.len() != 2 {
+        return RespValue::error("wrong number of arguments for 'renamenx' command");
+    }
+
+    let key = match std::str::from_utf8(&args[0]) {
+        Ok(k) => k,
+        Err(_) => return RespValue::error("invalid key"),
+    };
+
+    let newkey = match std::str::from_utf8(&args[1]) {
+        Ok(k) => k,
+        Err(_) => return RespValue::error("invalid key"),
+    };
+
+    match db.renamenx(key, newkey) {
+        Ok(true) => RespValue::Integer(1),
+        Ok(false) => RespValue::Integer(0),
+        Err(KvError::NoSuchKey) => RespValue::error("no such key"),
         Err(e) => RespValue::error(e.to_string()),
     }
 }
@@ -2083,6 +2608,156 @@ fn cmd_linsert(db: &Db, args: &[Vec<u8>]) -> RespValue {
 
     match db.linsert(key, position, pivot, element) {
         Ok(length) => RespValue::Integer(length),
+        Err(KvError::WrongType) => RespValue::wrong_type(),
+        Err(e) => RespValue::error(e.to_string()),
+    }
+}
+
+fn cmd_lpushx(db: &Db, args: &[Vec<u8>]) -> RespValue {
+    if args.len() < 2 {
+        return RespValue::error("wrong number of arguments for 'lpushx' command");
+    }
+
+    let key = match std::str::from_utf8(&args[0]) {
+        Ok(k) => k,
+        Err(_) => return RespValue::error("invalid key"),
+    };
+
+    let values: Vec<&[u8]> = args[1..].iter().map(|v| v.as_slice()).collect();
+
+    match db.lpushx(key, &values) {
+        Ok(length) => RespValue::Integer(length),
+        Err(KvError::WrongType) => RespValue::wrong_type(),
+        Err(e) => RespValue::error(e.to_string()),
+    }
+}
+
+fn cmd_rpushx(db: &Db, args: &[Vec<u8>]) -> RespValue {
+    if args.len() < 2 {
+        return RespValue::error("wrong number of arguments for 'rpushx' command");
+    }
+
+    let key = match std::str::from_utf8(&args[0]) {
+        Ok(k) => k,
+        Err(_) => return RespValue::error("invalid key"),
+    };
+
+    let values: Vec<&[u8]> = args[1..].iter().map(|v| v.as_slice()).collect();
+
+    match db.rpushx(key, &values) {
+        Ok(length) => RespValue::Integer(length),
+        Err(KvError::WrongType) => RespValue::wrong_type(),
+        Err(e) => RespValue::error(e.to_string()),
+    }
+}
+
+fn cmd_lpos(db: &Db, args: &[Vec<u8>]) -> RespValue {
+    if args.len() < 2 {
+        return RespValue::error("wrong number of arguments for 'lpos' command");
+    }
+
+    let key = match std::str::from_utf8(&args[0]) {
+        Ok(k) => k,
+        Err(_) => return RespValue::error("invalid key"),
+    };
+
+    let element = &args[1];
+
+    // Parse options: RANK rank, COUNT count, MAXLEN maxlen
+    let mut rank: Option<i64> = None;
+    let mut count: Option<usize> = None;
+    let mut maxlen: Option<usize> = None;
+
+    let mut i = 2;
+    while i < args.len() {
+        let opt = String::from_utf8_lossy(&args[i]).to_uppercase();
+        match opt.as_str() {
+            "RANK" => {
+                if i + 1 >= args.len() {
+                    return RespValue::error("syntax error");
+                }
+                i += 1;
+                rank = match std::str::from_utf8(&args[i]).ok().and_then(|s| s.parse().ok()) {
+                    Some(r) if r != 0 => Some(r),
+                    _ => return RespValue::error("RANK can't be zero"),
+                };
+            }
+            "COUNT" => {
+                if i + 1 >= args.len() {
+                    return RespValue::error("syntax error");
+                }
+                i += 1;
+                count = match std::str::from_utf8(&args[i]).ok().and_then(|s| s.parse().ok()) {
+                    Some(c) => Some(c),
+                    None => return RespValue::error("value is not an integer or out of range"),
+                };
+            }
+            "MAXLEN" => {
+                if i + 1 >= args.len() {
+                    return RespValue::error("syntax error");
+                }
+                i += 1;
+                maxlen = match std::str::from_utf8(&args[i]).ok().and_then(|s| s.parse().ok()) {
+                    Some(m) => Some(m),
+                    None => return RespValue::error("value is not an integer or out of range"),
+                };
+            }
+            _ => return RespValue::error("syntax error"),
+        }
+        i += 1;
+    }
+
+    match db.lpos(key, element, rank, count, maxlen) {
+        Ok(positions) => {
+            if count.is_some() {
+                // Return array when COUNT is specified
+                RespValue::Array(Some(
+                    positions
+                        .into_iter()
+                        .map(RespValue::Integer)
+                        .collect(),
+                ))
+            } else if positions.is_empty() {
+                RespValue::null()
+            } else {
+                RespValue::Integer(positions[0])
+            }
+        }
+        Err(KvError::WrongType) => RespValue::wrong_type(),
+        Err(e) => RespValue::error(e.to_string()),
+    }
+}
+
+fn cmd_lmove(db: &Db, args: &[Vec<u8>]) -> RespValue {
+    if args.len() != 4 {
+        return RespValue::error("wrong number of arguments for 'lmove' command");
+    }
+
+    let source = match std::str::from_utf8(&args[0]) {
+        Ok(k) => k,
+        Err(_) => return RespValue::error("invalid key"),
+    };
+
+    let destination = match std::str::from_utf8(&args[1]) {
+        Ok(k) => k,
+        Err(_) => return RespValue::error("invalid key"),
+    };
+
+    let wherefrom = match String::from_utf8_lossy(&args[2]).to_uppercase().as_str() {
+        "LEFT" => ListDirection::Left,
+        "RIGHT" => ListDirection::Right,
+        _ => return RespValue::error("syntax error"),
+    };
+
+    let whereto = match String::from_utf8_lossy(&args[3]).to_uppercase().as_str() {
+        "LEFT" => ListDirection::Left,
+        "RIGHT" => ListDirection::Right,
+        _ => return RespValue::error("syntax error"),
+    };
+
+    match db.lmove(source, destination, wherefrom, whereto) {
+        Ok(Some(element)) => RespValue::BulkString(Some(element)),
+        Ok(None) => RespValue::null(),
         Err(KvError::WrongType) => RespValue::wrong_type(),
         Err(e) => RespValue::error(e.to_string()),
     }
@@ -7229,8 +7904,17 @@ async fn execute_command_in_transaction(db: &mut Db, args: &[Vec<u8>]) -> RespVa
         "PTTL" => cmd_pttl(db, cmd_args),
         "EXISTS" => cmd_exists(db, cmd_args),
         "EXPIRE" => cmd_expire(db, cmd_args),
+        "PEXPIRE" => cmd_pexpire(db, cmd_args),
+        "EXPIREAT" => cmd_expireat(db, cmd_args),
+        "PEXPIREAT" => cmd_pexpireat(db, cmd_args),
+        "PERSIST" => cmd_persist(db, cmd_args),
+        "RENAME" => cmd_rename(db, cmd_args),
+        "RENAMENX" => cmd_renamenx(db, cmd_args),
         "KEYS" => cmd_keys(db, cmd_args),
         "SCAN" => cmd_scan(db, cmd_args),
+        "HSCAN" => cmd_hscan(db, cmd_args),
+        "SSCAN" => cmd_sscan(db, cmd_args),
+        "ZSCAN" => cmd_zscan(db, cmd_args),
         // String operations
         "INCR" => cmd_incr(db, cmd_args),
         "DECR" => cmd_decr(db, cmd_args),
@@ -7243,6 +7927,10 @@ async fn execute_command_in_transaction(db: &mut Db, args: &[Vec<u8>]) -> RespVa
         "STRLEN" => cmd_strlen(db, cmd_args),
         "GETRANGE" => cmd_getrange(db, cmd_args),
         "SETRANGE" => cmd_setrange(db, cmd_args),
+        "GETEX" => cmd_getex(db, cmd_args),
+        "GETDEL" => cmd_getdel(db, cmd_args),
+        "SETEX" => cmd_setex(db, cmd_args),
+        "PSETEX" => cmd_psetex(db, cmd_args),
         // Hash operations
         "HSET" => cmd_hset(db, cmd_args),
         "HGET" => cmd_hget(db, cmd_args),
@@ -7268,6 +7956,10 @@ async fn execute_command_in_transaction(db: &mut Db, args: &[Vec<u8>]) -> RespVa
         "LTRIM" => cmd_ltrim(db, cmd_args),
         "LREM" => cmd_lrem(db, cmd_args),
         "LINSERT" => cmd_linsert(db, cmd_args),
+        "LPUSHX" => cmd_lpushx(db, cmd_args),
+        "RPUSHX" => cmd_rpushx(db, cmd_args),
+        "LPOS" => cmd_lpos(db, cmd_args),
+        "LMOVE" => cmd_lmove(db, cmd_args),
         // Set operations
         "SADD" => cmd_sadd(db, cmd_args),
         "SREM" => cmd_srem(db, cmd_args),

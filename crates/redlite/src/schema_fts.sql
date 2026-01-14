@@ -11,12 +11,10 @@ CREATE TABLE IF NOT EXISTS fts_settings (
 CREATE INDEX IF NOT EXISTS idx_fts_settings_level_target ON fts_settings(level, target);
 
 -- FTS5 virtual table for full-text search
--- Content is stored externally (in strings table), using content="" for external content mode
+-- Content is stored in the FTS table to enable highlight() and snippet() functions
 CREATE VIRTUAL TABLE IF NOT EXISTS fts USING fts5(
     key_text,           -- The key name (searchable for key-based queries)
     content,            -- The actual content to search
-    content='',         -- External content mode (we manage syncing ourselves)
-    contentless_delete=1,
     tokenize='porter unicode61'
 );
 
