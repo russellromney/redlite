@@ -42,7 +42,10 @@ redis-cli SET foo bar
 ## Install
 
 ```bash
-cargo add redlite
+cargo add redlite                      # Core features
+cargo add redlite --features geo       # With geospatial commands
+cargo add redlite --features vectors   # With vector search
+cargo add redlite --features full      # Everything (geo + vectors)
 ```
 
 ## Commands
@@ -54,6 +57,20 @@ All standard Redis commands for strings, hashes, lists, sets, sorted sets, and s
 **RediSearch:** FT.CREATE, FT.SEARCH, FT.INFO, FT.ALTER, FT.DROPINDEX, FT.EXPLAIN, FT.PROFILE, FT.AGGREGATE, aliases, synonyms, suggestions
 
 **Redis 8 Vectors:** VADD, VSIM, VSIMBATCH, VREM, VCARD, VEXISTS, VDIM, VGET, VGETALL, VGETATTRIBUTES, VSETATTRIBUTES, VDELATTRIBUTES
+
+**Geospatial (R*Tree):** GEOADD, GEOPOS, GEODIST, GEOHASH, GEOSEARCH, GEOSEARCHSTORE
+
+```bash
+# Add locations with coordinates
+redis-cli GEOADD locations -122.4194 37.7749 "San Francisco"
+redis-cli GEOADD locations -73.9857 40.7484 "New York"
+
+# Calculate distance between cities
+redis-cli GEODIST locations "San Francisco" "New York" KM
+
+# Search within radius
+redis-cli GEOSEARCH locations FROMMEMBER "San Francisco" BYRADIUS 5000 KM WITHCOORD WITHDIST
+```
 
 **Extensions:** `VACUUM`, `KEYINFO`, `AUTOVACUUM`, `HISTORY` (time-travel queries)
 

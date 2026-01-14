@@ -511,6 +511,13 @@ async fn execute_command(
         "VGETATTR" => cmd_vgetattr(db, cmd_args),
         "VSETATTR" => cmd_vsetattr(db, cmd_args),
         "VRANDMEMBER" => cmd_vrandmember(db, cmd_args),
+        // Geo commands (GEO* commands)
+        "GEOADD" => cmd_geoadd(db, cmd_args),
+        "GEOPOS" => cmd_geopos(db, cmd_args),
+        "GEODIST" => cmd_geodist(db, cmd_args),
+        "GEOHASH" => cmd_geohash(db, cmd_args),
+        "GEOSEARCH" => cmd_geosearch(db, cmd_args),
+        "GEOSEARCHSTORE" => cmd_geosearchstore(db, cmd_args),
         // Stream commands
         "XADD" => cmd_xadd(db, cmd_args),
         "XLEN" => cmd_xlen(db, cmd_args),
@@ -5379,6 +5386,432 @@ fn cmd_vrandmember(_db: &Db, _args: &[Vec<u8>]) -> RespValue {
     RespValue::error("vectors feature not enabled. Compile with --features vectors")
 }
 
+// --- Session 25: Geo command handlers ---
+
+/// GEOADD key [NX|XX] [CH] longitude latitude member [lon lat member ...]
+#[cfg(feature = "geo")]
+fn cmd_geoadd(db: &Db, args: &[Vec<u8>]) -> RespValue {
+    if args.len() < 4 {
+        return RespValue::error("wrong number of arguments for 'geoadd' command");
+    }
+
+    let key = match std::str::from_utf8(&args[0]) {
+        Ok(k) => k,
+        Err(_) => return RespValue::error("invalid key"),
+    };
+
+    let mut i = 1;
+    let mut nx = false;
+    let mut xx = false;
+    let mut ch = false;
+
+    // Parse optional flags
+    while i < args.len() {
+        let arg = match std::str::from_utf8(&args[i]) {
+            Ok(s) => s.to_uppercase(),
+            Err(_) => break,
+        };
+        match arg.as_str() {
+            "NX" => { nx = true; i += 1; }
+            "XX" => { xx = true; i += 1; }
+            "CH" => { ch = true; i += 1; }
+            _ => break,
+        }
+    }
+
+    // Parse longitude latitude member triplets
+    let mut members = Vec::new();
+    while i + 2 < args.len() {
+        let lon: f64 = match std::str::from_utf8(&args[i]).ok().and_then(|s| s.parse().ok()) {
+            Some(v) => v,
+            None => return RespValue::error("invalid longitude"),
+        };
+        let lat: f64 = match std::str::from_utf8(&args[i + 1]).ok().and_then(|s| s.parse().ok()) {
+            Some(v) => v,
+            None => return RespValue::error("invalid latitude"),
+        };
+        let member = match std::str::from_utf8(&args[i + 2]) {
+            Ok(m) => m,
+            Err(_) => return RespValue::error("invalid member"),
+        };
+        members.push((lon, lat, member));
+        i += 3;
+    }
+
+    if members.is_empty() {
+        return RespValue::error("wrong number of arguments for 'geoadd' command");
+    }
+
+    match db.geoadd(key, &members, nx, xx, ch) {
+        Ok(count) => RespValue::Integer(count),
+        Err(e) => RespValue::error(format!("{}", e)),
+    }
+}
+
+#[cfg(not(feature = "geo"))]
+fn cmd_geoadd(_db: &Db, _args: &[Vec<u8>]) -> RespValue {
+    RespValue::error("geo feature not enabled. Compile with --features geo")
+}
+
+/// GEOPOS key member [member ...]
+#[cfg(feature = "geo")]
+fn cmd_geopos(db: &Db, args: &[Vec<u8>]) -> RespValue {
+    if args.len() < 2 {
+        return RespValue::error("wrong number of arguments for 'geopos' command");
+    }
+
+    let key = match std::str::from_utf8(&args[0]) {
+        Ok(k) => k,
+        Err(_) => return RespValue::error("invalid key"),
+    };
+
+    let members: Vec<&str> = args[1..]
+        .iter()
+        .filter_map(|a| std::str::from_utf8(a).ok())
+        .collect();
+
+    match db.geopos(key, &members) {
+        Ok(positions) => {
+            let results: Vec<RespValue> = positions
+                .into_iter()
+                .map(|pos| match pos {
+                    Some((lon, lat)) => RespValue::Array(Some(vec![
+                        RespValue::from_string(format!("{}", lon)),
+                        RespValue::from_string(format!("{}", lat)),
+                    ])),
+                    None => RespValue::null(),
+                })
+                .collect();
+            RespValue::Array(Some(results))
+        }
+        Err(e) => RespValue::error(format!("{}", e)),
+    }
+}
+
+#[cfg(not(feature = "geo"))]
+fn cmd_geopos(_db: &Db, _args: &[Vec<u8>]) -> RespValue {
+    RespValue::error("geo feature not enabled. Compile with --features geo")
+}
+
+/// GEODIST key member1 member2 [M|KM|MI|FT]
+#[cfg(feature = "geo")]
+fn cmd_geodist(db: &Db, args: &[Vec<u8>]) -> RespValue {
+    if args.len() < 3 {
+        return RespValue::error("wrong number of arguments for 'geodist' command");
+    }
+
+    let key = match std::str::from_utf8(&args[0]) {
+        Ok(k) => k,
+        Err(_) => return RespValue::error("invalid key"),
+    };
+    let member1 = match std::str::from_utf8(&args[1]) {
+        Ok(m) => m,
+        Err(_) => return RespValue::error("invalid member"),
+    };
+    let member2 = match std::str::from_utf8(&args[2]) {
+        Ok(m) => m,
+        Err(_) => return RespValue::error("invalid member"),
+    };
+
+    let unit = if args.len() > 3 {
+        match std::str::from_utf8(&args[3]).ok().and_then(crate::types::GeoUnit::from_str) {
+            Some(u) => u,
+            None => return RespValue::error("invalid unit"),
+        }
+    } else {
+        crate::types::GeoUnit::Meters
+    };
+
+    match db.geodist(key, member1, member2, unit) {
+        Ok(Some(dist)) => RespValue::from_string(format!("{}", dist)),
+        Ok(None) => RespValue::null(),
+        Err(e) => RespValue::error(format!("{}", e)),
+    }
+}
+
+#[cfg(not(feature = "geo"))]
+fn cmd_geodist(_db: &Db, _args: &[Vec<u8>]) -> RespValue {
+    RespValue::error("geo feature not enabled. Compile with --features geo")
+}
+
+/// GEOHASH key member [member ...]
+#[cfg(feature = "geo")]
+fn cmd_geohash(db: &Db, args: &[Vec<u8>]) -> RespValue {
+    if args.len() < 2 {
+        return RespValue::error("wrong number of arguments for 'geohash' command");
+    }
+
+    let key = match std::str::from_utf8(&args[0]) {
+        Ok(k) => k,
+        Err(_) => return RespValue::error("invalid key"),
+    };
+
+    let members: Vec<&str> = args[1..]
+        .iter()
+        .filter_map(|a| std::str::from_utf8(a).ok())
+        .collect();
+
+    match db.geohash(key, &members) {
+        Ok(hashes) => {
+            let results: Vec<RespValue> = hashes
+                .into_iter()
+                .map(|h| match h {
+                    Some(hash) => RespValue::from_string(hash),
+                    None => RespValue::null(),
+                })
+                .collect();
+            RespValue::Array(Some(results))
+        }
+        Err(e) => RespValue::error(format!("{}", e)),
+    }
+}
+
+#[cfg(not(feature = "geo"))]
+fn cmd_geohash(_db: &Db, _args: &[Vec<u8>]) -> RespValue {
+    RespValue::error("geo feature not enabled. Compile with --features geo")
+}
+
+/// GEOSEARCH key FROMMEMBER member | FROMLONLAT lon lat BYRADIUS radius M|KM|MI|FT | BYBOX width height M|KM|MI|FT [ASC|DESC] [COUNT n [ANY]] [WITHCOORD] [WITHDIST] [WITHHASH]
+#[cfg(feature = "geo")]
+fn cmd_geosearch(db: &Db, args: &[Vec<u8>]) -> RespValue {
+    if args.len() < 4 {
+        return RespValue::error("wrong number of arguments for 'geosearch' command");
+    }
+
+    let key = match std::str::from_utf8(&args[0]) {
+        Ok(k) => k,
+        Err(_) => return RespValue::error("invalid key"),
+    };
+
+    let mut options = crate::types::GeoSearchOptions::default();
+    let mut i = 1;
+
+    while i < args.len() {
+        let arg = match std::str::from_utf8(&args[i]) {
+            Ok(s) => s.to_uppercase(),
+            Err(_) => { i += 1; continue; }
+        };
+
+        match arg.as_str() {
+            "FROMMEMBER" => {
+                if i + 1 >= args.len() {
+                    return RespValue::error("syntax error");
+                }
+                options.from_member = std::str::from_utf8(&args[i + 1]).ok().map(String::from);
+                i += 2;
+            }
+            "FROMLONLAT" => {
+                if i + 2 >= args.len() {
+                    return RespValue::error("syntax error");
+                }
+                let lon: f64 = match std::str::from_utf8(&args[i + 1]).ok().and_then(|s| s.parse().ok()) {
+                    Some(v) => v,
+                    None => return RespValue::error("invalid longitude"),
+                };
+                let lat: f64 = match std::str::from_utf8(&args[i + 2]).ok().and_then(|s| s.parse().ok()) {
+                    Some(v) => v,
+                    None => return RespValue::error("invalid latitude"),
+                };
+                options.from_lonlat = Some((lon, lat));
+                i += 3;
+            }
+            "BYRADIUS" => {
+                if i + 2 >= args.len() {
+                    return RespValue::error("syntax error");
+                }
+                let radius: f64 = match std::str::from_utf8(&args[i + 1]).ok().and_then(|s| s.parse().ok()) {
+                    Some(v) => v,
+                    None => return RespValue::error("invalid radius"),
+                };
+                let unit = match std::str::from_utf8(&args[i + 2]).ok().and_then(crate::types::GeoUnit::from_str) {
+                    Some(u) => u,
+                    None => return RespValue::error("invalid unit"),
+                };
+                options.by_radius = Some((radius, unit));
+                i += 3;
+            }
+            "BYBOX" => {
+                if i + 3 >= args.len() {
+                    return RespValue::error("syntax error");
+                }
+                let width: f64 = match std::str::from_utf8(&args[i + 1]).ok().and_then(|s| s.parse().ok()) {
+                    Some(v) => v,
+                    None => return RespValue::error("invalid width"),
+                };
+                let height: f64 = match std::str::from_utf8(&args[i + 2]).ok().and_then(|s| s.parse().ok()) {
+                    Some(v) => v,
+                    None => return RespValue::error("invalid height"),
+                };
+                let unit = match std::str::from_utf8(&args[i + 3]).ok().and_then(crate::types::GeoUnit::from_str) {
+                    Some(u) => u,
+                    None => return RespValue::error("invalid unit"),
+                };
+                options.by_box = Some((width, height, unit));
+                i += 4;
+            }
+            "ASC" => { options.ascending = true; i += 1; }
+            "DESC" => { options.ascending = false; i += 1; }
+            "COUNT" => {
+                if i + 1 >= args.len() {
+                    return RespValue::error("syntax error");
+                }
+                options.count = std::str::from_utf8(&args[i + 1]).ok().and_then(|s| s.parse().ok());
+                i += 2;
+                // Check for ANY
+                if i < args.len() {
+                    if let Ok(s) = std::str::from_utf8(&args[i]) {
+                        if s.to_uppercase() == "ANY" {
+                            options.any = true;
+                            i += 1;
+                        }
+                    }
+                }
+            }
+            "WITHCOORD" => { options.with_coord = true; i += 1; }
+            "WITHDIST" => { options.with_dist = true; i += 1; }
+            "WITHHASH" => { options.with_hash = true; i += 1; }
+            _ => { i += 1; }
+        }
+    }
+
+    match db.geosearch(key, &options) {
+        Ok(results) => {
+            let items: Vec<RespValue> = results
+                .into_iter()
+                .map(|m| {
+                    let mut item = vec![RespValue::from_string(m.member.clone())];
+                    if options.with_dist {
+                        if let Some(dist) = m.distance {
+                            item.push(RespValue::from_string(format!("{}", dist)));
+                        }
+                    }
+                    if options.with_hash {
+                        if let Some(hash) = &m.geohash {
+                            item.push(RespValue::from_string(hash.clone()));
+                        }
+                    }
+                    if options.with_coord {
+                        item.push(RespValue::Array(Some(vec![
+                            RespValue::from_string(format!("{}", m.longitude)),
+                            RespValue::from_string(format!("{}", m.latitude)),
+                        ])));
+                    }
+                    if item.len() == 1 {
+                        item.pop().unwrap()
+                    } else {
+                        RespValue::Array(Some(item))
+                    }
+                })
+                .collect();
+            RespValue::Array(Some(items))
+        }
+        Err(e) => RespValue::error(format!("{}", e)),
+    }
+}
+
+#[cfg(not(feature = "geo"))]
+fn cmd_geosearch(_db: &Db, _args: &[Vec<u8>]) -> RespValue {
+    RespValue::error("geo feature not enabled. Compile with --features geo")
+}
+
+/// GEOSEARCHSTORE dest src [FROMMEMBER member | FROMLONLAT lon lat] [BYRADIUS radius M|KM|MI|FT | BYBOX width height M|KM|MI|FT] [ASC|DESC] [COUNT n] [STOREDIST]
+#[cfg(feature = "geo")]
+fn cmd_geosearchstore(db: &Db, args: &[Vec<u8>]) -> RespValue {
+    if args.len() < 5 {
+        return RespValue::error("wrong number of arguments for 'geosearchstore' command");
+    }
+
+    let dest = match std::str::from_utf8(&args[0]) {
+        Ok(k) => k,
+        Err(_) => return RespValue::error("invalid destination key"),
+    };
+    let src = match std::str::from_utf8(&args[1]) {
+        Ok(k) => k,
+        Err(_) => return RespValue::error("invalid source key"),
+    };
+
+    let mut options = crate::types::GeoSearchOptions::default();
+    let mut store_dist = false;
+    let mut i = 2;
+
+    while i < args.len() {
+        let arg = match std::str::from_utf8(&args[i]) {
+            Ok(s) => s.to_uppercase(),
+            Err(_) => { i += 1; continue; }
+        };
+
+        match arg.as_str() {
+            "FROMMEMBER" => {
+                if i + 1 >= args.len() { return RespValue::error("syntax error"); }
+                options.from_member = std::str::from_utf8(&args[i + 1]).ok().map(String::from);
+                i += 2;
+            }
+            "FROMLONLAT" => {
+                if i + 2 >= args.len() { return RespValue::error("syntax error"); }
+                let lon: f64 = match std::str::from_utf8(&args[i + 1]).ok().and_then(|s| s.parse().ok()) {
+                    Some(v) => v,
+                    None => return RespValue::error("invalid longitude"),
+                };
+                let lat: f64 = match std::str::from_utf8(&args[i + 2]).ok().and_then(|s| s.parse().ok()) {
+                    Some(v) => v,
+                    None => return RespValue::error("invalid latitude"),
+                };
+                options.from_lonlat = Some((lon, lat));
+                i += 3;
+            }
+            "BYRADIUS" => {
+                if i + 2 >= args.len() { return RespValue::error("syntax error"); }
+                let radius: f64 = match std::str::from_utf8(&args[i + 1]).ok().and_then(|s| s.parse().ok()) {
+                    Some(v) => v,
+                    None => return RespValue::error("invalid radius"),
+                };
+                let unit = match std::str::from_utf8(&args[i + 2]).ok().and_then(crate::types::GeoUnit::from_str) {
+                    Some(u) => u,
+                    None => return RespValue::error("invalid unit"),
+                };
+                options.by_radius = Some((radius, unit));
+                i += 3;
+            }
+            "BYBOX" => {
+                if i + 3 >= args.len() { return RespValue::error("syntax error"); }
+                let width: f64 = match std::str::from_utf8(&args[i + 1]).ok().and_then(|s| s.parse().ok()) {
+                    Some(v) => v,
+                    None => return RespValue::error("invalid width"),
+                };
+                let height: f64 = match std::str::from_utf8(&args[i + 2]).ok().and_then(|s| s.parse().ok()) {
+                    Some(v) => v,
+                    None => return RespValue::error("invalid height"),
+                };
+                let unit = match std::str::from_utf8(&args[i + 3]).ok().and_then(crate::types::GeoUnit::from_str) {
+                    Some(u) => u,
+                    None => return RespValue::error("invalid unit"),
+                };
+                options.by_box = Some((width, height, unit));
+                i += 4;
+            }
+            "ASC" => { options.ascending = true; i += 1; }
+            "DESC" => { options.ascending = false; i += 1; }
+            "COUNT" => {
+                if i + 1 >= args.len() { return RespValue::error("syntax error"); }
+                options.count = std::str::from_utf8(&args[i + 1]).ok().and_then(|s| s.parse().ok());
+                i += 2;
+            }
+            "STOREDIST" => { store_dist = true; i += 1; }
+            _ => { i += 1; }
+        }
+    }
+
+    match db.geosearchstore(dest, src, &options, store_dist) {
+        Ok(count) => RespValue::Integer(count),
+        Err(e) => RespValue::error(format!("{}", e)),
+    }
+}
+
+#[cfg(not(feature = "geo"))]
+fn cmd_geosearchstore(_db: &Db, _args: &[Vec<u8>]) -> RespValue {
+    RespValue::error("geo feature not enabled. Compile with --features geo")
+}
+
 // --- Session 13: Stream command handlers ---
 
 fn cmd_xadd(db: &Db, args: &[Vec<u8>]) -> RespValue {
@@ -6900,6 +7333,13 @@ async fn execute_command_in_transaction(db: &mut Db, args: &[Vec<u8>]) -> RespVa
         "VGETATTR" => cmd_vgetattr(db, cmd_args),
         "VSETATTR" => cmd_vsetattr(db, cmd_args),
         "VRANDMEMBER" => cmd_vrandmember(db, cmd_args),
+        // Geo commands (GEO* commands)
+        "GEOADD" => cmd_geoadd(db, cmd_args),
+        "GEOPOS" => cmd_geopos(db, cmd_args),
+        "GEODIST" => cmd_geodist(db, cmd_args),
+        "GEOHASH" => cmd_geohash(db, cmd_args),
+        "GEOSEARCH" => cmd_geosearch(db, cmd_args),
+        "GEOSEARCHSTORE" => cmd_geosearchstore(db, cmd_args),
         // Stream commands
         "XADD" => cmd_xadd(db, cmd_args),
         "XLEN" => cmd_xlen(db, cmd_args),

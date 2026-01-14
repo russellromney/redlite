@@ -234,28 +234,24 @@ CREATE TABLE IF NOT EXISTS vector_sets (
 CREATE INDEX IF NOT EXISTS idx_vector_sets_key ON vector_sets(key_id);
 ```
 
-### Session 25: Geospatial (R*Tree)
+### Session 25: Geospatial (R*Tree) - ✅ COMPLETE
 
 Redis-compatible geo commands using SQLite's built-in R*Tree extension.
-**Included by default** — R*Tree is built into standard SQLite.
+**Enabled via `--features geo`** — R*Tree is built into standard SQLite (no extra dependencies).
 
-**Commands:**
-```bash
-GEOADD key [NX|XX] [CH] longitude latitude member [lon lat member ...]
-GEOPOS key member [member ...]
-GEODIST key member1 member2 [M|KM|MI|FT]
-GEOHASH key member [member ...]
-GEOSEARCH key <FROMMEMBER member | FROMLONLAT lon lat>
-              <BYRADIUS radius M|KM|MI|FT | BYBOX width height M|KM|MI|FT>
-              [ASC|DESC] [COUNT n [ANY]] [WITHCOORD] [WITHDIST] [WITHHASH]
-GEOSEARCHSTORE dest src <FROMMEMBER|FROMLONLAT> <BYRADIUS|BYBOX> [STOREDIST]
-```
+**Commands (all implemented):**
+- [x] GEOADD key [NX|XX] [CH] longitude latitude member [lon lat member ...]
+- [x] GEOPOS key member [member ...]
+- [x] GEODIST key member1 member2 [M|KM|MI|FT]
+- [x] GEOHASH key member [member ...]
+- [x] GEOSEARCH key FROMMEMBER/FROMLONLAT BYRADIUS/BYBOX [ASC|DESC] [COUNT n [ANY]] [WITHCOORD] [WITHDIST] [WITHHASH]
+- [x] GEOSEARCHSTORE dest src FROMMEMBER/FROMLONLAT BYRADIUS/BYBOX [STOREDIST]
 
 **Implementation:**
 - R*Tree virtual table for bounding-box pre-filtering
-- Haversine formula for precise distance calculations
-- Geohash encoding for GEOHASH command
-- Results stored as sorted sets (for GEOSEARCHSTORE compatibility)
+- Haversine formula for precise distance calculations (Earth radius = 6371000m)
+- Base32 geohash encoding (11 chars = ~0.6mm precision)
+- GEOSEARCHSTORE stores results as sorted sets (compatible with ZRANGE)
 
 **Schema (`src/schema_geo.sql`):**
 ```sql
@@ -271,33 +267,15 @@ CREATE TABLE IF NOT EXISTS geo_data (
 CREATE INDEX IF NOT EXISTS idx_geo_data_key ON geo_data(key_id);
 
 CREATE VIRTUAL TABLE IF NOT EXISTS geo_rtree USING rtree(
-    id, minLon, maxLon, minLat, maxLat
+    id, min_lon, max_lon, min_lat, max_lat
 );
 ```
 
-**Query pattern:**
-1. Compute bounding box from center + radius
-2. Query R*Tree for candidates
-3. Apply Haversine for precise distance filtering
-4. Sort by distance, apply COUNT limit
+**Test Results:** 17 geo tests + 473 total tests passing with `--features geo`
 
-**Distance units:** M (default), KM, MI, FT
+**GEOSHAPE (optional `--features geoshape`):** (Future - not implemented)
 
-**Coordinate limits:** Longitude -180 to 180, Latitude -85.05112878 to 85.05112878
-
-**GEOSHAPE (optional `--features geoshape`):**
-
-For polygon queries, enable Geopoly extension:
-```bash
-# In FT.CREATE schema
-FT.CREATE idx ON HASH SCHEMA location GEOSHAPE
-
-# Polygon queries in FT.SEARCH
-FT.SEARCH idx "@location:[WITHIN $poly]" PARAMS 2 poly "POLYGON((...))"
-FT.SEARCH idx "@location:[CONTAINS $point]" PARAMS 4 point "POINT(lon lat)"
-```
-
-Uses SQLite Geopoly for polygon contains/intersects operations. R*Tree handles MBR filtering, Geopoly does exact polygon math.
+For polygon queries, enable Geopoly extension.
 
 ### Session 26: Additional Commands
 
@@ -632,30 +610,33 @@ Basic functionality is covered. Need comprehensive edge case and integration tes
 **Default (no flags needed):**
 - All core Redis commands (strings, hashes, lists, sets, zsets, streams)
 - Full-text search: FT.*, FTS commands (uses SQLite's built-in FTS5)
-- Geospatial: GEO* commands (uses SQLite's built-in R*Tree)
 - English stemming (porter, built into FTS5)
 
 **Optional extensions:**
 ```toml
 [features]
+geo = []          # GEO* commands — uses SQLite's built-in R*Tree (no extra deps)
 vectors = []      # V* commands — adds sqlite-vector (~500KB)
 fuzzy = []        # Trigram tokenizer for approximate matching
 spellcheck = []   # FT.SPELLCHECK, FT.DICT* — adds spellfix1 (~50KB)
 languages = []    # Non-English stemmers — adds Snowball (~200KB)
 geoshape = []     # GEOSHAPE field type — enables Geopoly
 
-full = ["vectors", "fuzzy", "spellcheck", "languages", "geoshape"]
+full = ["vectors", "geo"]  # Currently: vectors + geo
 ```
 
 **Installation:**
 ```bash
-# Default: full Redis + Search + Geo
+# Default: full Redis + Search (no geo, no vectors)
 cargo install redlite
+
+# With geospatial commands
+cargo install redlite --features geo
 
 # With vector search
 cargo install redlite --features vectors
 
-# Everything
+# Everything (vectors + geo)
 cargo install redlite --features full
 ```
 

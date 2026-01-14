@@ -1,5 +1,44 @@
 # Changelog
 
+## Session 25: Geospatial Commands (R*Tree)
+
+### Added - GEO* Command Family
+- **GEOADD** - Add members with longitude/latitude to a geo set
+  - Supports NX (only add new), XX (only update), CH (return changed count) flags
+  - Coordinate validation: lon -180 to 180, lat -85.05112878 to 85.05112878
+- **GEOPOS** - Get coordinates (longitude, latitude) for members
+- **GEODIST** - Calculate distance between two members
+  - Supports units: M (meters), KM (kilometers), MI (miles), FT (feet)
+- **GEOHASH** - Get 11-character geohash strings for members
+- **GEOSEARCH** - Search for members within radius or bounding box
+  - FROMMEMBER / FROMLONLAT center options
+  - BYRADIUS / BYBOX shape options
+  - ASC/DESC sorting, COUNT limit, ANY flag
+  - WITHCOORD, WITHDIST, WITHHASH response options
+- **GEOSEARCHSTORE** - Store GEOSEARCH results as sorted set
+  - STOREDIST option to store distances instead of geohashes
+
+### Implementation Details
+- Uses SQLite's built-in R*Tree extension for efficient spatial indexing
+- Haversine formula for accurate great-circle distance calculations
+- Base32 geohash encoding (11 chars = ~0.6mm precision)
+- Bounding box pre-filtering for radius queries
+
+### Feature Flag
+- `geo` feature flag enables geo commands (R*Tree is built into SQLite)
+- Included in `full` feature: `--features full` or `--features geo`
+
+### Files Modified
+- `src/schema_geo.sql` - New schema for geo_data + geo_rtree tables
+- `src/types.rs` - Added GeoUnit, GeoMember, GeoSearchOptions types
+- `src/db.rs` - Added geo* methods + helper functions (haversine, encode_geohash, bounding_box)
+- `src/server/mod.rs` - Added cmd_geo* server handlers
+- `Cargo.toml` - Added `geo` and `full` features
+
+### Test Results
+- ✅ 17 new geo-specific tests
+- ✅ **Total: 469 unit tests + 4 doctests = 473 tests passing** with `--features geo`
+
 ## Session 24: Redis 8 Vector Commands
 
 ### Added - V* Command Family (Redis 8 Compatible)

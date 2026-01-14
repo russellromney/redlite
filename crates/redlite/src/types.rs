@@ -857,6 +857,90 @@ pub enum VectorInput {
     Element(String),
 }
 
+// ============================================================================
+// Geo Types (feature = "geo")
+// ============================================================================
+
+/// Distance unit for geo commands
+#[cfg(feature = "geo")]
+#[derive(Debug, Clone, Copy, PartialEq, Default)]
+pub enum GeoUnit {
+    #[default]
+    Meters,
+    Kilometers,
+    Miles,
+    Feet,
+}
+
+#[cfg(feature = "geo")]
+impl GeoUnit {
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            GeoUnit::Meters => "m",
+            GeoUnit::Kilometers => "km",
+            GeoUnit::Miles => "mi",
+            GeoUnit::Feet => "ft",
+        }
+    }
+
+    pub fn from_str(s: &str) -> Option<Self> {
+        match s.to_uppercase().as_str() {
+            "M" => Some(GeoUnit::Meters),
+            "KM" => Some(GeoUnit::Kilometers),
+            "MI" => Some(GeoUnit::Miles),
+            "FT" => Some(GeoUnit::Feet),
+            _ => None,
+        }
+    }
+
+    /// Convert meters to this unit
+    pub fn from_meters(&self, meters: f64) -> f64 {
+        match self {
+            GeoUnit::Meters => meters,
+            GeoUnit::Kilometers => meters / 1000.0,
+            GeoUnit::Miles => meters / 1609.344,
+            GeoUnit::Feet => meters * 3.28084,
+        }
+    }
+
+    /// Convert this unit to meters
+    pub fn to_meters(&self, value: f64) -> f64 {
+        match self {
+            GeoUnit::Meters => value,
+            GeoUnit::Kilometers => value * 1000.0,
+            GeoUnit::Miles => value * 1609.344,
+            GeoUnit::Feet => value / 3.28084,
+        }
+    }
+}
+
+/// A geo member with coordinates and optional computed fields
+#[cfg(feature = "geo")]
+#[derive(Debug, Clone)]
+pub struct GeoMember {
+    pub member: String,
+    pub longitude: f64,
+    pub latitude: f64,
+    pub geohash: Option<String>,
+    pub distance: Option<f64>,
+}
+
+/// Options for GEOSEARCH command
+#[cfg(feature = "geo")]
+#[derive(Debug, Clone, Default)]
+pub struct GeoSearchOptions {
+    pub from_member: Option<String>,
+    pub from_lonlat: Option<(f64, f64)>,
+    pub by_radius: Option<(f64, GeoUnit)>,
+    pub by_box: Option<(f64, f64, GeoUnit)>, // width, height, unit
+    pub ascending: bool,
+    pub count: Option<usize>,
+    pub any: bool,
+    pub with_coord: bool,
+    pub with_dist: bool,
+    pub with_hash: bool,
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

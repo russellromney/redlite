@@ -299,6 +299,8 @@ impl Db {
         conn.execute_batch(include_str!("schema_ft.sql"))?; // RediSearch-compatible indexes
         #[cfg(feature = "vectors")]
         conn.execute_batch(include_str!("schema_vectors.sql"))?;
+        #[cfg(feature = "geo")]
+        conn.execute_batch(include_str!("schema_geo.sql"))?;
 
         // Migration: Add version column to keys table if it doesn't exist
         // SQLite doesn't support ADD COLUMN IF NOT EXISTS, so we check first
@@ -8744,6 +8746,500 @@ impl Db {
 
         Ok(results)
     }
+
+    // ========================================================================
+    // Geo Commands (feature = "geo")
+    // ========================================================================
+
+    /// Helper to get or create a key for geo data (uses ZSet type like Redis)
+    #[cfg(feature = "geo")]
+    fn get_or_create_geo_key(&self, conn: &Connection, key: &str) -> Result<i64> {
+        use rusqlite::params;
+        match conn
+            .query_row(
+                "SELECT id FROM keys WHERE db = ? AND key = ? LIMIT 1",
+                params![self.selected_db, key],
+                |row| row.get(0),
+            )
+            .optional()?
+        {
+            Some(id) => Ok(id),
+            None => {
+                let now = std::time::SystemTime::now()
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .unwrap()
+                    .as_millis() as i64;
+                conn.execute(
+                    "INSERT INTO keys (db, key, type, created_at, updated_at) VALUES (?, ?, ?, ?, ?)",
+                    params![self.selected_db, key, "zset", now, now],
+                )?;
+                Ok(conn.last_insert_rowid())
+            }
+        }
+    }
+
+    /// Helper to get key_id if exists (for read-only geo operations)
+    #[cfg(feature = "geo")]
+    fn get_geo_key_id(&self, conn: &Connection, key: &str) -> Result<Option<i64>> {
+        use rusqlite::params;
+        Ok(conn
+            .query_row(
+                "SELECT id FROM keys WHERE db = ? AND key = ? LIMIT 1",
+                params![self.selected_db, key],
+                |row| row.get(0),
+            )
+            .optional()?)
+    }
+
+    /// Haversine formula to calculate distance between two points in meters
+    #[cfg(feature = "geo")]
+    fn haversine(lon1: f64, lat1: f64, lon2: f64, lat2: f64) -> f64 {
+        const EARTH_RADIUS_M: f64 = 6371000.0;
+        let lat1_rad = lat1.to_radians();
+        let lat2_rad = lat2.to_radians();
+        let delta_lat = (lat2 - lat1).to_radians();
+        let delta_lon = (lon2 - lon1).to_radians();
+
+        let a = (delta_lat / 2.0).sin().powi(2)
+            + lat1_rad.cos() * lat2_rad.cos() * (delta_lon / 2.0).sin().powi(2);
+        let c = 2.0 * a.sqrt().atan2((1.0 - a).sqrt());
+
+        EARTH_RADIUS_M * c
+    }
+
+    /// Encode longitude/latitude as an 11-character geohash
+    #[cfg(feature = "geo")]
+    fn encode_geohash(lon: f64, lat: f64) -> String {
+        const BASE32: &[u8] = b"0123456789bcdefghjkmnpqrstuvwxyz";
+        let mut hash = String::with_capacity(11);
+        let mut min_lon = -180.0;
+        let mut max_lon = 180.0;
+        let mut min_lat = -90.0;
+        let mut max_lat = 90.0;
+        let mut is_lon = true;
+        let mut bits = 0u8;
+        let mut bit_count = 0;
+
+        for _ in 0..55 {
+            // 55 bits = 11 chars * 5 bits
+            if is_lon {
+                let mid = (min_lon + max_lon) / 2.0;
+                if lon >= mid {
+                    bits = (bits << 1) | 1;
+                    min_lon = mid;
+                } else {
+                    bits <<= 1;
+                    max_lon = mid;
+                }
+            } else {
+                let mid = (min_lat + max_lat) / 2.0;
+                if lat >= mid {
+                    bits = (bits << 1) | 1;
+                    min_lat = mid;
+                } else {
+                    bits <<= 1;
+                    max_lat = mid;
+                }
+            }
+            is_lon = !is_lon;
+            bit_count += 1;
+
+            if bit_count == 5 {
+                hash.push(BASE32[bits as usize] as char);
+                bits = 0;
+                bit_count = 0;
+            }
+        }
+        hash
+    }
+
+    /// Compute bounding box for radius query (returns min_lon, max_lon, min_lat, max_lat)
+    #[cfg(feature = "geo")]
+    fn bounding_box(lon: f64, lat: f64, radius_m: f64) -> (f64, f64, f64, f64) {
+        // Approximate: 111320 meters per degree latitude
+        let lat_delta = radius_m / 111320.0;
+        // Longitude degrees shrink toward poles
+        let lon_delta = radius_m / (111320.0 * lat.to_radians().cos().abs().max(0.0001));
+
+        (
+            (lon - lon_delta).max(-180.0),
+            (lon + lon_delta).min(180.0),
+            (lat - lat_delta).max(-85.05112878),
+            (lat + lat_delta).min(85.05112878),
+        )
+    }
+
+    /// Validate geo coordinates (Redis limits)
+    #[cfg(feature = "geo")]
+    fn validate_coords(lon: f64, lat: f64) -> Result<()> {
+        if !(-180.0..=180.0).contains(&lon) {
+            return Err(KvError::Other(
+                "ERR invalid longitude, must be between -180 and 180".to_string(),
+            ));
+        }
+        if !(-85.05112878..=85.05112878).contains(&lat) {
+            return Err(KvError::Other(
+                "ERR invalid latitude, must be between -85.05112878 and 85.05112878".to_string(),
+            ));
+        }
+        Ok(())
+    }
+
+    /// GEOADD key [NX|XX] [CH] longitude latitude member [lon lat member ...]
+    /// Returns number of elements added (or changed if CH)
+    #[cfg(feature = "geo")]
+    pub fn geoadd(
+        &self,
+        key: &str,
+        members: &[(f64, f64, &str)], // (lon, lat, member)
+        nx: bool,
+        xx: bool,
+        ch: bool,
+    ) -> Result<i64> {
+        use rusqlite::params;
+
+        // Validate all coordinates first
+        for (lon, lat, _) in members {
+            Self::validate_coords(*lon, *lat)?;
+        }
+
+        let conn = self.core.conn.lock().unwrap_or_else(|e| e.into_inner());
+        let key_id = self.get_or_create_geo_key(&conn, key)?;
+
+        let mut count = 0i64;
+
+        for (lon, lat, member) in members {
+            let geohash = Self::encode_geohash(*lon, *lat);
+
+            // Check if member exists
+            let existing: Option<i64> = conn
+                .query_row(
+                    "SELECT id FROM geo_data WHERE key_id = ?1 AND member = ?2",
+                    params![key_id, member],
+                    |row| row.get(0),
+                )
+                .ok();
+
+            match (existing, nx, xx) {
+                // NX: only add if doesn't exist
+                (Some(_), true, _) => continue,
+                // XX: only update if exists
+                (None, _, true) => continue,
+                // Update existing
+                (Some(geo_id), _, _) => {
+                    let changed = conn.execute(
+                        "UPDATE geo_data SET longitude = ?1, latitude = ?2, geohash = ?3
+                         WHERE id = ?4",
+                        params![lon, lat, geohash, geo_id],
+                    )?;
+                    // Update R*Tree entry
+                    conn.execute(
+                        "UPDATE geo_rtree SET min_lon = ?1, max_lon = ?1, min_lat = ?2, max_lat = ?2
+                         WHERE id = ?3",
+                        params![lon, lat, geo_id],
+                    )?;
+                    if ch && changed > 0 {
+                        count += 1;
+                    }
+                }
+                // Insert new
+                (None, _, _) => {
+                    conn.execute(
+                        "INSERT INTO geo_data (key_id, member, longitude, latitude, geohash)
+                         VALUES (?1, ?2, ?3, ?4, ?5)",
+                        params![key_id, member, lon, lat, geohash],
+                    )?;
+                    let geo_id = conn.last_insert_rowid();
+                    // Insert into R*Tree
+                    conn.execute(
+                        "INSERT INTO geo_rtree (id, min_lon, max_lon, min_lat, max_lat)
+                         VALUES (?1, ?2, ?2, ?3, ?3)",
+                        params![geo_id, lon, lat],
+                    )?;
+                    count += 1;
+                }
+            }
+        }
+
+        Ok(count)
+    }
+
+    /// GEOPOS key member [member ...]
+    /// Returns array of [longitude, latitude] or nil for each member
+    #[cfg(feature = "geo")]
+    pub fn geopos(&self, key: &str, members: &[&str]) -> Result<Vec<Option<(f64, f64)>>> {
+        use rusqlite::params;
+
+        let conn = self.core.conn.lock().unwrap_or_else(|e| e.into_inner());
+        let key_id = match self.get_geo_key_id(&conn, key)? {
+            Some(id) => id,
+            None => return Ok(members.iter().map(|_| None).collect()),
+        };
+
+        let mut results = Vec::with_capacity(members.len());
+        for member in members {
+            let coords: Option<(f64, f64)> = conn
+                .query_row(
+                    "SELECT longitude, latitude FROM geo_data WHERE key_id = ?1 AND member = ?2",
+                    params![key_id, member],
+                    |row| Ok((row.get(0)?, row.get(1)?)),
+                )
+                .ok();
+            results.push(coords);
+        }
+        Ok(results)
+    }
+
+    /// GEODIST key member1 member2 [M|KM|MI|FT]
+    /// Returns distance between two members, or nil if either doesn't exist
+    #[cfg(feature = "geo")]
+    pub fn geodist(
+        &self,
+        key: &str,
+        member1: &str,
+        member2: &str,
+        unit: crate::types::GeoUnit,
+    ) -> Result<Option<f64>> {
+        use rusqlite::params;
+
+        let conn = self.core.conn.lock().unwrap_or_else(|e| e.into_inner());
+        let key_id = match self.get_geo_key_id(&conn, key)? {
+            Some(id) => id,
+            None => return Ok(None),
+        };
+
+        let get_coords = |member: &str| -> Option<(f64, f64)> {
+            conn.query_row(
+                "SELECT longitude, latitude FROM geo_data WHERE key_id = ?1 AND member = ?2",
+                params![key_id, member],
+                |row| Ok((row.get(0)?, row.get(1)?)),
+            )
+            .ok()
+        };
+
+        let (lon1, lat1) = match get_coords(member1) {
+            Some(c) => c,
+            None => return Ok(None),
+        };
+        let (lon2, lat2) = match get_coords(member2) {
+            Some(c) => c,
+            None => return Ok(None),
+        };
+
+        let dist_m = Self::haversine(lon1, lat1, lon2, lat2);
+        Ok(Some(unit.from_meters(dist_m)))
+    }
+
+    /// GEOHASH key member [member ...]
+    /// Returns geohash strings for each member
+    #[cfg(feature = "geo")]
+    pub fn geohash(&self, key: &str, members: &[&str]) -> Result<Vec<Option<String>>> {
+        use rusqlite::params;
+
+        let conn = self.core.conn.lock().unwrap_or_else(|e| e.into_inner());
+        let key_id = match self.get_geo_key_id(&conn, key)? {
+            Some(id) => id,
+            None => return Ok(members.iter().map(|_| None).collect()),
+        };
+
+        let mut results = Vec::with_capacity(members.len());
+        for member in members {
+            let hash: Option<String> = conn
+                .query_row(
+                    "SELECT geohash FROM geo_data WHERE key_id = ?1 AND member = ?2",
+                    params![key_id, member],
+                    |row| row.get(0),
+                )
+                .ok();
+            results.push(hash);
+        }
+        Ok(results)
+    }
+
+    /// GEOSEARCH key FROMMEMBER member | FROMLONLAT lon lat
+    ///            BYRADIUS radius M|KM|MI|FT | BYBOX width height M|KM|MI|FT
+    ///            [ASC|DESC] [COUNT n [ANY]] [WITHCOORD] [WITHDIST] [WITHHASH]
+    #[cfg(feature = "geo")]
+    pub fn geosearch(
+        &self,
+        key: &str,
+        options: &crate::types::GeoSearchOptions,
+    ) -> Result<Vec<crate::types::GeoMember>> {
+        use rusqlite::params;
+
+        let conn = self.core.conn.lock().unwrap_or_else(|e| e.into_inner());
+        let key_id = match self.get_geo_key_id(&conn, key)? {
+            Some(id) => id,
+            None => return Ok(vec![]),
+        };
+
+        // Get center coordinates
+        let (center_lon, center_lat) = if let Some(ref member) = options.from_member {
+            conn.query_row(
+                "SELECT longitude, latitude FROM geo_data WHERE key_id = ?1 AND member = ?2",
+                params![key_id, member],
+                |row| Ok((row.get::<_, f64>(0)?, row.get::<_, f64>(1)?)),
+            )
+            .map_err(|_| KvError::Other("ERR member not found".to_string()))?
+        } else if let Some((lon, lat)) = options.from_lonlat {
+            Self::validate_coords(lon, lat)?;
+            (lon, lat)
+        } else {
+            return Err(KvError::Other(
+                "ERR FROMMEMBER or FROMLONLAT required".to_string(),
+            ));
+        };
+
+        // Get search area
+        let (radius_m, is_box, box_dims) = if let Some((radius, unit)) = options.by_radius {
+            (unit.to_meters(radius), false, (0.0, 0.0))
+        } else if let Some((width, height, unit)) = options.by_box {
+            // For box, use diagonal/2 as radius for R*Tree pre-filter
+            let w_m = unit.to_meters(width);
+            let h_m = unit.to_meters(height);
+            let radius = (w_m * w_m + h_m * h_m).sqrt() / 2.0;
+            (radius, true, (w_m, h_m))
+        } else {
+            return Err(KvError::Other(
+                "ERR BYRADIUS or BYBOX required".to_string(),
+            ));
+        };
+
+        // Compute bounding box for R*Tree query
+        let (min_lon, max_lon, min_lat, max_lat) =
+            Self::bounding_box(center_lon, center_lat, radius_m);
+
+        // Query R*Tree for candidates, then join with geo_data
+        let mut stmt = conn.prepare(
+            "SELECT g.member, g.longitude, g.latitude, g.geohash
+             FROM geo_data g
+             INNER JOIN geo_rtree r ON g.id = r.id
+             WHERE g.key_id = ?1
+               AND r.min_lon >= ?2 AND r.max_lon <= ?3
+               AND r.min_lat >= ?4 AND r.max_lat <= ?5",
+        )?;
+
+        let candidates = stmt.query_map(
+            params![key_id, min_lon, max_lon, min_lat, max_lat],
+            |row| {
+                Ok((
+                    row.get::<_, String>(0)?,
+                    row.get::<_, f64>(1)?,
+                    row.get::<_, f64>(2)?,
+                    row.get::<_, String>(3)?,
+                ))
+            },
+        )?;
+
+        let mut results: Vec<crate::types::GeoMember> = Vec::new();
+
+        for candidate in candidates {
+            let (member, lon, lat, geohash) = candidate?;
+            let dist_m = Self::haversine(center_lon, center_lat, lon, lat);
+
+            // Apply precise filter
+            let in_range = if is_box {
+                // Box filter: check if within box dimensions
+                let (box_w_m, box_h_m) = box_dims;
+                let dx = Self::haversine(center_lon, center_lat, lon, center_lat);
+                let dy = Self::haversine(center_lon, center_lat, center_lon, lat);
+                dx <= box_w_m / 2.0 && dy <= box_h_m / 2.0
+            } else {
+                dist_m <= radius_m
+            };
+
+            if in_range {
+                results.push(crate::types::GeoMember {
+                    member,
+                    longitude: lon,
+                    latitude: lat,
+                    geohash: if options.with_hash {
+                        Some(geohash)
+                    } else {
+                        None
+                    },
+                    distance: if options.with_dist {
+                        // Convert to requested unit (default meters)
+                        let unit = options
+                            .by_radius
+                            .map(|(_, u)| u)
+                            .or(options.by_box.map(|(_, _, u)| u))
+                            .unwrap_or(crate::types::GeoUnit::Meters);
+                        Some(unit.from_meters(dist_m))
+                    } else {
+                        None
+                    },
+                });
+            }
+        }
+
+        // Sort by distance
+        results.sort_by(|a, b| {
+            let dist_a = Self::haversine(center_lon, center_lat, a.longitude, a.latitude);
+            let dist_b = Self::haversine(center_lon, center_lat, b.longitude, b.latitude);
+            if options.ascending {
+                dist_a.partial_cmp(&dist_b).unwrap_or(std::cmp::Ordering::Equal)
+            } else {
+                dist_b.partial_cmp(&dist_a).unwrap_or(std::cmp::Ordering::Equal)
+            }
+        });
+
+        // Apply COUNT limit
+        if let Some(count) = options.count {
+            results.truncate(count);
+        }
+
+        Ok(results)
+    }
+
+    /// GEOSEARCHSTORE dest src [options] [STOREDIST]
+    /// Store results as sorted set with geohash or distance as score
+    #[cfg(feature = "geo")]
+    pub fn geosearchstore(
+        &self,
+        dest: &str,
+        src: &str,
+        options: &crate::types::GeoSearchOptions,
+        store_dist: bool,
+    ) -> Result<i64> {
+        // Need with_dist and with_hash for score calculation
+        let mut opts = options.clone();
+        opts.with_dist = true;
+        opts.with_hash = true;
+
+        // Search source
+        let results = self.geosearch(src, &opts)?;
+        let count = results.len() as i64;
+
+        if results.is_empty() {
+            // Delete dest if no results
+            self.del(&[dest])?;
+            return Ok(0);
+        }
+
+        // Store as sorted set using ZMember
+        let members: Vec<crate::types::ZMember> = results
+            .iter()
+            .map(|m| {
+                let score = if store_dist {
+                    m.distance.unwrap_or(0.0)
+                } else {
+                    // Use geohash as score (convert first 8 chars to integer-ish)
+                    let hash = m.geohash.as_deref().unwrap_or("");
+                    hash.chars().take(8).fold(0.0, |acc, c| {
+                        acc * 32.0 + (c.to_digit(36).unwrap_or(0) as f64)
+                    })
+                };
+                crate::types::ZMember::new(score, m.member.as_bytes().to_vec())
+            })
+            .collect();
+
+        // Delete existing dest and add new members
+        self.del(&[dest])?;
+        self.zadd(dest, &members)?;
+
+        Ok(count)
+    }
 }
 
 #[cfg(test)]
@@ -16124,6 +16620,366 @@ mod tests {
         db.vrem("setA", "elem1").unwrap();
         assert_eq!(db.vcard("setA").unwrap(), 0);
         assert_eq!(db.vcard("setB").unwrap(), 1);
+    }
+
+    // ========================================================================
+    // Geo Tests
+    // ========================================================================
+
+    #[test]
+    #[cfg(feature = "geo")]
+    fn test_geoadd_basic() {
+        let db = Db::open_memory().unwrap();
+
+        // Add San Francisco
+        let count = db
+            .geoadd("locations", &[(-122.4194, 37.7749, "San Francisco")], false, false, false)
+            .unwrap();
+        assert_eq!(count, 1);
+
+        // Add New York
+        let count = db
+            .geoadd("locations", &[(-73.9857, 40.7484, "New York")], false, false, false)
+            .unwrap();
+        assert_eq!(count, 1);
+    }
+
+    #[test]
+    #[cfg(feature = "geo")]
+    fn test_geoadd_multiple() {
+        let db = Db::open_memory().unwrap();
+
+        let count = db
+            .geoadd(
+                "locations",
+                &[
+                    (-122.4194, 37.7749, "San Francisco"),
+                    (-73.9857, 40.7484, "New York"),
+                    (-87.6298, 41.8781, "Chicago"),
+                ],
+                false,
+                false,
+                false,
+            )
+            .unwrap();
+        assert_eq!(count, 3);
+    }
+
+    #[test]
+    #[cfg(feature = "geo")]
+    fn test_geoadd_nx() {
+        let db = Db::open_memory().unwrap();
+
+        // Add first time
+        db.geoadd("locations", &[(-122.4194, 37.7749, "SF")], false, false, false)
+            .unwrap();
+
+        // NX: don't update existing
+        let count = db
+            .geoadd("locations", &[(-122.5, 37.8, "SF")], true, false, false)
+            .unwrap();
+        assert_eq!(count, 0);
+
+        // Verify original coords unchanged
+        let pos = db.geopos("locations", &["SF"]).unwrap();
+        let (lon, lat) = pos[0].unwrap();
+        assert!((lon - (-122.4194)).abs() < 0.0001);
+        assert!((lat - 37.7749).abs() < 0.0001);
+    }
+
+    #[test]
+    #[cfg(feature = "geo")]
+    fn test_geoadd_xx() {
+        let db = Db::open_memory().unwrap();
+
+        // XX: only update existing - should not add new
+        let count = db
+            .geoadd("locations", &[(-122.4194, 37.7749, "SF")], false, true, false)
+            .unwrap();
+        assert_eq!(count, 0);
+
+        // Verify nothing was added
+        let pos = db.geopos("locations", &["SF"]).unwrap();
+        assert!(pos[0].is_none());
+    }
+
+    #[test]
+    #[cfg(feature = "geo")]
+    fn test_geoadd_invalid_coords() {
+        let db = Db::open_memory().unwrap();
+
+        // Invalid longitude
+        let result = db.geoadd("locations", &[(200.0, 37.7749, "Bad")], false, false, false);
+        assert!(result.is_err());
+
+        // Invalid latitude
+        let result = db.geoadd("locations", &[(-122.4194, 95.0, "Bad")], false, false, false);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    #[cfg(feature = "geo")]
+    fn test_geopos_basic() {
+        let db = Db::open_memory().unwrap();
+
+        db.geoadd("locations", &[(-122.4194, 37.7749, "SF")], false, false, false)
+            .unwrap();
+
+        let pos = db.geopos("locations", &["SF"]).unwrap();
+        assert_eq!(pos.len(), 1);
+
+        let (lon, lat) = pos[0].unwrap();
+        assert!((lon - (-122.4194)).abs() < 0.0001);
+        assert!((lat - 37.7749).abs() < 0.0001);
+    }
+
+    #[test]
+    #[cfg(feature = "geo")]
+    fn test_geopos_missing() {
+        let db = Db::open_memory().unwrap();
+
+        db.geoadd("locations", &[(-122.4194, 37.7749, "SF")], false, false, false)
+            .unwrap();
+
+        let pos = db.geopos("locations", &["SF", "NYC", "LA"]).unwrap();
+        assert_eq!(pos.len(), 3);
+        assert!(pos[0].is_some()); // SF exists
+        assert!(pos[1].is_none()); // NYC doesn't
+        assert!(pos[2].is_none()); // LA doesn't
+    }
+
+    #[test]
+    #[cfg(feature = "geo")]
+    fn test_geopos_nonexistent_key() {
+        let db = Db::open_memory().unwrap();
+
+        let pos = db.geopos("nonexistent", &["member"]).unwrap();
+        assert_eq!(pos.len(), 1);
+        assert!(pos[0].is_none());
+    }
+
+    #[test]
+    #[cfg(feature = "geo")]
+    fn test_geodist_basic() {
+        use crate::types::GeoUnit;
+        let db = Db::open_memory().unwrap();
+
+        db.geoadd(
+            "locations",
+            &[
+                (-122.4194, 37.7749, "San Francisco"),
+                (-73.9857, 40.7484, "New York"),
+            ],
+            false,
+            false,
+            false,
+        )
+        .unwrap();
+
+        // Distance in meters (approximately 4130 km)
+        let dist = db
+            .geodist("locations", "San Francisco", "New York", GeoUnit::Meters)
+            .unwrap();
+        assert!(dist.is_some());
+        let dist_m = dist.unwrap();
+        assert!(dist_m > 4_000_000.0); // > 4000 km
+        assert!(dist_m < 4_500_000.0); // < 4500 km
+
+        // Distance in km
+        let dist_km = db
+            .geodist("locations", "San Francisco", "New York", GeoUnit::Kilometers)
+            .unwrap()
+            .unwrap();
+        assert!((dist_km - dist_m / 1000.0).abs() < 0.001);
+    }
+
+    #[test]
+    #[cfg(feature = "geo")]
+    fn test_geodist_same_member() {
+        use crate::types::GeoUnit;
+        let db = Db::open_memory().unwrap();
+
+        db.geoadd("locations", &[(-122.4194, 37.7749, "SF")], false, false, false)
+            .unwrap();
+
+        let dist = db.geodist("locations", "SF", "SF", GeoUnit::Meters).unwrap();
+        assert_eq!(dist, Some(0.0));
+    }
+
+    #[test]
+    #[cfg(feature = "geo")]
+    fn test_geodist_missing_member() {
+        use crate::types::GeoUnit;
+        let db = Db::open_memory().unwrap();
+
+        db.geoadd("locations", &[(-122.4194, 37.7749, "SF")], false, false, false)
+            .unwrap();
+
+        let dist = db
+            .geodist("locations", "SF", "NYC", GeoUnit::Meters)
+            .unwrap();
+        assert!(dist.is_none());
+    }
+
+    #[test]
+    #[cfg(feature = "geo")]
+    fn test_geohash_basic() {
+        let db = Db::open_memory().unwrap();
+
+        db.geoadd("locations", &[(-122.4194, 37.7749, "SF")], false, false, false)
+            .unwrap();
+
+        let hashes = db.geohash("locations", &["SF"]).unwrap();
+        assert_eq!(hashes.len(), 1);
+        assert!(hashes[0].is_some());
+        let hash = hashes[0].as_ref().unwrap();
+        assert_eq!(hash.len(), 11); // 11-character geohash
+        assert!(hash.starts_with("9q8y")); // San Francisco geohash prefix
+    }
+
+    #[test]
+    #[cfg(feature = "geo")]
+    fn test_geosearch_byradius() {
+        use crate::types::{GeoSearchOptions, GeoUnit};
+        let db = Db::open_memory().unwrap();
+
+        db.geoadd(
+            "locations",
+            &[
+                (-122.4194, 37.7749, "San Francisco"),
+                (-121.8863, 37.3382, "San Jose"), // ~50 km from SF
+                (-73.9857, 40.7484, "New York"),  // ~4000 km from SF
+            ],
+            false,
+            false,
+            false,
+        )
+        .unwrap();
+
+        let mut options = GeoSearchOptions::default();
+        options.from_member = Some("San Francisco".to_string());
+        options.by_radius = Some((100.0, GeoUnit::Kilometers));
+        options.ascending = true;
+
+        let results = db.geosearch("locations", &options).unwrap();
+
+        // Should find SF and San Jose, not NYC
+        assert_eq!(results.len(), 2);
+        assert_eq!(results[0].member, "San Francisco"); // Closest first (0 km)
+        assert_eq!(results[1].member, "San Jose");
+    }
+
+    #[test]
+    #[cfg(feature = "geo")]
+    fn test_geosearch_fromlonlat() {
+        use crate::types::{GeoSearchOptions, GeoUnit};
+        let db = Db::open_memory().unwrap();
+
+        db.geoadd(
+            "locations",
+            &[
+                (-122.4194, 37.7749, "San Francisco"),
+                (-121.8863, 37.3382, "San Jose"),
+            ],
+            false,
+            false,
+            false,
+        )
+        .unwrap();
+
+        let mut options = GeoSearchOptions::default();
+        options.from_lonlat = Some((-122.0, 37.5)); // Point between SF and SJ
+        options.by_radius = Some((100.0, GeoUnit::Kilometers));
+        options.ascending = true;
+
+        let results = db.geosearch("locations", &options).unwrap();
+        assert_eq!(results.len(), 2);
+    }
+
+    #[test]
+    #[cfg(feature = "geo")]
+    fn test_geosearch_count() {
+        use crate::types::{GeoSearchOptions, GeoUnit};
+        let db = Db::open_memory().unwrap();
+
+        db.geoadd(
+            "locations",
+            &[
+                (-122.4194, 37.7749, "SF"),
+                (-121.8863, 37.3382, "SJ"),
+                (-122.2711, 37.8044, "Oakland"),
+            ],
+            false,
+            false,
+            false,
+        )
+        .unwrap();
+
+        let mut options = GeoSearchOptions::default();
+        options.from_member = Some("SF".to_string());
+        options.by_radius = Some((100.0, GeoUnit::Kilometers));
+        options.ascending = true;
+        options.count = Some(2);
+
+        let results = db.geosearch("locations", &options).unwrap();
+        assert_eq!(results.len(), 2);
+    }
+
+    #[test]
+    #[cfg(feature = "geo")]
+    fn test_geosearch_withdist() {
+        use crate::types::{GeoSearchOptions, GeoUnit};
+        let db = Db::open_memory().unwrap();
+
+        db.geoadd(
+            "locations",
+            &[
+                (-122.4194, 37.7749, "SF"),
+                (-121.8863, 37.3382, "SJ"),
+            ],
+            false,
+            false,
+            false,
+        )
+        .unwrap();
+
+        let mut options = GeoSearchOptions::default();
+        options.from_member = Some("SF".to_string());
+        options.by_radius = Some((100.0, GeoUnit::Kilometers));
+        options.with_dist = true;
+
+        let results = db.geosearch("locations", &options).unwrap();
+        assert!(results.iter().all(|r| r.distance.is_some()));
+    }
+
+    #[test]
+    #[cfg(feature = "geo")]
+    fn test_geosearchstore_basic() {
+        use crate::types::{GeoSearchOptions, GeoUnit};
+        let db = Db::open_memory().unwrap();
+
+        db.geoadd(
+            "src",
+            &[
+                (-122.4194, 37.7749, "SF"),
+                (-121.8863, 37.3382, "SJ"),
+            ],
+            false,
+            false,
+            false,
+        )
+        .unwrap();
+
+        let mut options = GeoSearchOptions::default();
+        options.from_member = Some("SF".to_string());
+        options.by_radius = Some((100.0, GeoUnit::Kilometers));
+
+        let count = db.geosearchstore("dest", "src", &options, false).unwrap();
+        assert_eq!(count, 2);
+
+        // Verify dest is a sorted set with 2 members
+        let zcard = db.zcard("dest").unwrap();
+        assert_eq!(zcard, 2);
     }
 
 }
