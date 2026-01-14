@@ -1,26 +1,23 @@
--- Vector search configuration (four-tier opt-in: global, database, pattern, key)
-CREATE TABLE IF NOT EXISTS vector_settings (
-    id INTEGER PRIMARY KEY,
-    level TEXT NOT NULL CHECK(level IN ('global', 'database', 'pattern', 'key')),
-    target TEXT NOT NULL,                -- '*' for global, '0-15' for database, 'glob*' for pattern, 'db:key' for key
-    enabled BOOLEAN NOT NULL DEFAULT 1,
-    dimensions INTEGER NOT NULL,         -- Required: vector dimensions for this config
-    created_at INTEGER NOT NULL DEFAULT (unixepoch('now', 'subsec') * 1000),
-    UNIQUE(level, target)
-);
+-- Redis 8 Vector Sets Schema
+-- Replaces the old vector_settings/vectors tables with Redis 8 compatible vector_sets table
 
-CREATE INDEX IF NOT EXISTS idx_vector_settings_level_target ON vector_settings(level, target);
+-- Drop old tables if they exist (migration)
+DROP TABLE IF EXISTS vectors;
+DROP TABLE IF EXISTS vector_settings;
 
--- Vector storage
-CREATE TABLE IF NOT EXISTS vectors (
+-- Vector sets storage (Redis 8 compatible)
+-- Each key is a "vector set" containing multiple elements with embeddings
+CREATE TABLE IF NOT EXISTS vector_sets (
     id INTEGER PRIMARY KEY,
     key_id INTEGER NOT NULL REFERENCES keys(id) ON DELETE CASCADE,
-    vector_id TEXT NOT NULL,             -- User-provided ID within the key
-    embedding BLOB NOT NULL,             -- Raw float32 vector data
-    dimensions INTEGER NOT NULL,         -- Vector dimensions
-    metadata TEXT,                       -- Optional JSON metadata
+    element TEXT NOT NULL,              -- Element name (unique within key)
+    embedding BLOB NOT NULL,            -- Raw float32 vector data (FP32)
+    dimensions INTEGER NOT NULL,        -- Vector dimensions (auto-detected from first element)
+    quantization TEXT DEFAULT 'NOQUANT', -- Quantization type: NOQUANT, Q8, BF16
+    attributes TEXT,                    -- Optional JSON attributes
     created_at INTEGER NOT NULL DEFAULT (unixepoch('now', 'subsec') * 1000),
-    UNIQUE(key_id, vector_id)
+    UNIQUE(key_id, element)
 );
 
-CREATE INDEX IF NOT EXISTS idx_vectors_key_id ON vectors(key_id);
+CREATE INDEX IF NOT EXISTS idx_vector_sets_key_id ON vector_sets(key_id);
+CREATE INDEX IF NOT EXISTS idx_vector_sets_element ON vector_sets(key_id, element);

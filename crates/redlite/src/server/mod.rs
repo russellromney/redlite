@@ -500,13 +500,17 @@ async fn execute_command(
         "FT.SUGLEN" => cmd_ft_suglen(db, cmd_args),
         "FT.EXPLAIN" => cmd_ft_explain(db, cmd_args),
         "FT.PROFILE" => cmd_ft_profile(db, cmd_args),
-        // Vector commands (Session 24.2)
-        "VECTOR" => cmd_vector(db, cmd_args),
+        // Redis 8 Vector commands (V* commands)
         "VADD" => cmd_vadd(db, cmd_args),
-        "VGET" => cmd_vget(db, cmd_args),
-        "VDEL" => cmd_vdel(db, cmd_args),
-        "VCOUNT" => cmd_vcount(db, cmd_args),
-        "VSEARCH" => cmd_vsearch(db, cmd_args),
+        "VSIM" => cmd_vsim(db, cmd_args),
+        "VREM" => cmd_vrem(db, cmd_args),
+        "VCARD" => cmd_vcard(db, cmd_args),
+        "VDIM" => cmd_vdim(db, cmd_args),
+        "VINFO" => cmd_vinfo(db, cmd_args),
+        "VEMB" => cmd_vemb(db, cmd_args),
+        "VGETATTR" => cmd_vgetattr(db, cmd_args),
+        "VSETATTR" => cmd_vsetattr(db, cmd_args),
+        "VRANDMEMBER" => cmd_vrandmember(db, cmd_args),
         // Stream commands
         "XADD" => cmd_xadd(db, cmd_args),
         "XLEN" => cmd_xlen(db, cmd_args),
@@ -4828,231 +4832,14 @@ fn cmd_ft_profile(db: &Db, args: &[Vec<u8>]) -> RespValue {
     }
 }
 
-// --- Session 24.2: Vector command handlers (feature-gated) ---
-
-#[cfg(feature = "vectors")]
-fn cmd_vector(db: &Db, args: &[Vec<u8>]) -> RespValue {
-    if args.is_empty() {
-        return RespValue::error("VECTOR subcommand required (ENABLE|DISABLE|INFO)");
-    }
-
-    let subcommand = match std::str::from_utf8(&args[0]) {
-        Ok(s) => s.to_uppercase(),
-        Err(_) => return RespValue::error("invalid subcommand"),
-    };
-
-    match subcommand.as_str() {
-        "ENABLE" => {
-            if args.len() < 3 {
-                return RespValue::error(
-                    "VECTOR ENABLE requires level (GLOBAL|DATABASE|PATTERN|KEY) and dimensions",
-                );
-            }
-
-            let level = match std::str::from_utf8(&args[1]) {
-                Ok(s) => s.to_uppercase(),
-                Err(_) => return RespValue::error("invalid level"),
-            };
-
-            match level.as_str() {
-                "GLOBAL" => {
-                    let dimensions: i32 = match std::str::from_utf8(&args[2])
-                        .ok()
-                        .and_then(|s| s.parse().ok())
-                    {
-                        Some(d) => d,
-                        None => return RespValue::error("dimensions must be a positive integer"),
-                    };
-                    if let Err(e) = db.vector_enable_global(dimensions) {
-                        return RespValue::error(format!("VECTOR enable failed: {}", e));
-                    }
-                    RespValue::ok()
-                }
-                "DATABASE" => {
-                    if args.len() < 4 {
-                        return RespValue::error(
-                            "VECTOR ENABLE DATABASE requires database number and dimensions",
-                        );
-                    }
-                    let db_num: i32 = match std::str::from_utf8(&args[2])
-                        .ok()
-                        .and_then(|s| s.parse().ok())
-                    {
-                        Some(n) => n,
-                        None => return RespValue::error("database number must be an integer"),
-                    };
-                    let dimensions: i32 = match std::str::from_utf8(&args[3])
-                        .ok()
-                        .and_then(|s| s.parse().ok())
-                    {
-                        Some(d) => d,
-                        None => return RespValue::error("dimensions must be a positive integer"),
-                    };
-                    if let Err(e) = db.vector_enable_database(db_num, dimensions) {
-                        return RespValue::error(format!("VECTOR enable failed: {}", e));
-                    }
-                    RespValue::ok()
-                }
-                "PATTERN" => {
-                    if args.len() < 4 {
-                        return RespValue::error(
-                            "VECTOR ENABLE PATTERN requires pattern and dimensions",
-                        );
-                    }
-                    let pattern = match std::str::from_utf8(&args[2]) {
-                        Ok(p) => p,
-                        Err(_) => return RespValue::error("invalid pattern"),
-                    };
-                    let dimensions: i32 = match std::str::from_utf8(&args[3])
-                        .ok()
-                        .and_then(|s| s.parse().ok())
-                    {
-                        Some(d) => d,
-                        None => return RespValue::error("dimensions must be a positive integer"),
-                    };
-                    if let Err(e) = db.vector_enable_pattern(pattern, dimensions) {
-                        return RespValue::error(format!("VECTOR enable failed: {}", e));
-                    }
-                    RespValue::ok()
-                }
-                "KEY" => {
-                    if args.len() < 4 {
-                        return RespValue::error(
-                            "VECTOR ENABLE KEY requires key name and dimensions",
-                        );
-                    }
-                    let key = match std::str::from_utf8(&args[2]) {
-                        Ok(k) => k,
-                        Err(_) => return RespValue::error("invalid key"),
-                    };
-                    let dimensions: i32 = match std::str::from_utf8(&args[3])
-                        .ok()
-                        .and_then(|s| s.parse().ok())
-                    {
-                        Some(d) => d,
-                        None => return RespValue::error("dimensions must be a positive integer"),
-                    };
-                    if let Err(e) = db.vector_enable_key(key, dimensions) {
-                        return RespValue::error(format!("VECTOR enable failed: {}", e));
-                    }
-                    RespValue::ok()
-                }
-                _ => RespValue::error("level must be GLOBAL, DATABASE, PATTERN, or KEY"),
-            }
-        }
-        "DISABLE" => {
-            if args.len() < 2 {
-                return RespValue::error(
-                    "VECTOR DISABLE requires level (GLOBAL|DATABASE|PATTERN|KEY)",
-                );
-            }
-
-            let level = match std::str::from_utf8(&args[1]) {
-                Ok(s) => s.to_uppercase(),
-                Err(_) => return RespValue::error("invalid level"),
-            };
-
-            match level.as_str() {
-                "GLOBAL" => {
-                    if let Err(e) = db.vector_disable_global() {
-                        return RespValue::error(format!("VECTOR disable failed: {}", e));
-                    }
-                    RespValue::ok()
-                }
-                "DATABASE" => {
-                    if args.len() < 3 {
-                        return RespValue::error(
-                            "VECTOR DISABLE DATABASE requires database number",
-                        );
-                    }
-                    let db_num: i32 = match std::str::from_utf8(&args[2])
-                        .ok()
-                        .and_then(|s| s.parse().ok())
-                    {
-                        Some(n) => n,
-                        None => return RespValue::error("database number must be an integer"),
-                    };
-                    if let Err(e) = db.vector_disable_database(db_num) {
-                        return RespValue::error(format!("VECTOR disable failed: {}", e));
-                    }
-                    RespValue::ok()
-                }
-                "PATTERN" => {
-                    if args.len() < 3 {
-                        return RespValue::error("VECTOR DISABLE PATTERN requires pattern");
-                    }
-                    let pattern = match std::str::from_utf8(&args[2]) {
-                        Ok(p) => p,
-                        Err(_) => return RespValue::error("invalid pattern"),
-                    };
-                    if let Err(e) = db.vector_disable_pattern(pattern) {
-                        return RespValue::error(format!("VECTOR disable failed: {}", e));
-                    }
-                    RespValue::ok()
-                }
-                "KEY" => {
-                    if args.len() < 3 {
-                        return RespValue::error("VECTOR DISABLE KEY requires key name");
-                    }
-                    let key = match std::str::from_utf8(&args[2]) {
-                        Ok(k) => k,
-                        Err(_) => return RespValue::error("invalid key"),
-                    };
-                    if let Err(e) = db.vector_disable_key(key) {
-                        return RespValue::error(format!("VECTOR disable failed: {}", e));
-                    }
-                    RespValue::ok()
-                }
-                _ => RespValue::error("level must be GLOBAL, DATABASE, PATTERN, or KEY"),
-            }
-        }
-        "INFO" => match db.vector_info() {
-            Ok(stats) => {
-                let configs: Vec<RespValue> = stats
-                    .configs
-                    .iter()
-                    .map(|c| {
-                        RespValue::Array(Some(vec![
-                            RespValue::BulkString(Some(b"level".to_vec())),
-                            RespValue::BulkString(Some(c.level.as_str().as_bytes().to_vec())),
-                            RespValue::BulkString(Some(b"target".to_vec())),
-                            RespValue::BulkString(Some(c.target.as_bytes().to_vec())),
-                            RespValue::BulkString(Some(b"enabled".to_vec())),
-                            RespValue::Integer(if c.enabled { 1 } else { 0 }),
-                            RespValue::BulkString(Some(b"dimensions".to_vec())),
-                            RespValue::Integer(c.dimensions as i64),
-                        ]))
-                    })
-                    .collect();
-
-                RespValue::Array(Some(vec![
-                    RespValue::BulkString(Some(b"total_vectors".to_vec())),
-                    RespValue::Integer(stats.total_vectors),
-                    RespValue::BulkString(Some(b"total_keys".to_vec())),
-                    RespValue::Integer(stats.total_keys),
-                    RespValue::BulkString(Some(b"storage_bytes".to_vec())),
-                    RespValue::Integer(stats.storage_bytes),
-                    RespValue::BulkString(Some(b"configs".to_vec())),
-                    RespValue::Array(Some(configs)),
-                ]))
-            }
-            Err(e) => RespValue::error(format!("VECTOR info failed: {}", e)),
-        },
-        _ => RespValue::error(format!(
-            "unknown VECTOR subcommand '{}'. Use ENABLE|DISABLE|INFO",
-            subcommand
-        )),
-    }
-}
-
-#[cfg(not(feature = "vectors"))]
-fn cmd_vector(_db: &Db, _args: &[Vec<u8>]) -> RespValue {
-    RespValue::error("vectors feature not enabled. Compile with --features vectors")
-}
+// --- Redis 8 Vector command handlers (V* commands, feature-gated) ---
 
 #[cfg(feature = "vectors")]
 fn cmd_vadd(db: &Db, args: &[Vec<u8>]) -> RespValue {
-    // VADD key vector_id embedding... [METADATA json]
+    use crate::types::VectorQuantization;
+
+    // VADD key (FP32 blob | VALUES n v1 v2...) element [SETATTR json]
+    // Minimum: VADD key VALUES 3 1.0 2.0 3.0 element
     if args.len() < 3 {
         return RespValue::error("wrong number of arguments for 'vadd' command");
     }
@@ -5062,38 +4849,114 @@ fn cmd_vadd(db: &Db, args: &[Vec<u8>]) -> RespValue {
         Err(_) => return RespValue::error("invalid key"),
     };
 
-    let vector_id = match std::str::from_utf8(&args[1]) {
-        Ok(v) => v,
-        Err(_) => return RespValue::error("invalid vector_id"),
+    // Parse vector data and element
+    let mut i = 1;
+    let mut embedding: Vec<f32> = Vec::new();
+    let mut element: Option<&str> = None;
+    let mut attributes: Option<&str> = None;
+
+    // Check if it's FP32 blob or VALUES format
+    let first_arg = match std::str::from_utf8(&args[i]) {
+        Ok(s) => s.to_uppercase(),
+        Err(_) => {
+            // Binary blob - treat as FP32
+            let blob = &args[i];
+            if blob.len() % 4 != 0 {
+                return RespValue::error("FP32 blob must have length divisible by 4");
+            }
+            for chunk in blob.chunks_exact(4) {
+                embedding.push(f32::from_le_bytes([chunk[0], chunk[1], chunk[2], chunk[3]]));
+            }
+            i += 1;
+            String::new()
+        }
     };
 
-    // Parse embedding values and optional metadata
-    let mut embedding: Vec<f32> = Vec::new();
-    let mut metadata: Option<&str> = None;
-    let mut i = 2;
-
-    while i < args.len() {
-        let arg = match std::str::from_utf8(&args[i]) {
-            Ok(s) => s,
-            Err(_) => return RespValue::error("invalid argument"),
+    if first_arg == "VALUES" {
+        i += 1;
+        if i >= args.len() {
+            return RespValue::error("VALUES requires count");
+        }
+        let count: usize = match std::str::from_utf8(&args[i])
+            .ok()
+            .and_then(|s| s.parse().ok())
+        {
+            Some(c) => c,
+            None => return RespValue::error("VALUES count must be a positive integer"),
         };
+        i += 1;
 
-        if arg.to_uppercase() == "METADATA" {
-            if i + 1 < args.len() {
-                metadata = match std::str::from_utf8(&args[i + 1]) {
-                    Ok(m) => Some(m),
-                    Err(_) => return RespValue::error("invalid metadata"),
-                };
-                i += 2;
+        // Parse count float values
+        for _ in 0..count {
+            if i >= args.len() {
+                return RespValue::error("not enough values provided");
+            }
+            let val = match std::str::from_utf8(&args[i])
+                .ok()
+                .and_then(|s| s.parse::<f32>().ok())
+            {
+                Some(f) => f,
+                None => return RespValue::error("invalid float value"),
+            };
+            embedding.push(val);
+            i += 1;
+        }
+    } else if first_arg == "FP32" {
+        i += 1;
+        if i >= args.len() {
+            return RespValue::error("FP32 requires blob");
+        }
+        let blob = &args[i];
+        if blob.len() % 4 != 0 {
+            return RespValue::error("FP32 blob must have length divisible by 4");
+        }
+        for chunk in blob.chunks_exact(4) {
+            embedding.push(f32::from_le_bytes([chunk[0], chunk[1], chunk[2], chunk[3]]));
+        }
+        i += 1;
+    } else if !first_arg.is_empty() && embedding.is_empty() {
+        // Try parsing as individual floats (backwards compat)
+        while i < args.len() {
+            let arg = match std::str::from_utf8(&args[i]) {
+                Ok(s) => s,
+                Err(_) => break,
+            };
+            if let Ok(f) = arg.parse::<f32>() {
+                embedding.push(f);
+                i += 1;
             } else {
-                return RespValue::error("METADATA requires a value");
+                break;
             }
+        }
+    }
+
+    // Parse element name
+    if i >= args.len() {
+        return RespValue::error("element name required");
+    }
+    element = match std::str::from_utf8(&args[i]) {
+        Ok(e) => Some(e),
+        Err(_) => return RespValue::error("invalid element name"),
+    };
+    i += 1;
+
+    // Parse optional SETATTR
+    while i < args.len() {
+        let opt = match std::str::from_utf8(&args[i]) {
+            Ok(s) => s.to_uppercase(),
+            Err(_) => break,
+        };
+        if opt == "SETATTR" {
+            i += 1;
+            if i >= args.len() {
+                return RespValue::error("SETATTR requires JSON value");
+            }
+            attributes = match std::str::from_utf8(&args[i]) {
+                Ok(a) => Some(a),
+                Err(_) => return RespValue::error("invalid SETATTR value"),
+            };
+            i += 1;
         } else {
-            // Parse as float
-            match arg.parse::<f32>() {
-                Ok(f) => embedding.push(f),
-                Err(_) => return RespValue::error(format!("invalid float value: {}", arg)),
-            }
             i += 1;
         }
     }
@@ -5102,7 +4965,12 @@ fn cmd_vadd(db: &Db, args: &[Vec<u8>]) -> RespValue {
         return RespValue::error("embedding vector cannot be empty");
     }
 
-    match db.vadd(key, vector_id, &embedding, metadata) {
+    let elem = match element {
+        Some(e) => e,
+        None => return RespValue::error("element name required"),
+    };
+
+    match db.vadd(key, &embedding, elem, attributes, VectorQuantization::NoQuant) {
         Ok(added) => RespValue::Integer(if added { 1 } else { 0 }),
         Err(e) => RespValue::error(format!("VADD failed: {}", e)),
     }
@@ -5114,10 +4982,12 @@ fn cmd_vadd(_db: &Db, _args: &[Vec<u8>]) -> RespValue {
 }
 
 #[cfg(feature = "vectors")]
-fn cmd_vget(db: &Db, args: &[Vec<u8>]) -> RespValue {
-    // VGET key vector_id
+fn cmd_vsim(db: &Db, args: &[Vec<u8>]) -> RespValue {
+    use crate::types::VectorInput;
+
+    // VSIM key (ELE element | FP32 blob | VALUES n v1...) [COUNT n] [WITHSCORES] [FILTER expr]
     if args.len() < 2 {
-        return RespValue::error("wrong number of arguments for 'vget' command");
+        return RespValue::error("wrong number of arguments for 'vsim' command");
     }
 
     let key = match std::str::from_utf8(&args[0]) {
@@ -5125,183 +4995,387 @@ fn cmd_vget(db: &Db, args: &[Vec<u8>]) -> RespValue {
         Err(_) => return RespValue::error("invalid key"),
     };
 
-    let vector_id = match std::str::from_utf8(&args[1]) {
-        Ok(v) => v,
-        Err(_) => return RespValue::error("invalid vector_id"),
+    let mut i = 1;
+    let mut query: Option<VectorInput> = None;
+    let mut count: Option<i64> = None;
+    let mut with_scores = false;
+    let mut filter: Option<&str> = None;
+
+    // Parse query type
+    let query_type = match std::str::from_utf8(&args[i]) {
+        Ok(s) => s.to_uppercase(),
+        Err(_) => return RespValue::error("invalid query type"),
     };
 
-    match db.vget(key, vector_id) {
-        Ok(Some(entry)) => {
-            let embedding_str: Vec<RespValue> = entry
-                .embedding
-                .iter()
-                .map(|f| RespValue::BulkString(Some(f.to_string().as_bytes().to_vec())))
-                .collect();
-
-            let mut result = vec![
-                RespValue::BulkString(Some(b"vector_id".to_vec())),
-                RespValue::BulkString(Some(entry.vector_id.as_bytes().to_vec())),
-                RespValue::BulkString(Some(b"dimensions".to_vec())),
-                RespValue::Integer(entry.dimensions as i64),
-                RespValue::BulkString(Some(b"embedding".to_vec())),
-                RespValue::Array(Some(embedding_str)),
-            ];
-
-            if let Some(meta) = entry.metadata {
-                result.push(RespValue::BulkString(Some(b"metadata".to_vec())));
-                result.push(RespValue::BulkString(Some(meta.as_bytes().to_vec())));
+    match query_type.as_str() {
+        "ELE" => {
+            i += 1;
+            if i >= args.len() {
+                return RespValue::error("ELE requires element name");
             }
-
-            RespValue::Array(Some(result))
-        }
-        Ok(None) => RespValue::null(),
-        Err(e) => RespValue::error(format!("VGET failed: {}", e)),
-    }
-}
-
-#[cfg(not(feature = "vectors"))]
-fn cmd_vget(_db: &Db, _args: &[Vec<u8>]) -> RespValue {
-    RespValue::error("vectors feature not enabled. Compile with --features vectors")
-}
-
-#[cfg(feature = "vectors")]
-fn cmd_vdel(db: &Db, args: &[Vec<u8>]) -> RespValue {
-    // VDEL key vector_id
-    if args.len() < 2 {
-        return RespValue::error("wrong number of arguments for 'vdel' command");
-    }
-
-    let key = match std::str::from_utf8(&args[0]) {
-        Ok(k) => k,
-        Err(_) => return RespValue::error("invalid key"),
-    };
-
-    let vector_id = match std::str::from_utf8(&args[1]) {
-        Ok(v) => v,
-        Err(_) => return RespValue::error("invalid vector_id"),
-    };
-
-    match db.vdel(key, vector_id) {
-        Ok(deleted) => RespValue::Integer(if deleted { 1 } else { 0 }),
-        Err(e) => RespValue::error(format!("VDEL failed: {}", e)),
-    }
-}
-
-#[cfg(not(feature = "vectors"))]
-fn cmd_vdel(_db: &Db, _args: &[Vec<u8>]) -> RespValue {
-    RespValue::error("vectors feature not enabled. Compile with --features vectors")
-}
-
-#[cfg(feature = "vectors")]
-fn cmd_vcount(db: &Db, args: &[Vec<u8>]) -> RespValue {
-    // VCOUNT key
-    if args.is_empty() {
-        return RespValue::error("wrong number of arguments for 'vcount' command");
-    }
-
-    let key = match std::str::from_utf8(&args[0]) {
-        Ok(k) => k,
-        Err(_) => return RespValue::error("invalid key"),
-    };
-
-    match db.vcount(key) {
-        Ok(count) => RespValue::Integer(count),
-        Err(e) => RespValue::error(format!("VCOUNT failed: {}", e)),
-    }
-}
-
-#[cfg(not(feature = "vectors"))]
-fn cmd_vcount(_db: &Db, _args: &[Vec<u8>]) -> RespValue {
-    RespValue::error("vectors feature not enabled. Compile with --features vectors")
-}
-
-#[cfg(feature = "vectors")]
-fn cmd_vsearch(db: &Db, args: &[Vec<u8>]) -> RespValue {
-    use crate::types::DistanceMetric;
-
-    // VSEARCH key K vector... [METRIC L2|COSINE|IP]
-    if args.len() < 3 {
-        return RespValue::error("wrong number of arguments for 'vsearch' command");
-    }
-
-    let key = match std::str::from_utf8(&args[0]) {
-        Ok(k) => k,
-        Err(_) => return RespValue::error("invalid key"),
-    };
-
-    let k: i64 = match std::str::from_utf8(&args[1])
-        .ok()
-        .and_then(|s| s.parse().ok())
-    {
-        Some(k) => k,
-        None => return RespValue::error("K must be a positive integer"),
-    };
-
-    // Parse query vector and optional metric
-    let mut query_vector: Vec<f32> = Vec::new();
-    let mut metric = DistanceMetric::L2;
-    let mut i = 2;
-
-    while i < args.len() {
-        let arg = match std::str::from_utf8(&args[i]) {
-            Ok(s) => s,
-            Err(_) => return RespValue::error("invalid argument"),
-        };
-
-        if arg.to_uppercase() == "METRIC" {
-            if i + 1 < args.len() {
-                let metric_str = match std::str::from_utf8(&args[i + 1]) {
-                    Ok(m) => m,
-                    Err(_) => return RespValue::error("invalid metric"),
-                };
-                metric = match DistanceMetric::from_str(metric_str) {
-                    Some(m) => m,
-                    None => return RespValue::error("metric must be L2, COSINE, or IP"),
-                };
-                i += 2;
-            } else {
-                return RespValue::error("METRIC requires a value");
-            }
-        } else {
-            // Parse as float
-            match arg.parse::<f32>() {
-                Ok(f) => query_vector.push(f),
-                Err(_) => return RespValue::error(format!("invalid float value: {}", arg)),
-            }
+            let elem = match std::str::from_utf8(&args[i]) {
+                Ok(e) => e.to_string(),
+                Err(_) => return RespValue::error("invalid element name"),
+            };
+            query = Some(VectorInput::Element(elem));
             i += 1;
         }
+        "FP32" => {
+            i += 1;
+            if i >= args.len() {
+                return RespValue::error("FP32 requires blob");
+            }
+            query = Some(VectorInput::Fp32Blob(args[i].clone()));
+            i += 1;
+        }
+        "VALUES" => {
+            i += 1;
+            if i >= args.len() {
+                return RespValue::error("VALUES requires count");
+            }
+            let n: usize = match std::str::from_utf8(&args[i])
+                .ok()
+                .and_then(|s| s.parse().ok())
+            {
+                Some(c) => c,
+                None => return RespValue::error("VALUES count must be a positive integer"),
+            };
+            i += 1;
+
+            let mut values = Vec::with_capacity(n);
+            for _ in 0..n {
+                if i >= args.len() {
+                    return RespValue::error("not enough values provided");
+                }
+                let val = match std::str::from_utf8(&args[i])
+                    .ok()
+                    .and_then(|s| s.parse::<f32>().ok())
+                {
+                    Some(f) => f,
+                    None => return RespValue::error("invalid float value"),
+                };
+                values.push(val);
+                i += 1;
+            }
+            query = Some(VectorInput::Values(values));
+        }
+        _ => return RespValue::error("query type must be ELE, FP32, or VALUES"),
     }
 
-    if query_vector.is_empty() {
-        return RespValue::error("query vector cannot be empty");
+    // Parse optional arguments
+    while i < args.len() {
+        let opt = match std::str::from_utf8(&args[i]) {
+            Ok(s) => s.to_uppercase(),
+            Err(_) => break,
+        };
+
+        match opt.as_str() {
+            "COUNT" => {
+                i += 1;
+                if i >= args.len() {
+                    return RespValue::error("COUNT requires a number");
+                }
+                count = std::str::from_utf8(&args[i])
+                    .ok()
+                    .and_then(|s| s.parse().ok());
+                i += 1;
+            }
+            "WITHSCORES" => {
+                with_scores = true;
+                i += 1;
+            }
+            "FILTER" => {
+                i += 1;
+                if i >= args.len() {
+                    return RespValue::error("FILTER requires expression");
+                }
+                filter = std::str::from_utf8(&args[i]).ok();
+                i += 1;
+            }
+            _ => i += 1,
+        }
     }
 
-    match db.vsearch(key, &query_vector, k, metric) {
+    let query = match query {
+        Some(q) => q,
+        None => return RespValue::error("query vector required"),
+    };
+
+    match db.vsim(key, query, count, with_scores, filter) {
         Ok(results) => {
             let resp_results: Vec<RespValue> = results
                 .into_iter()
                 .map(|r| {
-                    let mut entry = vec![
-                        RespValue::BulkString(Some(b"vector_id".to_vec())),
-                        RespValue::BulkString(Some(r.vector_id.as_bytes().to_vec())),
-                        RespValue::BulkString(Some(b"distance".to_vec())),
-                        RespValue::BulkString(Some(r.distance.to_string().as_bytes().to_vec())),
-                    ];
-                    if let Some(meta) = r.metadata {
-                        entry.push(RespValue::BulkString(Some(b"metadata".to_vec())));
-                        entry.push(RespValue::BulkString(Some(meta.as_bytes().to_vec())));
+                    if with_scores {
+                        RespValue::Array(Some(vec![
+                            RespValue::BulkString(Some(r.element.as_bytes().to_vec())),
+                            RespValue::BulkString(Some(r.score.to_string().as_bytes().to_vec())),
+                        ]))
+                    } else {
+                        RespValue::BulkString(Some(r.element.as_bytes().to_vec()))
                     }
-                    RespValue::Array(Some(entry))
                 })
                 .collect();
             RespValue::Array(Some(resp_results))
         }
-        Err(e) => RespValue::error(format!("VSEARCH failed: {}", e)),
+        Err(e) => RespValue::error(format!("VSIM failed: {}", e)),
     }
 }
 
 #[cfg(not(feature = "vectors"))]
-fn cmd_vsearch(_db: &Db, _args: &[Vec<u8>]) -> RespValue {
+fn cmd_vsim(_db: &Db, _args: &[Vec<u8>]) -> RespValue {
+    RespValue::error("vectors feature not enabled. Compile with --features vectors")
+}
+
+#[cfg(feature = "vectors")]
+fn cmd_vrem(db: &Db, args: &[Vec<u8>]) -> RespValue {
+    // VREM key element
+    if args.len() < 2 {
+        return RespValue::error("wrong number of arguments for 'vrem' command");
+    }
+
+    let key = match std::str::from_utf8(&args[0]) {
+        Ok(k) => k,
+        Err(_) => return RespValue::error("invalid key"),
+    };
+
+    let element = match std::str::from_utf8(&args[1]) {
+        Ok(e) => e,
+        Err(_) => return RespValue::error("invalid element"),
+    };
+
+    match db.vrem(key, element) {
+        Ok(removed) => RespValue::Integer(if removed { 1 } else { 0 }),
+        Err(e) => RespValue::error(format!("VREM failed: {}", e)),
+    }
+}
+
+#[cfg(not(feature = "vectors"))]
+fn cmd_vrem(_db: &Db, _args: &[Vec<u8>]) -> RespValue {
+    RespValue::error("vectors feature not enabled. Compile with --features vectors")
+}
+
+#[cfg(feature = "vectors")]
+fn cmd_vcard(db: &Db, args: &[Vec<u8>]) -> RespValue {
+    // VCARD key
+    if args.is_empty() {
+        return RespValue::error("wrong number of arguments for 'vcard' command");
+    }
+
+    let key = match std::str::from_utf8(&args[0]) {
+        Ok(k) => k,
+        Err(_) => return RespValue::error("invalid key"),
+    };
+
+    match db.vcard(key) {
+        Ok(count) => RespValue::Integer(count),
+        Err(e) => RespValue::error(format!("VCARD failed: {}", e)),
+    }
+}
+
+#[cfg(not(feature = "vectors"))]
+fn cmd_vcard(_db: &Db, _args: &[Vec<u8>]) -> RespValue {
+    RespValue::error("vectors feature not enabled. Compile with --features vectors")
+}
+
+#[cfg(feature = "vectors")]
+fn cmd_vdim(db: &Db, args: &[Vec<u8>]) -> RespValue {
+    // VDIM key
+    if args.is_empty() {
+        return RespValue::error("wrong number of arguments for 'vdim' command");
+    }
+
+    let key = match std::str::from_utf8(&args[0]) {
+        Ok(k) => k,
+        Err(_) => return RespValue::error("invalid key"),
+    };
+
+    match db.vdim(key) {
+        Ok(Some(dim)) => RespValue::Integer(dim as i64),
+        Ok(None) => RespValue::null(),
+        Err(e) => RespValue::error(format!("VDIM failed: {}", e)),
+    }
+}
+
+#[cfg(not(feature = "vectors"))]
+fn cmd_vdim(_db: &Db, _args: &[Vec<u8>]) -> RespValue {
+    RespValue::error("vectors feature not enabled. Compile with --features vectors")
+}
+
+#[cfg(feature = "vectors")]
+fn cmd_vinfo(db: &Db, args: &[Vec<u8>]) -> RespValue {
+    // VINFO key
+    if args.is_empty() {
+        return RespValue::error("wrong number of arguments for 'vinfo' command");
+    }
+
+    let key = match std::str::from_utf8(&args[0]) {
+        Ok(k) => k,
+        Err(_) => return RespValue::error("invalid key"),
+    };
+
+    match db.vinfo(key) {
+        Ok(Some(info)) => RespValue::Array(Some(vec![
+            RespValue::BulkString(Some(b"key".to_vec())),
+            RespValue::BulkString(Some(info.key.as_bytes().to_vec())),
+            RespValue::BulkString(Some(b"cardinality".to_vec())),
+            RespValue::Integer(info.cardinality),
+            RespValue::BulkString(Some(b"dimensions".to_vec())),
+            match info.dimensions {
+                Some(d) => RespValue::Integer(d as i64),
+                None => RespValue::null(),
+            },
+            RespValue::BulkString(Some(b"quantization".to_vec())),
+            RespValue::BulkString(Some(info.quantization.as_str().as_bytes().to_vec())),
+        ])),
+        Ok(None) => RespValue::null(),
+        Err(e) => RespValue::error(format!("VINFO failed: {}", e)),
+    }
+}
+
+#[cfg(not(feature = "vectors"))]
+fn cmd_vinfo(_db: &Db, _args: &[Vec<u8>]) -> RespValue {
+    RespValue::error("vectors feature not enabled. Compile with --features vectors")
+}
+
+#[cfg(feature = "vectors")]
+fn cmd_vemb(db: &Db, args: &[Vec<u8>]) -> RespValue {
+    // VEMB key element [RAW]
+    if args.len() < 2 {
+        return RespValue::error("wrong number of arguments for 'vemb' command");
+    }
+
+    let key = match std::str::from_utf8(&args[0]) {
+        Ok(k) => k,
+        Err(_) => return RespValue::error("invalid key"),
+    };
+
+    let element = match std::str::from_utf8(&args[1]) {
+        Ok(e) => e,
+        Err(_) => return RespValue::error("invalid element"),
+    };
+
+    let raw = args.len() > 2
+        && std::str::from_utf8(&args[2])
+            .map(|s| s.to_uppercase() == "RAW")
+            .unwrap_or(false);
+
+    match db.vemb(key, element, raw) {
+        Ok(Some(data)) => RespValue::BulkString(Some(data)),
+        Ok(None) => RespValue::null(),
+        Err(e) => RespValue::error(format!("VEMB failed: {}", e)),
+    }
+}
+
+#[cfg(not(feature = "vectors"))]
+fn cmd_vemb(_db: &Db, _args: &[Vec<u8>]) -> RespValue {
+    RespValue::error("vectors feature not enabled. Compile with --features vectors")
+}
+
+#[cfg(feature = "vectors")]
+fn cmd_vgetattr(db: &Db, args: &[Vec<u8>]) -> RespValue {
+    // VGETATTR key element
+    if args.len() < 2 {
+        return RespValue::error("wrong number of arguments for 'vgetattr' command");
+    }
+
+    let key = match std::str::from_utf8(&args[0]) {
+        Ok(k) => k,
+        Err(_) => return RespValue::error("invalid key"),
+    };
+
+    let element = match std::str::from_utf8(&args[1]) {
+        Ok(e) => e,
+        Err(_) => return RespValue::error("invalid element"),
+    };
+
+    match db.vgetattr(key, element) {
+        Ok(Some(attrs)) => RespValue::BulkString(Some(attrs.as_bytes().to_vec())),
+        Ok(None) => RespValue::null(),
+        Err(e) => RespValue::error(format!("VGETATTR failed: {}", e)),
+    }
+}
+
+#[cfg(not(feature = "vectors"))]
+fn cmd_vgetattr(_db: &Db, _args: &[Vec<u8>]) -> RespValue {
+    RespValue::error("vectors feature not enabled. Compile with --features vectors")
+}
+
+#[cfg(feature = "vectors")]
+fn cmd_vsetattr(db: &Db, args: &[Vec<u8>]) -> RespValue {
+    // VSETATTR key element json
+    if args.len() < 3 {
+        return RespValue::error("wrong number of arguments for 'vsetattr' command");
+    }
+
+    let key = match std::str::from_utf8(&args[0]) {
+        Ok(k) => k,
+        Err(_) => return RespValue::error("invalid key"),
+    };
+
+    let element = match std::str::from_utf8(&args[1]) {
+        Ok(e) => e,
+        Err(_) => return RespValue::error("invalid element"),
+    };
+
+    let attributes = match std::str::from_utf8(&args[2]) {
+        Ok(a) => a,
+        Err(_) => return RespValue::error("invalid attributes"),
+    };
+
+    match db.vsetattr(key, element, attributes) {
+        Ok(updated) => RespValue::Integer(if updated { 1 } else { 0 }),
+        Err(e) => RespValue::error(format!("VSETATTR failed: {}", e)),
+    }
+}
+
+#[cfg(not(feature = "vectors"))]
+fn cmd_vsetattr(_db: &Db, _args: &[Vec<u8>]) -> RespValue {
+    RespValue::error("vectors feature not enabled. Compile with --features vectors")
+}
+
+#[cfg(feature = "vectors")]
+fn cmd_vrandmember(db: &Db, args: &[Vec<u8>]) -> RespValue {
+    // VRANDMEMBER key [count]
+    if args.is_empty() {
+        return RespValue::error("wrong number of arguments for 'vrandmember' command");
+    }
+
+    let key = match std::str::from_utf8(&args[0]) {
+        Ok(k) => k,
+        Err(_) => return RespValue::error("invalid key"),
+    };
+
+    let count = if args.len() > 1 {
+        std::str::from_utf8(&args[1])
+            .ok()
+            .and_then(|s| s.parse().ok())
+    } else {
+        None
+    };
+
+    match db.vrandmember(key, count) {
+        Ok(elements) => {
+            if elements.is_empty() {
+                RespValue::null()
+            } else if count.is_none() || count == Some(1) {
+                // Single element - return as bulk string
+                RespValue::BulkString(Some(elements[0].as_bytes().to_vec()))
+            } else {
+                // Multiple elements - return as array
+                let resp: Vec<RespValue> = elements
+                    .into_iter()
+                    .map(|e| RespValue::BulkString(Some(e.as_bytes().to_vec())))
+                    .collect();
+                RespValue::Array(Some(resp))
+            }
+        }
+        Err(e) => RespValue::error(format!("VRANDMEMBER failed: {}", e)),
+    }
+}
+
+#[cfg(not(feature = "vectors"))]
+fn cmd_vrandmember(_db: &Db, _args: &[Vec<u8>]) -> RespValue {
     RespValue::error("vectors feature not enabled. Compile with --features vectors")
 }
 
@@ -6815,13 +6889,17 @@ async fn execute_command_in_transaction(db: &mut Db, args: &[Vec<u8>]) -> RespVa
         "FT.SUGLEN" => cmd_ft_suglen(db, cmd_args),
         "FT.EXPLAIN" => cmd_ft_explain(db, cmd_args),
         "FT.PROFILE" => cmd_ft_profile(db, cmd_args),
-        // Vector commands (Session 24.2)
-        "VECTOR" => cmd_vector(db, cmd_args),
+        // Redis 8 Vector commands (V* commands)
         "VADD" => cmd_vadd(db, cmd_args),
-        "VGET" => cmd_vget(db, cmd_args),
-        "VDEL" => cmd_vdel(db, cmd_args),
-        "VCOUNT" => cmd_vcount(db, cmd_args),
-        "VSEARCH" => cmd_vsearch(db, cmd_args),
+        "VSIM" => cmd_vsim(db, cmd_args),
+        "VREM" => cmd_vrem(db, cmd_args),
+        "VCARD" => cmd_vcard(db, cmd_args),
+        "VDIM" => cmd_vdim(db, cmd_args),
+        "VINFO" => cmd_vinfo(db, cmd_args),
+        "VEMB" => cmd_vemb(db, cmd_args),
+        "VGETATTR" => cmd_vgetattr(db, cmd_args),
+        "VSETATTR" => cmd_vsetattr(db, cmd_args),
+        "VRANDMEMBER" => cmd_vrandmember(db, cmd_args),
         // Stream commands
         "XADD" => cmd_xadd(db, cmd_args),
         "XLEN" => cmd_xlen(db, cmd_args),

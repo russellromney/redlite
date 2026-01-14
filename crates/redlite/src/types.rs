@@ -778,134 +778,83 @@ impl FtSuggestion {
 // Vector Search Types (Session 24.2) - Feature-gated
 // ============================================================================
 
-/// Vector configuration level (four-tier opt-in: global, database, pattern, key)
+// ============================================================================
+// Redis 8 Vector Types (V* commands)
+// ============================================================================
+
+/// Quantization type for vector storage
 #[cfg(feature = "vectors")]
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum VectorLevel {
-    /// Global vectors for all databases
-    Global,
-    /// Vectors for specific database (0-15)
-    Database(i32),
-    /// Vectors for keys matching a glob pattern
-    Pattern(String),
-    /// Vectors for specific key
-    Key,
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum VectorQuantization {
+    #[default]
+    NoQuant, // Full FP32 precision
+    Q8,    // 8-bit quantization
+    BF16,  // BFloat16
 }
 
 #[cfg(feature = "vectors")]
-impl VectorLevel {
+impl VectorQuantization {
     pub fn as_str(&self) -> &'static str {
         match self {
-            VectorLevel::Global => "global",
-            VectorLevel::Database(_) => "database",
-            VectorLevel::Pattern(_) => "pattern",
-            VectorLevel::Key => "key",
-        }
-    }
-}
-
-/// Vector configuration for a specific level and target
-#[cfg(feature = "vectors")]
-#[derive(Debug, Clone)]
-pub struct VectorConfig {
-    pub id: i64,
-    pub level: VectorLevel,
-    pub target: String,
-    pub enabled: bool,
-    pub dimensions: i32,
-    pub created_at: i64,
-}
-
-#[cfg(feature = "vectors")]
-impl VectorConfig {
-    pub fn new(level: VectorLevel, target: String, dimensions: i32) -> Self {
-        let now = std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .unwrap_or_default()
-            .as_millis() as i64;
-
-        Self {
-            id: 0,
-            level,
-            target,
-            enabled: true,
-            dimensions,
-            created_at: now,
-        }
-    }
-}
-
-/// A stored vector with metadata
-#[cfg(feature = "vectors")]
-#[derive(Debug, Clone)]
-pub struct VectorEntry {
-    pub id: i64,
-    pub key_id: i64,
-    pub vector_id: String,
-    pub embedding: Vec<f32>,
-    pub dimensions: i32,
-    pub metadata: Option<String>,
-    pub created_at: i64,
-}
-
-/// A vector search result
-#[cfg(feature = "vectors")]
-#[derive(Debug, Clone)]
-pub struct VectorSearchResult {
-    pub vector_id: String,
-    pub distance: f64,
-    pub metadata: Option<String>,
-}
-
-/// Distance metric for vector search
-#[cfg(feature = "vectors")]
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum DistanceMetric {
-    L2,     // Euclidean distance
-    Cosine, // Cosine similarity (converted to distance)
-    IP,     // Inner product (dot product, converted to distance)
-}
-
-#[cfg(feature = "vectors")]
-impl DistanceMetric {
-    pub fn as_str(&self) -> &'static str {
-        match self {
-            DistanceMetric::L2 => "L2",
-            DistanceMetric::Cosine => "cosine",
-            DistanceMetric::IP => "ip",
+            VectorQuantization::NoQuant => "NOQUANT",
+            VectorQuantization::Q8 => "Q8",
+            VectorQuantization::BF16 => "BF16",
         }
     }
 
     pub fn from_str(s: &str) -> Option<Self> {
         match s.to_uppercase().as_str() {
-            "L2" | "EUCLIDEAN" => Some(DistanceMetric::L2),
-            "COSINE" | "COS" => Some(DistanceMetric::Cosine),
-            "IP" | "DOT" | "INNER_PRODUCT" => Some(DistanceMetric::IP),
+            "NOQUANT" | "FP32" | "NONE" => Some(VectorQuantization::NoQuant),
+            "Q8" | "INT8" => Some(VectorQuantization::Q8),
+            "BF16" | "BFLOAT16" => Some(VectorQuantization::BF16),
             _ => None,
         }
     }
 }
 
-/// Statistics about vector storage
+/// A stored vector element in a vector set
 #[cfg(feature = "vectors")]
 #[derive(Debug, Clone)]
-pub struct VectorStats {
-    pub total_vectors: i64,
-    pub total_keys: i64,
-    pub storage_bytes: i64,
-    pub configs: Vec<VectorConfig>,
+pub struct VectorElement {
+    pub id: i64,
+    pub key_id: i64,
+    pub element: String,
+    pub embedding: Vec<f32>,
+    pub dimensions: i32,
+    pub quantization: VectorQuantization,
+    pub attributes: Option<String>,
+    pub created_at: i64,
 }
 
+/// Vector similarity search result
 #[cfg(feature = "vectors")]
-impl VectorStats {
-    pub fn new(total_vectors: i64, total_keys: i64, storage_bytes: i64) -> Self {
-        Self {
-            total_vectors,
-            total_keys,
-            storage_bytes,
-            configs: Vec::new(),
-        }
-    }
+#[derive(Debug, Clone)]
+pub struct VectorSimResult {
+    pub element: String,
+    pub score: f64,
+    pub attributes: Option<String>,
+}
+
+/// Vector set info returned by VINFO
+#[cfg(feature = "vectors")]
+#[derive(Debug, Clone)]
+pub struct VectorSetInfo {
+    pub key: String,
+    pub cardinality: i64,
+    pub dimensions: Option<i32>,
+    pub quantization: VectorQuantization,
+}
+
+/// Input format for vector data
+#[cfg(feature = "vectors")]
+#[derive(Debug, Clone)]
+pub enum VectorInput {
+    /// Raw FP32 blob
+    Fp32Blob(Vec<u8>),
+    /// VALUES n v1 v2 ... vn format
+    Values(Vec<f32>),
+    /// Element reference (for VSIM)
+    Element(String),
 }
 
 #[cfg(test)]
