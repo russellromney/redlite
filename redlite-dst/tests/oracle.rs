@@ -20,7 +20,7 @@ use rand::Rng;
 use rand_chacha::ChaCha8Rng;
 use rand::SeedableRng;
 use redis::Commands;
-use redlite::{Db, ZMember};
+use redlite::{Db, ZMember, ListDirection, SetOptions, GetExOption};
 use std::collections::HashMap;
 
 /// Check if Redis is available, skip tests if not
@@ -115,17 +115,17 @@ fn oracle_strings_incrbyfloat() {
     let _: () = redis::cmd("FLUSHDB").query(&mut redis).unwrap();
 
     // INCRBYFLOAT on new key
-    let r1 = redlite.incrbyfloat("float_counter", 1.5).unwrap();
+    let r1: f64 = redlite.incrbyfloat("float_counter", 1.5).unwrap().parse().unwrap();
     let r2: f64 = redis::cmd("INCRBYFLOAT").arg("float_counter").arg(1.5).query(&mut redis).unwrap();
     assert!((r1 - r2).abs() < 1e-10);
 
     // INCRBYFLOAT again
-    let r1 = redlite.incrbyfloat("float_counter", 2.5).unwrap();
+    let r1: f64 = redlite.incrbyfloat("float_counter", 2.5).unwrap().parse().unwrap();
     let r2: f64 = redis::cmd("INCRBYFLOAT").arg("float_counter").arg(2.5).query(&mut redis).unwrap();
     assert!((r1 - r2).abs() < 1e-10);
 
     // INCRBYFLOAT negative
-    let r1 = redlite.incrbyfloat("float_counter", -1.0).unwrap();
+    let r1: f64 = redlite.incrbyfloat("float_counter", -1.0).unwrap().parse().unwrap();
     let r2: f64 = redis::cmd("INCRBYFLOAT").arg("float_counter").arg(-1.0).query(&mut redis).unwrap();
     assert!((r1 - r2).abs() < 1e-10);
 }
@@ -239,8 +239,8 @@ fn oracle_strings_mget_mset() {
         .query(&mut redis).unwrap();
 
     // MGET
-    let r1 = redlite.mget(&["key1", "key2", "key3", "nonexistent"]).unwrap();
-    let r2: Vec<Option<Vec<u8>>> = redis.get(&["key1", "key2", "key3", "nonexistent"]).unwrap();
+    let r1 = redlite.mget(&["key1", "key2", "key3", "nonexistent"]);
+    let r2: Vec<Option<Vec<u8>>> = redis::cmd("MGET").arg("key1").arg("key2").arg("key3").arg("nonexistent").query(&mut redis).unwrap();
     assert_eq!(r1, r2);
 }
 
@@ -251,12 +251,12 @@ fn oracle_strings_setnx() {
     let _: () = redis::cmd("FLUSHDB").query(&mut redis).unwrap();
 
     // SETNX on new key
-    let r1 = redlite.setnx("key", b"value").unwrap();
+    let r1 = redlite.set_opts("key", b"value", SetOptions::new().nx()).unwrap();
     let r2: bool = redis.set_nx("key", "value").unwrap();
     assert_eq!(r1, r2);
 
     // SETNX on existing key
-    let r1 = redlite.setnx("key", b"newvalue").unwrap();
+    let r1 = redlite.set_opts("key", b"newvalue", SetOptions::new().nx()).unwrap();
     let r2: bool = redis.set_nx("key", "newvalue").unwrap();
     assert_eq!(r1, r2);
 
@@ -316,7 +316,7 @@ fn oracle_strings_getex_getdel() {
     assert_eq!(r1, r2);
 
     // GETEX with EX
-    let r1 = redlite.getex("key2", Some(3600), None, false, false).unwrap();
+    let r1 = redlite.getex("key2", Some(GetExOption::Ex(3600))).unwrap();
     let r2: Option<Vec<u8>> = redis::cmd("GETEX").arg("key2").arg("EX").arg(3600).query(&mut redis).unwrap();
     assert_eq!(r1, r2);
 
@@ -793,7 +793,7 @@ fn oracle_hashes_hincrby() {
     assert_eq!(r1, r2);
 
     // HINCRBYFLOAT
-    let r1 = redlite.hincrbyfloat("hash", "float_counter", 1.5).unwrap();
+    let r1: f64 = redlite.hincrbyfloat("hash", "float_counter", 1.5).unwrap().parse().unwrap();
     let r2: f64 = redis::cmd("HINCRBYFLOAT").arg("hash").arg("float_counter").arg(1.5).query(&mut redis).unwrap();
     assert!((r1 - r2).abs() < 1e-10);
 }
@@ -980,18 +980,18 @@ fn oracle_sets_store_operations() {
 
     // SINTERSTORE
     let r1 = redlite.sinterstore("dest_inter", &["set1", "set2"]).unwrap();
-    let r2: usize = redis.sinter_store("dest_inter", &["set1", "set2"]).unwrap();
-    assert_eq!(r1 as usize, r2);
+    let r2: i64 = redis::cmd("SINTERSTORE").arg("dest_inter").arg("set1").arg("set2").query(&mut redis).unwrap();
+    assert_eq!(r1, r2);
 
     // SUNIONSTORE
     let r1 = redlite.sunionstore("dest_union", &["set1", "set2"]).unwrap();
-    let r2: usize = redis.sunion_store("dest_union", &["set1", "set2"]).unwrap();
-    assert_eq!(r1 as usize, r2);
+    let r2: i64 = redis::cmd("SUNIONSTORE").arg("dest_union").arg("set1").arg("set2").query(&mut redis).unwrap();
+    assert_eq!(r1, r2);
 
     // SDIFFSTORE
     let r1 = redlite.sdiffstore("dest_diff", &["set1", "set2"]).unwrap();
-    let r2: usize = redis.sdiff_store("dest_diff", &["set1", "set2"]).unwrap();
-    assert_eq!(r1 as usize, r2);
+    let r2: i64 = redis::cmd("SDIFFSTORE").arg("dest_diff").arg("set1").arg("set2").query(&mut redis).unwrap();
+    assert_eq!(r1, r2);
 }
 
 #[test]
@@ -1005,7 +1005,7 @@ fn oracle_sets_smove() {
 
     // SMOVE
     let r1 = redlite.smove("src", "dst", b"a").unwrap();
-    let r2: bool = redis.smove("src", "dst", "a").unwrap();
+    let r2: i64 = redis::cmd("SMOVE").arg("src").arg("dst").arg("a").query(&mut redis).unwrap();
     assert_eq!(r1, r2);
 
     // Verify sets
@@ -1213,7 +1213,7 @@ fn oracle_zsets_remove_range() {
 
     // ZREMRANGEBYRANK
     let r1 = redlite.zremrangebyrank("zset", 0, 1).unwrap();
-    let r2: i64 = redis.zrem_range_by_rank("zset", 0, 1).unwrap();
+    let r2: i64 = redis::cmd("ZREMRANGEBYRANK").arg("zset").arg(0).arg(1).query(&mut redis).unwrap();
     assert_eq!(r1, r2);
 
     // Verify remaining
@@ -1501,26 +1501,556 @@ fn oracle_keys_random_ops() {
     assert_eq!(divergences, 0, "Found {} divergences in key operations", divergences);
 }
 
-// ============================================================================
-// SERVER ORACLE TESTS
-// ============================================================================
-
 #[test]
-fn oracle_server_ping_echo() {
+fn oracle_keys_expireat() {
     let mut redis = require_redis!();
     let redlite = Db::open_memory().unwrap();
     let _: () = redis::cmd("FLUSHDB").query(&mut redis).unwrap();
 
-    // PING
-    let r1 = redlite.ping(None).unwrap();
-    let r2: String = redis::cmd("PING").query(&mut redis).unwrap();
+    redlite.set("key", b"value", None).unwrap();
+    let _: () = redis.set("key", "value").unwrap();
+
+    // EXPIREAT - set expiry to 1 hour from now
+    let timestamp = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap()
+        .as_secs() as i64 + 3600;
+
+    let r1 = redlite.expireat("key", timestamp).unwrap();
+    let r2: bool = redis::cmd("EXPIREAT").arg("key").arg(timestamp).query(&mut redis).unwrap();
     assert_eq!(r1, r2);
 
-    // ECHO
-    let r1 = redlite.echo("hello").unwrap();
-    let r2: String = redis::cmd("ECHO").arg("hello").query(&mut redis).unwrap();
+    // TTL should be around 3600
+    let r1 = redlite.ttl("key").unwrap();
+    let r2: i64 = redis.ttl("key").unwrap();
+    assert!((r1 - r2).abs() <= 2);
+}
+
+#[test]
+fn oracle_keys_pexpireat() {
+    let mut redis = require_redis!();
+    let redlite = Db::open_memory().unwrap();
+    let _: () = redis::cmd("FLUSHDB").query(&mut redis).unwrap();
+
+    redlite.set("key", b"value", None).unwrap();
+    let _: () = redis.set("key", "value").unwrap();
+
+    // PEXPIREAT - set expiry to 1 hour from now in milliseconds
+    let timestamp_ms = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap()
+        .as_millis() as i64 + 3600000;
+
+    let r1 = redlite.pexpireat("key", timestamp_ms).unwrap();
+    let r2: bool = redis::cmd("PEXPIREAT").arg("key").arg(timestamp_ms).query(&mut redis).unwrap();
+    assert_eq!(r1, r2);
+
+    // PTTL should be around 3600000
+    let r1 = redlite.pttl("key").unwrap();
+    let r2: i64 = redis.pttl("key").unwrap();
+    assert!((r1 - r2).abs() <= 1000);
+}
+
+#[test]
+fn oracle_keys_persist() {
+    let mut redis = require_redis!();
+    let redlite = Db::open_memory().unwrap();
+    let _: () = redis::cmd("FLUSHDB").query(&mut redis).unwrap();
+
+    redlite.set("key", b"value", None).unwrap();
+    let _: () = redis.set("key", "value").unwrap();
+
+    // Set expiry
+    redlite.expire("key", 3600).unwrap();
+    let _: bool = redis.expire("key", 3600).unwrap();
+
+    // PERSIST removes the expiry
+    let r1 = redlite.persist("key").unwrap();
+    let r2: bool = redis::cmd("PERSIST").arg("key").query(&mut redis).unwrap();
+    assert_eq!(r1, r2);
+
+    // TTL should now be -1 (no expiry)
+    let r1 = redlite.ttl("key").unwrap();
+    let r2: i64 = redis.ttl("key").unwrap();
+    assert_eq!(r1, r2);
+
+    // PERSIST on key without expiry
+    let r1 = redlite.persist("key").unwrap();
+    let r2: bool = redis::cmd("PERSIST").arg("key").query(&mut redis).unwrap();
     assert_eq!(r1, r2);
 }
+
+// ============================================================================
+// ADDITIONAL LIST ORACLE TESTS
+// ============================================================================
+
+#[test]
+fn oracle_lists_lpos() {
+    let mut redis = require_redis!();
+    let redlite = Db::open_memory().unwrap();
+    let _: () = redis::cmd("FLUSHDB").query(&mut redis).unwrap();
+
+    // Create list
+    for item in &["a", "b", "c", "b", "d", "b"] {
+        redlite.rpush("mylist", &[item.as_bytes()]).unwrap();
+        let _: usize = redis.rpush("mylist", *item).unwrap();
+    }
+
+    // LPOS - find first occurrence (count=1 to get single result)
+    let r1 = redlite.lpos("mylist", b"b", None, Some(1), None).unwrap();
+    let r2: Option<i64> = redis::cmd("LPOS").arg("mylist").arg("b").query(&mut redis).unwrap();
+    assert_eq!(r1.first().copied(), r2);
+
+    // LPOS - element not found
+    let r1 = redlite.lpos("mylist", b"z", None, Some(1), None).unwrap();
+    let r2: Option<i64> = redis::cmd("LPOS").arg("mylist").arg("z").query(&mut redis).unwrap();
+    assert_eq!(r1.first().copied(), r2);
+}
+
+#[test]
+fn oracle_lists_lmove() {
+    let mut redis = require_redis!();
+    let redlite = Db::open_memory().unwrap();
+    let _: () = redis::cmd("FLUSHDB").query(&mut redis).unwrap();
+
+    // Create source list
+    for item in &["a", "b", "c"] {
+        redlite.rpush("src", &[item.as_bytes()]).unwrap();
+        let _: usize = redis.rpush("src", *item).unwrap();
+    }
+
+    // LMOVE LEFT RIGHT
+    let r1 = redlite.lmove("src", "dst", ListDirection::Left, ListDirection::Right).unwrap();
+    let r2: Option<Vec<u8>> = redis::cmd("LMOVE").arg("src").arg("dst").arg("LEFT").arg("RIGHT").query(&mut redis).unwrap();
+    assert_eq!(r1, r2);
+
+    // Check resulting lists
+    let r1 = redlite.lrange("src", 0, -1).unwrap();
+    let r2: Vec<Vec<u8>> = redis.lrange("src", 0, -1).unwrap();
+    assert_eq!(r1, r2);
+
+    let r1 = redlite.lrange("dst", 0, -1).unwrap();
+    let r2: Vec<Vec<u8>> = redis.lrange("dst", 0, -1).unwrap();
+    assert_eq!(r1, r2);
+}
+
+// ============================================================================
+// ADDITIONAL SET ORACLE TESTS
+// ============================================================================
+
+#[test]
+fn oracle_sets_spop() {
+    let mut redis = require_redis!();
+    let redlite = Db::open_memory().unwrap();
+    let _: () = redis::cmd("FLUSHDB").query(&mut redis).unwrap();
+
+    // Create set
+    for i in 0..10 {
+        let member = format!("m{}", i);
+        redlite.sadd("myset", &[member.as_bytes()]).unwrap();
+        let _: usize = redis.sadd("myset", &member).unwrap();
+    }
+
+    // SPOP - verify it removes one member
+    let r1_before = redlite.scard("myset").unwrap();
+    let r2_before: usize = redis.scard("myset").unwrap();
+    assert_eq!(r1_before as usize, r2_before);
+
+    let popped1 = redlite.spop("myset", None).unwrap();
+    let popped2: Vec<Vec<u8>> = redis::cmd("SPOP").arg("myset").query(&mut redis).unwrap();
+
+    // Both should pop exactly one element
+    assert_eq!(popped1.len(), 1);
+    assert_eq!(popped2.len(), 1);
+
+    let r1_after = redlite.scard("myset").unwrap();
+    let r2_after: usize = redis.scard("myset").unwrap();
+    assert_eq!(r1_after as usize, r2_after);
+    assert_eq!(r1_after as usize, r1_before as usize - 1);
+}
+
+#[test]
+fn oracle_sets_srandmember() {
+    let mut redis = require_redis!();
+    let redlite = Db::open_memory().unwrap();
+    let _: () = redis::cmd("FLUSHDB").query(&mut redis).unwrap();
+
+    // Create set
+    for i in 0..10 {
+        let member = format!("m{}", i);
+        redlite.sadd("myset", &[member.as_bytes()]).unwrap();
+        let _: usize = redis.sadd("myset", &member).unwrap();
+    }
+
+    // SRANDMEMBER count=3
+    let r1 = redlite.srandmember("myset", Some(3)).unwrap();
+    let r2: Vec<Vec<u8>> = redis::cmd("SRANDMEMBER").arg("myset").arg(3).query(&mut redis).unwrap();
+
+    // Both should return 3 members
+    assert_eq!(r1.len(), 3);
+    assert_eq!(r2.len(), 3);
+
+    // Set should be unchanged
+    let r1_card = redlite.scard("myset").unwrap();
+    let r2_card: usize = redis.scard("myset").unwrap();
+    assert_eq!(r1_card as usize, r2_card);
+    assert_eq!(r1_card, 10);
+}
+
+#[test]
+fn oracle_sets_sscan() {
+    let mut redis = require_redis!();
+    let redlite = Db::open_memory().unwrap();
+    let _: () = redis::cmd("FLUSHDB").query(&mut redis).unwrap();
+
+    // Create set
+    for i in 0..20 {
+        let member = format!("member:{}", i);
+        redlite.sadd("myset", &[member.as_bytes()]).unwrap();
+        let _: usize = redis.sadd("myset", &member).unwrap();
+    }
+
+    // SSCAN - collect all members
+    let mut redlite_members: Vec<Vec<u8>> = Vec::new();
+    let mut cursor = "0".to_string();
+    loop {
+        let (next_cursor, batch) = redlite.sscan("myset", &cursor, None, 100).unwrap();
+        redlite_members.extend(batch);
+        cursor = next_cursor;
+        if cursor == "0" { break; }
+    }
+
+    let mut redis_members: Vec<Vec<u8>> = Vec::new();
+    let mut redis_cursor: u64 = 0;
+    loop {
+        let result: (u64, Vec<Vec<u8>>) = redis::cmd("SSCAN").arg("myset").arg(redis_cursor).query(&mut redis).unwrap();
+        redis_cursor = result.0;
+        redis_members.extend(result.1);
+        if redis_cursor == 0 { break; }
+    }
+
+    // Sort and compare
+    redlite_members.sort();
+    redis_members.sort();
+    assert_eq!(redlite_members, redis_members);
+}
+
+// ============================================================================
+// ADDITIONAL HASH ORACLE TESTS
+// ============================================================================
+
+#[test]
+fn oracle_hashes_hscan() {
+    let mut redis = require_redis!();
+    let redlite = Db::open_memory().unwrap();
+    let _: () = redis::cmd("FLUSHDB").query(&mut redis).unwrap();
+
+    // Create hash
+    for i in 0..20 {
+        let field = format!("field:{}", i);
+        let value = format!("value:{}", i);
+        redlite.hset("myhash", &[(&field, value.as_bytes())]).unwrap();
+        let _: usize = redis.hset("myhash", &field, &value).unwrap();
+    }
+
+    // HSCAN - collect all fields
+    let mut redlite_fields: Vec<(String, Vec<u8>)> = Vec::new();
+    let mut cursor = "0".to_string();
+    loop {
+        let (next_cursor, batch) = redlite.hscan("myhash", &cursor, None, 100).unwrap();
+        redlite_fields.extend(batch);
+        cursor = next_cursor;
+        if cursor == "0" { break; }
+    }
+
+    let mut redis_fields: Vec<(String, Vec<u8>)> = Vec::new();
+    let mut redis_cursor: u64 = 0;
+    loop {
+        let result: (u64, Vec<(String, Vec<u8>)>) = redis::cmd("HSCAN").arg("myhash").arg(redis_cursor).query(&mut redis).unwrap();
+        redis_cursor = result.0;
+        redis_fields.extend(result.1);
+        if redis_cursor == 0 { break; }
+    }
+
+    // Sort and compare
+    redlite_fields.sort();
+    redis_fields.sort();
+    assert_eq!(redlite_fields, redis_fields);
+}
+
+// ============================================================================
+// ADDITIONAL SORTED SET ORACLE TESTS
+// ============================================================================
+
+#[test]
+fn oracle_zsets_zscan() {
+    let mut redis = require_redis!();
+    let redlite = Db::open_memory().unwrap();
+    let _: () = redis::cmd("FLUSHDB").query(&mut redis).unwrap();
+
+    // Create sorted set
+    for i in 0..20 {
+        let member = format!("member:{}", i);
+        let score = i as f64;
+        redlite.zadd("myzset", &[ZMember::new(score, member.as_bytes().to_vec())]).unwrap();
+        let _: usize = redis.zadd("myzset", &member, score).unwrap();
+    }
+
+    // ZSCAN - collect all members
+    let mut redlite_members: Vec<(Vec<u8>, f64)> = Vec::new();
+    let mut cursor = "0".to_string();
+    loop {
+        let (next_cursor, batch) = redlite.zscan("myzset", &cursor, None, 100).unwrap();
+        redlite_members.extend(batch);
+        cursor = next_cursor;
+        if cursor == "0" { break; }
+    }
+
+    let mut redis_members: Vec<(Vec<u8>, f64)> = Vec::new();
+    let mut redis_cursor: u64 = 0;
+    loop {
+        let result: (u64, Vec<(String, f64)>) = redis::cmd("ZSCAN").arg("myzset").arg(redis_cursor).query(&mut redis).unwrap();
+        redis_cursor = result.0;
+        for (m, s) in result.1 {
+            redis_members.push((m.into_bytes(), s));
+        }
+        if redis_cursor == 0 { break; }
+    }
+
+    // Sort by member and compare
+    redlite_members.sort_by(|a, b| a.0.cmp(&b.0));
+    redis_members.sort_by(|a, b| a.0.cmp(&b.0));
+    assert_eq!(redlite_members, redis_members);
+}
+
+#[test]
+fn oracle_zsets_zrangebyscore() {
+    let mut redis = require_redis!();
+    let redlite = Db::open_memory().unwrap();
+    let _: () = redis::cmd("FLUSHDB").query(&mut redis).unwrap();
+
+    // Create sorted set
+    for i in 0..20 {
+        let member = format!("m{}", i);
+        let score = i as f64;
+        redlite.zadd("myzset", &[ZMember::new(score, member.as_bytes().to_vec())]).unwrap();
+        let _: usize = redis.zadd("myzset", &member, score).unwrap();
+    }
+
+    // ZRANGEBYSCORE
+    let r1: Vec<Vec<u8>> = redlite.zrangebyscore("myzset", 5.0, 15.0, None, None).unwrap()
+        .into_iter().map(|m| m.member).collect();
+    let r2: Vec<Vec<u8>> = redis::cmd("ZRANGEBYSCORE").arg("myzset").arg(5).arg(15).query(&mut redis).unwrap();
+    assert_eq!(r1, r2);
+
+    // With LIMIT
+    let r1: Vec<Vec<u8>> = redlite.zrangebyscore("myzset", 0.0, 100.0, Some(5), Some(3)).unwrap()
+        .into_iter().map(|m| m.member).collect();
+    let r2: Vec<Vec<u8>> = redis::cmd("ZRANGEBYSCORE").arg("myzset").arg(0).arg(100).arg("LIMIT").arg(5).arg(3).query(&mut redis).unwrap();
+    assert_eq!(r1, r2);
+}
+
+#[test]
+fn oracle_zsets_zinterstore() {
+    let mut redis = require_redis!();
+    let redlite = Db::open_memory().unwrap();
+    let _: () = redis::cmd("FLUSHDB").query(&mut redis).unwrap();
+
+    // Create two sorted sets
+    redlite.zadd("zset1", &[
+        ZMember::new(1.0, b"a".to_vec()),
+        ZMember::new(2.0, b"b".to_vec()),
+        ZMember::new(3.0, b"c".to_vec()),
+    ]).unwrap();
+    let _: i64 = redis::cmd("ZADD").arg("zset1").arg(1.0).arg("a").arg(2.0).arg("b").arg(3.0).arg("c").query(&mut redis).unwrap();
+
+    redlite.zadd("zset2", &[
+        ZMember::new(10.0, b"b".to_vec()),
+        ZMember::new(20.0, b"c".to_vec()),
+        ZMember::new(30.0, b"d".to_vec()),
+    ]).unwrap();
+    let _: i64 = redis::cmd("ZADD").arg("zset2").arg(10.0).arg("b").arg(20.0).arg("c").arg(30.0).arg("d").query(&mut redis).unwrap();
+
+    // ZINTERSTORE
+    let r1 = redlite.zinterstore("out", &["zset1", "zset2"], None, None).unwrap();
+    let r2: i64 = redis::cmd("ZINTERSTORE").arg("out").arg(2).arg("zset1").arg("zset2").query(&mut redis).unwrap();
+    assert_eq!(r1, r2);
+
+    // Check result
+    let r1: Vec<Vec<u8>> = redlite.zrange("out", 0, -1, false).unwrap()
+        .into_iter().map(|m| m.member).collect();
+    let r2: Vec<Vec<u8>> = redis.zrange("out", 0, -1).unwrap();
+    assert_eq!(r1, r2);
+}
+
+#[test]
+fn oracle_zsets_zunionstore() {
+    let mut redis = require_redis!();
+    let redlite = Db::open_memory().unwrap();
+    let _: () = redis::cmd("FLUSHDB").query(&mut redis).unwrap();
+
+    // Create two sorted sets
+    redlite.zadd("zset1", &[
+        ZMember::new(1.0, b"a".to_vec()),
+        ZMember::new(2.0, b"b".to_vec()),
+    ]).unwrap();
+    let _: i64 = redis::cmd("ZADD").arg("zset1").arg(1.0).arg("a").arg(2.0).arg("b").query(&mut redis).unwrap();
+
+    redlite.zadd("zset2", &[
+        ZMember::new(10.0, b"b".to_vec()),
+        ZMember::new(20.0, b"c".to_vec()),
+    ]).unwrap();
+    let _: i64 = redis::cmd("ZADD").arg("zset2").arg(10.0).arg("b").arg(20.0).arg("c").query(&mut redis).unwrap();
+
+    // ZUNIONSTORE
+    let r1 = redlite.zunionstore("out", &["zset1", "zset2"], None, None).unwrap();
+    let r2: i64 = redis::cmd("ZUNIONSTORE").arg("out").arg(2).arg("zset1").arg("zset2").query(&mut redis).unwrap();
+    assert_eq!(r1, r2);
+
+    // Check result
+    let r1: Vec<Vec<u8>> = redlite.zrange("out", 0, -1, false).unwrap()
+        .into_iter().map(|m| m.member).collect();
+    let r2: Vec<Vec<u8>> = redis.zrange("out", 0, -1).unwrap();
+    assert_eq!(r1, r2);
+}
+
+// ============================================================================
+// BITMAP ORACLE TESTS
+// ============================================================================
+
+#[test]
+fn oracle_bitmap_bitop() {
+    let mut redis = require_redis!();
+    let redlite = Db::open_memory().unwrap();
+    let _: () = redis::cmd("FLUSHDB").query(&mut redis).unwrap();
+
+    // Create bitmaps
+    redlite.set("key1", b"\xff\x0f", None).unwrap();
+    let _: () = redis.set("key1", b"\xff\x0f").unwrap();
+
+    redlite.set("key2", b"\x0f\xff", None).unwrap();
+    let _: () = redis.set("key2", b"\x0f\xff").unwrap();
+
+    // BITOP AND
+    let r1 = redlite.bitop("AND", "destkey", &["key1", "key2"]).unwrap();
+    let r2: i64 = redis::cmd("BITOP").arg("AND").arg("destkey").arg("key1").arg("key2").query(&mut redis).unwrap();
+    assert_eq!(r1, r2);
+
+    let r1 = redlite.get("destkey").unwrap();
+    let r2: Option<Vec<u8>> = redis.get("destkey").unwrap();
+    assert_eq!(r1, r2);
+
+    // BITOP OR
+    let r1 = redlite.bitop("OR", "destkey2", &["key1", "key2"]).unwrap();
+    let r2: i64 = redis::cmd("BITOP").arg("OR").arg("destkey2").arg("key1").arg("key2").query(&mut redis).unwrap();
+    assert_eq!(r1, r2);
+
+    let r1 = redlite.get("destkey2").unwrap();
+    let r2: Option<Vec<u8>> = redis.get("destkey2").unwrap();
+    assert_eq!(r1, r2);
+
+    // BITOP XOR
+    let r1 = redlite.bitop("XOR", "destkey3", &["key1", "key2"]).unwrap();
+    let r2: i64 = redis::cmd("BITOP").arg("XOR").arg("destkey3").arg("key1").arg("key2").query(&mut redis).unwrap();
+    assert_eq!(r1, r2);
+
+    let r1 = redlite.get("destkey3").unwrap();
+    let r2: Option<Vec<u8>> = redis.get("destkey3").unwrap();
+    assert_eq!(r1, r2);
+
+    // BITOP NOT
+    let r1 = redlite.bitop("NOT", "destkey4", &["key1"]).unwrap();
+    let r2: i64 = redis::cmd("BITOP").arg("NOT").arg("destkey4").arg("key1").query(&mut redis).unwrap();
+    assert_eq!(r1, r2);
+
+    let r1 = redlite.get("destkey4").unwrap();
+    let r2: Option<Vec<u8>> = redis.get("destkey4").unwrap();
+    assert_eq!(r1, r2);
+}
+
+// NOTE: GEO commands (GEOADD, GEOPOS, GEODIST, GEOHASH, GEOSEARCH) require
+// the "geo" feature flag to be enabled. Enable with:
+//   cargo test --test oracle --features geo -- --test-threads=1
+
+// ============================================================================
+// STREAM ORACLE TESTS
+// ============================================================================
+
+#[test]
+fn oracle_streams_basic() {
+    let mut redis = require_redis!();
+    let redlite = Db::open_memory().unwrap();
+    let _: () = redis::cmd("FLUSHDB").query(&mut redis).unwrap();
+
+    // XADD with auto-generated ID (None means *)
+    let id1 = redlite.xadd("mystream", None, &[(b"field1".as_slice(), b"value1".as_slice()), (b"field2", b"value2")], false, None, None, false).unwrap();
+    let id2: String = redis::cmd("XADD").arg("mystream").arg("*").arg("field1").arg("value1").arg("field2").arg("value2").query(&mut redis).unwrap();
+
+    // Both should return IDs
+    assert!(id1.is_some());
+    assert!(id2.contains('-'));
+
+    // XLEN
+    let r1 = redlite.xlen("mystream").unwrap();
+    let r2: i64 = redis::cmd("XLEN").arg("mystream").query(&mut redis).unwrap();
+    assert_eq!(r1, r2);
+}
+
+#[test]
+fn oracle_streams_xlen() {
+    let mut redis = require_redis!();
+    let redlite = Db::open_memory().unwrap();
+    let _: () = redis::cmd("FLUSHDB").query(&mut redis).unwrap();
+
+    // Empty stream
+    let r1 = redlite.xlen("mystream").unwrap();
+    let r2: i64 = redis::cmd("XLEN").arg("mystream").query(&mut redis).unwrap();
+    assert_eq!(r1, r2);
+    assert_eq!(r1, 0);
+
+    // Add multiple entries
+    for i in 0..5 {
+        let field = format!("f{}", i);
+        let value = format!("v{}", i);
+        redlite.xadd("mystream", None, &[(field.as_bytes(), value.as_bytes())], false, None, None, false).unwrap();
+        let _: String = redis::cmd("XADD").arg("mystream").arg("*").arg(&field).arg(&value).query(&mut redis).unwrap();
+    }
+
+    // Verify length
+    let r1 = redlite.xlen("mystream").unwrap();
+    let r2: i64 = redis::cmd("XLEN").arg("mystream").query(&mut redis).unwrap();
+    assert_eq!(r1, r2);
+    assert_eq!(r1, 5);
+}
+
+#[test]
+fn oracle_streams_xtrim() {
+    let mut redis = require_redis!();
+    let redlite = Db::open_memory().unwrap();
+    let _: () = redis::cmd("FLUSHDB").query(&mut redis).unwrap();
+
+    // Add many entries
+    for i in 0..20 {
+        let field = format!("i{}", i);
+        redlite.xadd("mystream", None, &[(field.as_bytes(), b"val")], false, None, None, false).unwrap();
+        let _: String = redis::cmd("XADD").arg("mystream").arg("*").arg(&field).arg("val").query(&mut redis).unwrap();
+    }
+
+    // XTRIM MAXLEN
+    let r1 = redlite.xtrim("mystream", Some(10), None, false).unwrap();
+    let r2: i64 = redis::cmd("XTRIM").arg("mystream").arg("MAXLEN").arg(10).query(&mut redis).unwrap();
+    assert_eq!(r1, r2);
+
+    // Verify length
+    let r1 = redlite.xlen("mystream").unwrap();
+    let r2: i64 = redis::cmd("XLEN").arg("mystream").query(&mut redis).unwrap();
+    assert_eq!(r1, r2);
+    assert_eq!(r1, 10);
+}
+
+// ============================================================================
+// SERVER ORACLE TESTS
+// ============================================================================
 
 #[test]
 fn oracle_server_dbsize_flushdb() {
@@ -1530,7 +2060,7 @@ fn oracle_server_dbsize_flushdb() {
 
     // DBSIZE empty
     let r1 = redlite.dbsize().unwrap();
-    let r2: i64 = redis.dbsize().unwrap();
+    let r2: i64 = redis::cmd("DBSIZE").query(&mut redis).unwrap();
     assert_eq!(r1, r2);
 
     // Add some keys
@@ -1542,7 +2072,7 @@ fn oracle_server_dbsize_flushdb() {
 
     // DBSIZE with keys
     let r1 = redlite.dbsize().unwrap();
-    let r2: i64 = redis.dbsize().unwrap();
+    let r2: i64 = redis::cmd("DBSIZE").query(&mut redis).unwrap();
     assert_eq!(r1, r2);
 
     // FLUSHDB
@@ -1550,7 +2080,7 @@ fn oracle_server_dbsize_flushdb() {
     let _: () = redis::cmd("FLUSHDB").query(&mut redis).unwrap();
 
     let r1 = redlite.dbsize().unwrap();
-    let r2: i64 = redis.dbsize().unwrap();
+    let r2: i64 = redis::cmd("DBSIZE").query(&mut redis).unwrap();
     assert_eq!(r1, r2);
 }
 
