@@ -759,32 +759,47 @@ impl Db {
         Ok(keys)
     }
 
-    /// SCAN cursor [MATCH pattern] [COUNT count] - cursor-based iteration
+    /// SCAN cursor [MATCH pattern] [COUNT count] - cursor-based iteration using keyset pagination
+    /// Cursor is a base64-encoded string of the last-seen key, or "0" to start from beginning.
     pub fn scan(
         &self,
-        cursor: u64,
+        cursor: &str,
         pattern: Option<&str>,
         count: usize,
-    ) -> Result<(u64, Vec<String>)> {
+    ) -> Result<(String, Vec<String>)> {
+        use base64::{engine::general_purpose::STANDARD, Engine};
+
         let conn = self.core.conn.lock().unwrap_or_else(|e| e.into_inner());
         let db = self.selected_db;
         let now = Self::now_ms();
+
+        // Decode cursor: "0" means start from beginning, otherwise base64(last_key)
+        let last_key = if cursor == "0" || cursor.is_empty() {
+            String::new()
+        } else {
+            match STANDARD.decode(cursor) {
+                Ok(bytes) => String::from_utf8(bytes).unwrap_or_default(),
+                Err(_) => String::new(),
+            }
+        };
 
         let sql = match pattern {
             Some(_) => {
                 "SELECT key FROM keys
                  WHERE db = ?1
                  AND (expire_at IS NULL OR expire_at > ?2)
-                 AND key GLOB ?3
-                 ORDER BY id
-                 LIMIT ?4 OFFSET ?5"
+                 AND key > ?3
+                 AND key GLOB ?4
+                 ORDER BY key
+                 LIMIT ?5"
             }
             None => {
                 "SELECT key FROM keys
                  WHERE db = ?1
                  AND (expire_at IS NULL OR expire_at > ?2)
-                 ORDER BY id
-                 LIMIT ?3 OFFSET ?4"
+                 AND key > ?3
+                 ORDER BY key
+                 LIMIT ?4"
             }
         };
 
@@ -793,57 +808,72 @@ impl Db {
         let rows: Vec<String> = match pattern {
             Some(p) => {
                 let iter = stmt
-                    .query_map(params![db, now, p, count as i64, cursor as i64], |row| {
+                    .query_map(params![db, now, last_key, p, count as i64], |row| {
                         row.get(0)
                     })?;
                 iter.filter_map(|r| r.ok()).collect()
             }
             None => {
                 let iter = stmt
-                    .query_map(params![db, now, count as i64, cursor as i64], |row| {
+                    .query_map(params![db, now, last_key, count as i64], |row| {
                         row.get(0)
                     })?;
                 iter.filter_map(|r| r.ok()).collect()
             }
         };
 
-        // Calculate next cursor
+        // Calculate next cursor: encode last key or "0" if done
         let next_cursor = if rows.len() < count {
-            0 // Done iterating
+            "0".to_string() // Done iterating
+        } else if let Some(last) = rows.last() {
+            STANDARD.encode(last.as_bytes())
         } else {
-            cursor + count as u64
+            "0".to_string()
         };
 
         Ok((next_cursor, rows))
     }
 
     /// HSCAN key cursor [MATCH pattern] [COUNT count] - cursor-based iteration over hash fields
+    /// Cursor is a base64-encoded string of the last-seen field, or "0" to start from beginning.
     pub fn hscan(
         &self,
         key: &str,
-        cursor: u64,
+        cursor: &str,
         pattern: Option<&str>,
         count: usize,
-    ) -> Result<(u64, Vec<(String, Vec<u8>)>)> {
+    ) -> Result<(String, Vec<(String, Vec<u8>)>)> {
+        use base64::{engine::general_purpose::STANDARD, Engine};
+
         let conn = self.core.conn.lock().unwrap_or_else(|e| e.into_inner());
 
         let key_id = match self.get_hash_key_id(&conn, key)? {
             Some(id) => id,
-            None => return Ok((0, Vec::new())),
+            None => return Ok(("0".to_string(), Vec::new())),
+        };
+
+        // Decode cursor: "0" means start from beginning, otherwise base64(last_field)
+        let last_field = if cursor == "0" || cursor.is_empty() {
+            String::new()
+        } else {
+            match STANDARD.decode(cursor) {
+                Ok(bytes) => String::from_utf8(bytes).unwrap_or_default(),
+                Err(_) => String::new(),
+            }
         };
 
         let sql = match pattern {
             Some(_) => {
                 "SELECT field, value FROM hashes
-                 WHERE key_id = ?1 AND field GLOB ?2
+                 WHERE key_id = ?1 AND field > ?2 AND field GLOB ?3
                  ORDER BY field
-                 LIMIT ?3 OFFSET ?4"
+                 LIMIT ?4"
             }
             None => {
                 "SELECT field, value FROM hashes
-                 WHERE key_id = ?1
+                 WHERE key_id = ?1 AND field > ?2
                  ORDER BY field
-                 LIMIT ?2 OFFSET ?3"
+                 LIMIT ?3"
             }
         };
 
@@ -852,57 +882,70 @@ impl Db {
         let rows: Vec<(String, Vec<u8>)> = match pattern {
             Some(p) => {
                 let iter = stmt.query_map(
-                    params![key_id, p, count as i64, cursor as i64],
+                    params![key_id, last_field, p, count as i64],
                     |row| Ok((row.get(0)?, row.get(1)?)),
                 )?;
                 iter.filter_map(|r| r.ok()).collect()
             }
             None => {
                 let iter = stmt.query_map(
-                    params![key_id, count as i64, cursor as i64],
+                    params![key_id, last_field, count as i64],
                     |row| Ok((row.get(0)?, row.get(1)?)),
                 )?;
                 iter.filter_map(|r| r.ok()).collect()
             }
         };
 
+        // Calculate next cursor: encode last field or "0" if done
         let next_cursor = if rows.len() < count {
-            0
+            "0".to_string()
+        } else if let Some((last, _)) = rows.last() {
+            STANDARD.encode(last.as_bytes())
         } else {
-            cursor + count as u64
+            "0".to_string()
         };
 
         Ok((next_cursor, rows))
     }
 
     /// SSCAN key cursor [MATCH pattern] [COUNT count] - cursor-based iteration over set members
+    /// Cursor is a base64-encoded string of the last-seen member BLOB, or "0" to start from beginning.
     pub fn sscan(
         &self,
         key: &str,
-        cursor: u64,
+        cursor: &str,
         pattern: Option<&str>,
         count: usize,
-    ) -> Result<(u64, Vec<Vec<u8>>)> {
+    ) -> Result<(String, Vec<Vec<u8>>)> {
+        use base64::{engine::general_purpose::STANDARD, Engine};
+
         let conn = self.core.conn.lock().unwrap_or_else(|e| e.into_inner());
 
         let key_id = match self.get_set_key_id(&conn, key)? {
             Some(id) => id,
-            None => return Ok((0, Vec::new())),
+            None => return Ok(("0".to_string(), Vec::new())),
+        };
+
+        // Decode cursor: "0" means start from beginning, otherwise base64(last_member)
+        let last_member: Vec<u8> = if cursor == "0" || cursor.is_empty() {
+            Vec::new()
+        } else {
+            STANDARD.decode(cursor).unwrap_or_default()
         };
 
         // For sets, pattern matching works on string representation of members
         let sql = match pattern {
             Some(_) => {
                 "SELECT member FROM sets
-                 WHERE key_id = ?1 AND CAST(member AS TEXT) GLOB ?2
+                 WHERE key_id = ?1 AND member > ?2 AND CAST(member AS TEXT) GLOB ?3
                  ORDER BY member
-                 LIMIT ?3 OFFSET ?4"
+                 LIMIT ?4"
             }
             None => {
                 "SELECT member FROM sets
-                 WHERE key_id = ?1
+                 WHERE key_id = ?1 AND member > ?2
                  ORDER BY member
-                 LIMIT ?2 OFFSET ?3"
+                 LIMIT ?3"
             }
         };
 
@@ -911,56 +954,104 @@ impl Db {
         let rows: Vec<Vec<u8>> = match pattern {
             Some(p) => {
                 let iter = stmt.query_map(
-                    params![key_id, p, count as i64, cursor as i64],
+                    params![key_id, last_member, p, count as i64],
                     |row| row.get(0),
                 )?;
                 iter.filter_map(|r| r.ok()).collect()
             }
             None => {
                 let iter = stmt.query_map(
-                    params![key_id, count as i64, cursor as i64],
+                    params![key_id, last_member, count as i64],
                     |row| row.get(0),
                 )?;
                 iter.filter_map(|r| r.ok()).collect()
             }
         };
 
+        // Calculate next cursor: encode last member or "0" if done
         let next_cursor = if rows.len() < count {
-            0
+            "0".to_string()
+        } else if let Some(last) = rows.last() {
+            STANDARD.encode(last)
         } else {
-            cursor + count as u64
+            "0".to_string()
         };
 
         Ok((next_cursor, rows))
     }
 
     /// ZSCAN key cursor [MATCH pattern] [COUNT count] - cursor-based iteration over sorted set members
+    /// Cursor is a base64-encoded JSON object with score and member, or "0" to start from beginning.
+    /// Format: base64({"s":<score>,"m":"<base64_member>"})
     pub fn zscan(
         &self,
         key: &str,
-        cursor: u64,
+        cursor: &str,
         pattern: Option<&str>,
         count: usize,
-    ) -> Result<(u64, Vec<(Vec<u8>, f64)>)> {
+    ) -> Result<(String, Vec<(Vec<u8>, f64)>)> {
+        use base64::{engine::general_purpose::STANDARD, Engine};
+
         let conn = self.core.conn.lock().unwrap_or_else(|e| e.into_inner());
 
         let key_id = match self.get_zset_key_id(&conn, key)? {
             Some(id) => id,
-            None => return Ok((0, Vec::new())),
+            None => return Ok(("0".to_string(), Vec::new())),
         };
 
+        // Decode cursor: "0" means start from beginning, otherwise base64(json{s:score,m:base64(member)})
+        let (last_score, last_member): (f64, Vec<u8>) = if cursor == "0" || cursor.is_empty() {
+            (f64::NEG_INFINITY, Vec::new())
+        } else {
+            match STANDARD.decode(cursor) {
+                Ok(bytes) => {
+                    // Parse JSON: {"s":<score>,"m":"<base64_member>"}
+                    if let Ok(json_str) = String::from_utf8(bytes) {
+                        // Simple JSON parsing for {"s":1.5,"m":"base64..."}
+                        let score = json_str
+                            .find("\"s\":")
+                            .and_then(|i| {
+                                let start = i + 4;
+                                let rest = &json_str[start..];
+                                let end = rest.find(|c| c == ',' || c == '}').unwrap_or(rest.len());
+                                rest[..end].trim().parse::<f64>().ok()
+                            })
+                            .unwrap_or(f64::NEG_INFINITY);
+                        let member = json_str
+                            .find("\"m\":\"")
+                            .and_then(|i| {
+                                let start = i + 5;
+                                let rest = &json_str[start..];
+                                rest.find('"').and_then(|end| {
+                                    STANDARD.decode(&rest[..end]).ok()
+                                })
+                            })
+                            .unwrap_or_default();
+                        (score, member)
+                    } else {
+                        (f64::NEG_INFINITY, Vec::new())
+                    }
+                }
+                Err(_) => (f64::NEG_INFINITY, Vec::new()),
+            }
+        };
+
+        // Use compound comparison: (score > last_score) OR (score = last_score AND member > last_member)
         let sql = match pattern {
             Some(_) => {
                 "SELECT member, score FROM zsets
-                 WHERE key_id = ?1 AND CAST(member AS TEXT) GLOB ?2
+                 WHERE key_id = ?1
+                 AND (score > ?2 OR (score = ?2 AND member > ?3))
+                 AND CAST(member AS TEXT) GLOB ?4
                  ORDER BY score, member
-                 LIMIT ?3 OFFSET ?4"
+                 LIMIT ?5"
             }
             None => {
                 "SELECT member, score FROM zsets
                  WHERE key_id = ?1
+                 AND (score > ?2 OR (score = ?2 AND member > ?3))
                  ORDER BY score, member
-                 LIMIT ?2 OFFSET ?3"
+                 LIMIT ?4"
             }
         };
 
@@ -969,27 +1060,366 @@ impl Db {
         let rows: Vec<(Vec<u8>, f64)> = match pattern {
             Some(p) => {
                 let iter = stmt.query_map(
-                    params![key_id, p, count as i64, cursor as i64],
+                    params![key_id, last_score, last_member, p, count as i64],
                     |row| Ok((row.get(0)?, row.get(1)?)),
                 )?;
                 iter.filter_map(|r| r.ok()).collect()
             }
             None => {
                 let iter = stmt.query_map(
-                    params![key_id, count as i64, cursor as i64],
+                    params![key_id, last_score, last_member, count as i64],
                     |row| Ok((row.get(0)?, row.get(1)?)),
                 )?;
                 iter.filter_map(|r| r.ok()).collect()
             }
         };
 
+        // Calculate next cursor: encode (score, member) or "0" if done
         let next_cursor = if rows.len() < count {
-            0
+            "0".to_string()
+        } else if let Some((member, score)) = rows.last() {
+            // Encode as JSON: {"s":<score>,"m":"<base64_member>"}
+            let member_b64 = STANDARD.encode(member);
+            let json = format!("{{\"s\":{},\"m\":\"{}\"}}", score, member_b64);
+            STANDARD.encode(json.as_bytes())
         } else {
-            cursor + count as u64
+            "0".to_string()
         };
 
         Ok((next_cursor, rows))
+    }
+
+    // --- Bitmap Operations ---
+
+    /// SETBIT key offset value - Set or clear bit at offset, returns previous value
+    pub fn setbit(&self, key: &str, offset: u64, value: bool) -> Result<i64> {
+        let conn = self.core.conn.lock().unwrap_or_else(|e| e.into_inner());
+        let db = self.selected_db;
+        let now = Self::now_ms();
+
+        let byte_index = (offset / 8) as usize;
+        let bit_index = 7 - (offset % 8) as u8; // Redis counts from MSB
+
+        // Get existing value or create empty
+        let key_info: std::result::Result<(i64, i32, Option<i64>), _> = conn.query_row(
+            "SELECT id, type, expire_at FROM keys WHERE db = ?1 AND key = ?2",
+            params![db, key],
+            |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+        );
+
+        let (key_id, data) = match key_info {
+            Ok((key_id, key_type, expire_at)) => {
+                // Check expiration
+                if let Some(exp) = expire_at {
+                    if exp <= now {
+                        // Key expired - delete inline (atomic, no lock release)
+                        conn.execute("DELETE FROM strings WHERE key_id = ?1", params![key_id])?;
+                        conn.execute("DELETE FROM keys WHERE id = ?1", params![key_id])?;
+                        // Create fresh key while still holding lock
+                        let new_key_id = self.create_string_key(&conn, key, now)?;
+                        return self.setbit_inner(&conn, new_key_id, byte_index, bit_index, value, vec![]);
+                    }
+                }
+                // Check type
+                if key_type != KeyType::String as i32 {
+                    return Err(KvError::WrongType);
+                }
+                // Get current value
+                let data: Vec<u8> = conn
+                    .query_row(
+                        "SELECT value FROM strings WHERE key_id = ?1",
+                        params![key_id],
+                        |row| row.get(0),
+                    )
+                    .unwrap_or_default();
+                (key_id, data)
+            }
+            Err(rusqlite::Error::QueryReturnedNoRows) => {
+                // Create new key
+                let key_id = self.create_string_key(&conn, key, now)?;
+                (key_id, vec![])
+            }
+            Err(e) => return Err(e.into()),
+        };
+
+        self.setbit_inner(&conn, key_id, byte_index, bit_index, value, data)
+    }
+
+    fn create_string_key(&self, conn: &Connection, key: &str, now: i64) -> Result<i64> {
+        let db = self.selected_db;
+        conn.execute(
+            "INSERT INTO keys (db, key, type, updated_at, version) VALUES (?1, ?2, ?3, ?4, 1)",
+            params![db, key, KeyType::String as i32, now],
+        )?;
+        let key_id: i64 = conn.query_row(
+            "SELECT id FROM keys WHERE db = ?1 AND key = ?2",
+            params![db, key],
+            |row| row.get(0),
+        )?;
+        conn.execute(
+            "INSERT INTO strings (key_id, value) VALUES (?1, ?2)",
+            params![key_id, &[] as &[u8]],
+        )?;
+        Ok(key_id)
+    }
+
+    fn setbit_inner(
+        &self,
+        conn: &Connection,
+        key_id: i64,
+        byte_index: usize,
+        bit_index: u8,
+        value: bool,
+        mut data: Vec<u8>,
+    ) -> Result<i64> {
+        // Expand if needed
+        if byte_index >= data.len() {
+            data.resize(byte_index + 1, 0);
+        }
+
+        // Get old bit value
+        let old_bit = (data[byte_index] >> bit_index) & 1;
+
+        // Set new bit value
+        if value {
+            data[byte_index] |= 1 << bit_index;
+        } else {
+            data[byte_index] &= !(1 << bit_index);
+        }
+
+        // Save updated value
+        conn.execute(
+            "UPDATE strings SET value = ?1 WHERE key_id = ?2",
+            params![data, key_id],
+        )?;
+
+        // Update timestamp
+        let now = Self::now_ms();
+        conn.execute(
+            "UPDATE keys SET updated_at = ?1, version = version + 1 WHERE id = ?2",
+            params![now, key_id],
+        )?;
+
+        Ok(old_bit as i64)
+    }
+
+    /// GETBIT key offset - Get bit value at offset
+    pub fn getbit(&self, key: &str, offset: u64) -> Result<i64> {
+        let conn = self.core.conn.lock().unwrap_or_else(|e| e.into_inner());
+        let db = self.selected_db;
+        let now = Self::now_ms();
+
+        let byte_index = (offset / 8) as usize;
+        let bit_index = 7 - (offset % 8) as u8;
+
+        let key_info: std::result::Result<(i64, i32, Option<i64>), _> = conn.query_row(
+            "SELECT id, type, expire_at FROM keys WHERE db = ?1 AND key = ?2",
+            params![db, key],
+            |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+        );
+
+        match key_info {
+            Ok((key_id, key_type, expire_at)) => {
+                // Check expiration
+                if let Some(exp) = expire_at {
+                    if exp <= now {
+                        return Ok(0);
+                    }
+                }
+                // Check type
+                if key_type != KeyType::String as i32 {
+                    return Err(KvError::WrongType);
+                }
+                // Get value
+                let data: Vec<u8> = conn
+                    .query_row(
+                        "SELECT value FROM strings WHERE key_id = ?1",
+                        params![key_id],
+                        |row| row.get(0),
+                    )
+                    .unwrap_or_default();
+
+                if byte_index >= data.len() {
+                    return Ok(0);
+                }
+
+                Ok(((data[byte_index] >> bit_index) & 1) as i64)
+            }
+            Err(rusqlite::Error::QueryReturnedNoRows) => Ok(0),
+            Err(e) => Err(e.into()),
+        }
+    }
+
+    /// BITCOUNT key [start end] - Count set bits in string
+    pub fn bitcount(&self, key: &str, start: Option<i64>, end: Option<i64>) -> Result<i64> {
+        let conn = self.core.conn.lock().unwrap_or_else(|e| e.into_inner());
+        let db = self.selected_db;
+        let now = Self::now_ms();
+
+        let key_info: std::result::Result<(i64, i32, Option<i64>), _> = conn.query_row(
+            "SELECT id, type, expire_at FROM keys WHERE db = ?1 AND key = ?2",
+            params![db, key],
+            |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+        );
+
+        match key_info {
+            Ok((key_id, key_type, expire_at)) => {
+                // Check expiration
+                if let Some(exp) = expire_at {
+                    if exp <= now {
+                        return Ok(0);
+                    }
+                }
+                // Check type
+                if key_type != KeyType::String as i32 {
+                    return Err(KvError::WrongType);
+                }
+                // Get value
+                let data: Vec<u8> = conn
+                    .query_row(
+                        "SELECT value FROM strings WHERE key_id = ?1",
+                        params![key_id],
+                        |row| row.get(0),
+                    )
+                    .unwrap_or_default();
+
+                if data.is_empty() {
+                    return Ok(0);
+                }
+
+                let len = data.len() as i64;
+                let (start_idx, end_idx) = match (start, end) {
+                    (Some(s), Some(e)) => {
+                        let s = if s < 0 { (len + s).max(0) } else { s.min(len) };
+                        let e = if e < 0 { (len + e).max(-1) } else { e.min(len - 1) };
+                        (s as usize, (e + 1) as usize)
+                    }
+                    _ => (0, data.len()),
+                };
+
+                if start_idx >= end_idx || start_idx >= data.len() {
+                    return Ok(0);
+                }
+
+                let count: i64 = data[start_idx..end_idx.min(data.len())]
+                    .iter()
+                    .map(|b| b.count_ones() as i64)
+                    .sum();
+
+                Ok(count)
+            }
+            Err(rusqlite::Error::QueryReturnedNoRows) => Ok(0),
+            Err(e) => Err(e.into()),
+        }
+    }
+
+    /// BITOP operation destkey key [key ...] - Perform bitwise operation
+    pub fn bitop(&self, op: &str, destkey: &str, keys: &[&str]) -> Result<i64> {
+        if keys.is_empty() {
+            return Err(KvError::InvalidArgument("BITOP requires at least one source key".into()));
+        }
+
+        let conn = self.core.conn.lock().unwrap_or_else(|e| e.into_inner());
+        let db = self.selected_db;
+        let now = Self::now_ms();
+
+        // Get all source values
+        let mut values: Vec<Vec<u8>> = Vec::with_capacity(keys.len());
+        let mut max_len = 0usize;
+
+        for key in keys {
+            let key_info: std::result::Result<(i64, i32, Option<i64>), _> = conn.query_row(
+                "SELECT id, type, expire_at FROM keys WHERE db = ?1 AND key = ?2",
+                params![db, key],
+                |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+            );
+
+            let data = match key_info {
+                Ok((key_id, key_type, expire_at)) => {
+                    if let Some(exp) = expire_at {
+                        if exp <= now {
+                            vec![]
+                        } else if key_type != KeyType::String as i32 {
+                            return Err(KvError::WrongType);
+                        } else {
+                            conn.query_row(
+                                "SELECT value FROM strings WHERE key_id = ?1",
+                                params![key_id],
+                                |row| row.get(0),
+                            )
+                            .unwrap_or_default()
+                        }
+                    } else if key_type != KeyType::String as i32 {
+                        return Err(KvError::WrongType);
+                    } else {
+                        conn.query_row(
+                            "SELECT value FROM strings WHERE key_id = ?1",
+                            params![key_id],
+                            |row| row.get(0),
+                        )
+                        .unwrap_or_default()
+                    }
+                }
+                Err(rusqlite::Error::QueryReturnedNoRows) => vec![],
+                Err(e) => return Err(e.into()),
+            };
+            max_len = max_len.max(data.len());
+            values.push(data);
+        }
+
+        // NOT operation only takes one key
+        let op_upper = op.to_uppercase();
+        if op_upper == "NOT" && keys.len() != 1 {
+            return Err(KvError::InvalidArgument(
+                "BITOP NOT requires exactly one source key".into(),
+            ));
+        }
+
+        // Perform operation
+        let result: Vec<u8> = match op_upper.as_str() {
+            "AND" => {
+                let mut result = vec![0xFFu8; max_len];
+                for val in &values {
+                    for (i, byte) in result.iter_mut().enumerate() {
+                        *byte &= val.get(i).copied().unwrap_or(0);
+                    }
+                }
+                result
+            }
+            "OR" => {
+                let mut result = vec![0u8; max_len];
+                for val in &values {
+                    for (i, byte) in result.iter_mut().enumerate() {
+                        *byte |= val.get(i).copied().unwrap_or(0);
+                    }
+                }
+                result
+            }
+            "XOR" => {
+                let mut result = vec![0u8; max_len];
+                for val in &values {
+                    for (i, byte) in result.iter_mut().enumerate() {
+                        *byte ^= val.get(i).copied().unwrap_or(0);
+                    }
+                }
+                result
+            }
+            "NOT" => values[0].iter().map(|b| !b).collect(),
+            _ => {
+                return Err(KvError::InvalidArgument(format!(
+                    "Unknown BITOP operation: {}",
+                    op
+                )))
+            }
+        };
+
+        let result_len = result.len() as i64;
+
+        // Store result
+        drop(conn);
+        self.set(destkey, &result, None)?;
+
+        Ok(result_len)
     }
 
     // --- Session 3: String Operations ---
@@ -4608,6 +5038,219 @@ impl Db {
         }
 
         Ok(removed)
+    }
+
+    /// ZINTERSTORE destination numkeys key [key ...] [WEIGHTS weight...] [AGGREGATE SUM|MIN|MAX]
+    /// Compute intersection of sorted sets and store in destination
+    pub fn zinterstore(
+        &self,
+        destination: &str,
+        keys: &[&str],
+        weights: Option<&[f64]>,
+        aggregate: Option<&str>,
+    ) -> Result<i64> {
+        if keys.is_empty() {
+            return Ok(0);
+        }
+
+        let conn = self.core.conn.lock().unwrap_or_else(|e| e.into_inner());
+        let db = self.selected_db;
+        let now = Self::now_ms();
+
+        // Get weights (default to 1.0 for all)
+        let weights: Vec<f64> = weights
+            .map(|w| w.to_vec())
+            .unwrap_or_else(|| vec![1.0; keys.len()]);
+
+        if weights.len() != keys.len() {
+            return Err(KvError::InvalidArgument(
+                "WEIGHTS count must match number of keys".into(),
+            ));
+        }
+
+        // Determine aggregate function
+        let agg = aggregate.map(|s| s.to_uppercase()).unwrap_or_else(|| "SUM".to_string());
+
+        // Get all members from first set as candidates
+        let first_key_id = match self.get_zset_key_id(&conn, keys[0])? {
+            Some(id) => id,
+            None => {
+                // Empty first set means empty intersection
+                drop(conn);
+                let _ = self.del(&[destination]);
+                return Ok(0);
+            }
+        };
+
+        // Get members from first set with weighted scores
+        let mut stmt = conn.prepare(
+            "SELECT member, score FROM zsets WHERE key_id = ?1"
+        )?;
+        let first_members: Vec<(Vec<u8>, f64)> = stmt
+            .query_map(params![first_key_id], |row| {
+                Ok((row.get::<_, Vec<u8>>(0)?, row.get::<_, f64>(1)?))
+            })?
+            .filter_map(|r| r.ok())
+            .map(|(m, s)| (m, s * weights[0]))
+            .collect();
+        drop(stmt);
+
+        if first_members.is_empty() {
+            drop(conn);
+            let _ = self.del(&[destination]);
+            return Ok(0);
+        }
+
+        // For each candidate member, check if it exists in all other sets
+        let mut result_members: Vec<(Vec<u8>, f64)> = Vec::new();
+
+        for (member, mut score) in first_members {
+            let mut in_all = true;
+
+            for (i, key) in keys.iter().enumerate().skip(1) {
+                let key_id = match self.get_zset_key_id(&conn, key)? {
+                    Some(id) => id,
+                    None => {
+                        in_all = false;
+                        break;
+                    }
+                };
+
+                let member_score: std::result::Result<f64, _> = conn.query_row(
+                    "SELECT score FROM zsets WHERE key_id = ?1 AND member = ?2",
+                    params![key_id, &member],
+                    |row| row.get(0),
+                );
+
+                match member_score {
+                    Ok(s) => {
+                        let weighted_score = s * weights[i];
+                        score = match agg.as_str() {
+                            "SUM" => score + weighted_score,
+                            "MIN" => score.min(weighted_score),
+                            "MAX" => score.max(weighted_score),
+                            _ => score + weighted_score,
+                        };
+                    }
+                    Err(rusqlite::Error::QueryReturnedNoRows) => {
+                        in_all = false;
+                        break;
+                    }
+                    Err(e) => return Err(e.into()),
+                }
+            }
+
+            if in_all {
+                result_members.push((member, score));
+            }
+        }
+
+        drop(conn);
+
+        // Delete existing destination and store results
+        let _ = self.del(&[destination]);
+
+        if result_members.is_empty() {
+            return Ok(0);
+        }
+
+        let zmembers: Vec<ZMember> = result_members
+            .into_iter()
+            .map(|(m, s)| ZMember::new(s, m))
+            .collect();
+
+        let count = zmembers.len() as i64;
+        self.zadd(destination, &zmembers)?;
+
+        Ok(count)
+    }
+
+    /// ZUNIONSTORE destination numkeys key [key ...] [WEIGHTS weight...] [AGGREGATE SUM|MIN|MAX]
+    /// Compute union of sorted sets and store in destination
+    pub fn zunionstore(
+        &self,
+        destination: &str,
+        keys: &[&str],
+        weights: Option<&[f64]>,
+        aggregate: Option<&str>,
+    ) -> Result<i64> {
+        if keys.is_empty() {
+            let _ = self.del(&[destination]);
+            return Ok(0);
+        }
+
+        let conn = self.core.conn.lock().unwrap_or_else(|e| e.into_inner());
+        let db = self.selected_db;
+        let now = Self::now_ms();
+
+        // Get weights (default to 1.0 for all)
+        let weights: Vec<f64> = weights
+            .map(|w| w.to_vec())
+            .unwrap_or_else(|| vec![1.0; keys.len()]);
+
+        if weights.len() != keys.len() {
+            return Err(KvError::InvalidArgument(
+                "WEIGHTS count must match number of keys".into(),
+            ));
+        }
+
+        // Determine aggregate function
+        let agg = aggregate.map(|s| s.to_uppercase()).unwrap_or_else(|| "SUM".to_string());
+
+        // Collect all members with aggregated scores
+        let mut member_scores: std::collections::HashMap<Vec<u8>, f64> = std::collections::HashMap::new();
+
+        for (i, key) in keys.iter().enumerate() {
+            let key_id = match self.get_zset_key_id(&conn, key)? {
+                Some(id) => id,
+                None => continue,
+            };
+
+            let mut stmt = conn.prepare(
+                "SELECT member, score FROM zsets WHERE key_id = ?1"
+            )?;
+            let members: Vec<(Vec<u8>, f64)> = stmt
+                .query_map(params![key_id], |row| {
+                    Ok((row.get::<_, Vec<u8>>(0)?, row.get::<_, f64>(1)?))
+                })?
+                .filter_map(|r| r.ok())
+                .collect();
+            drop(stmt);
+
+            for (member, score) in members {
+                let weighted_score = score * weights[i];
+                member_scores
+                    .entry(member)
+                    .and_modify(|existing| {
+                        *existing = match agg.as_str() {
+                            "SUM" => *existing + weighted_score,
+                            "MIN" => existing.min(weighted_score),
+                            "MAX" => existing.max(weighted_score),
+                            _ => *existing + weighted_score,
+                        };
+                    })
+                    .or_insert(weighted_score);
+            }
+        }
+
+        drop(conn);
+
+        // Delete existing destination and store results
+        let _ = self.del(&[destination]);
+
+        if member_scores.is_empty() {
+            return Ok(0);
+        }
+
+        let zmembers: Vec<ZMember> = member_scores
+            .into_iter()
+            .map(|(m, s)| ZMember::new(s, m))
+            .collect();
+
+        let count = zmembers.len() as i64;
+        self.zadd(destination, &zmembers)?;
+
+        Ok(count)
     }
 
     // --- Session 10: Server Operations ---
@@ -10483,19 +11126,19 @@ mod tests {
             db.set(&format!("key{:02}", i), b"value", None).unwrap();
         }
 
-        // First scan
-        let (cursor, keys) = db.scan(0, None, 10).unwrap();
+        // First scan - keyset pagination uses string cursors
+        let (cursor, keys) = db.scan("0", None, 10).unwrap();
         assert_eq!(keys.len(), 10);
-        assert!(cursor > 0);
+        assert_ne!(cursor, "0"); // Not done yet
 
         // Continue scanning
-        let (cursor2, keys2) = db.scan(cursor, None, 10).unwrap();
+        let (cursor2, keys2) = db.scan(&cursor, None, 10).unwrap();
         assert_eq!(keys2.len(), 10);
 
         // Final scan
-        let (cursor3, keys3) = db.scan(cursor2, None, 10).unwrap();
+        let (cursor3, keys3) = db.scan(&cursor2, None, 10).unwrap();
         assert_eq!(keys3.len(), 5);
-        assert_eq!(cursor3, 0); // Done
+        assert_eq!(cursor3, "0"); // Done
     }
 
     #[test]
@@ -10506,7 +11149,7 @@ mod tests {
         db.set("user:2", b"v", None).unwrap();
         db.set("other:1", b"v", None).unwrap();
 
-        let (_, keys) = db.scan(0, Some("user:*"), 100).unwrap();
+        let (_, keys) = db.scan("0", Some("user:*"), 100).unwrap();
         assert_eq!(keys.len(), 2);
         assert!(keys.contains(&"user:1".to_string()));
         assert!(keys.contains(&"user:2".to_string()));
@@ -10516,8 +11159,8 @@ mod tests {
     fn test_scan_empty() {
         let db = Db::open_memory().unwrap();
 
-        let (cursor, keys) = db.scan(0, None, 10).unwrap();
-        assert_eq!(cursor, 0);
+        let (cursor, keys) = db.scan("0", None, 10).unwrap();
+        assert_eq!(cursor, "0");
         assert!(keys.is_empty());
     }
 
@@ -18247,19 +18890,19 @@ mod tests {
             db.hset("myhash", &[(&format!("field{:02}", i), b"value")]).unwrap();
         }
 
-        // First scan
-        let (cursor, pairs) = db.hscan("myhash", 0, None, 10).unwrap();
+        // First scan - keyset pagination uses string cursors
+        let (cursor, pairs) = db.hscan("myhash", "0", None, 10).unwrap();
         assert_eq!(pairs.len(), 10);
-        assert!(cursor > 0);
+        assert_ne!(cursor, "0"); // Not done yet
 
         // Continue scanning
-        let (cursor2, pairs2) = db.hscan("myhash", cursor, None, 10).unwrap();
+        let (cursor2, pairs2) = db.hscan("myhash", &cursor, None, 10).unwrap();
         assert_eq!(pairs2.len(), 10);
 
         // Final scan
-        let (cursor3, pairs3) = db.hscan("myhash", cursor2, None, 10).unwrap();
+        let (cursor3, pairs3) = db.hscan("myhash", &cursor2, None, 10).unwrap();
         assert_eq!(pairs3.len(), 5);
-        assert_eq!(cursor3, 0); // Done
+        assert_eq!(cursor3, "0"); // Done
     }
 
     #[test]
@@ -18272,7 +18915,7 @@ mod tests {
             ("other:data", b"stuff"),
         ]).unwrap();
 
-        let (_, pairs) = db.hscan("myhash", 0, Some("user:*"), 100).unwrap();
+        let (_, pairs) = db.hscan("myhash", "0", Some("user:*"), 100).unwrap();
         assert_eq!(pairs.len(), 2);
         assert!(pairs.iter().any(|(f, _)| f == "user:name"));
         assert!(pairs.iter().any(|(f, _)| f == "user:email"));
@@ -18283,8 +18926,8 @@ mod tests {
         let db = Db::open_memory().unwrap();
 
         // Non-existent key
-        let (cursor, pairs) = db.hscan("nokey", 0, None, 10).unwrap();
-        assert_eq!(cursor, 0);
+        let (cursor, pairs) = db.hscan("nokey", "0", None, 10).unwrap();
+        assert_eq!(cursor, "0");
         assert!(pairs.is_empty());
     }
 
@@ -18293,7 +18936,7 @@ mod tests {
         let db = Db::open_memory().unwrap();
         db.set("string_key", b"value", None).unwrap();
 
-        let result = db.hscan("string_key", 0, None, 10);
+        let result = db.hscan("string_key", "0", None, 10);
         assert!(matches!(result, Err(KvError::WrongType)));
     }
 
@@ -18322,19 +18965,19 @@ mod tests {
         }).collect();
         db.sadd("myset", &members).unwrap();
 
-        // First scan
-        let (cursor, members) = db.sscan("myset", 0, None, 10).unwrap();
+        // First scan - keyset pagination uses string cursors
+        let (cursor, members) = db.sscan("myset", "0", None, 10).unwrap();
         assert_eq!(members.len(), 10);
-        assert!(cursor > 0);
+        assert_ne!(cursor, "0"); // Not done yet
 
         // Continue scanning
-        let (cursor2, members2) = db.sscan("myset", cursor, None, 10).unwrap();
+        let (cursor2, members2) = db.sscan("myset", &cursor, None, 10).unwrap();
         assert_eq!(members2.len(), 10);
 
         // Final scan
-        let (cursor3, members3) = db.sscan("myset", cursor2, None, 10).unwrap();
+        let (cursor3, members3) = db.sscan("myset", &cursor2, None, 10).unwrap();
         assert_eq!(members3.len(), 5);
-        assert_eq!(cursor3, 0); // Done
+        assert_eq!(cursor3, "0"); // Done
     }
 
     #[test]
@@ -18343,7 +18986,7 @@ mod tests {
 
         db.sadd("myset", &[b"user:alice".as_slice(), b"user:bob", b"other:data"]).unwrap();
 
-        let (_, members) = db.sscan("myset", 0, Some("user:*"), 100).unwrap();
+        let (_, members) = db.sscan("myset", "0", Some("user:*"), 100).unwrap();
         assert_eq!(members.len(), 2);
         assert!(members.contains(&b"user:alice".to_vec()));
         assert!(members.contains(&b"user:bob".to_vec()));
@@ -18353,8 +18996,8 @@ mod tests {
     fn test_sscan_empty() {
         let db = Db::open_memory().unwrap();
 
-        let (cursor, members) = db.sscan("nokey", 0, None, 10).unwrap();
-        assert_eq!(cursor, 0);
+        let (cursor, members) = db.sscan("nokey", "0", None, 10).unwrap();
+        assert_eq!(cursor, "0");
         assert!(members.is_empty());
     }
 
@@ -18363,7 +19006,7 @@ mod tests {
         let db = Db::open_memory().unwrap();
         db.set("string_key", b"value", None).unwrap();
 
-        let result = db.sscan("string_key", 0, None, 10);
+        let result = db.sscan("string_key", "0", None, 10);
         assert!(matches!(result, Err(KvError::WrongType)));
     }
 
@@ -18378,18 +19021,18 @@ mod tests {
         db.zadd("myzset", &members).unwrap();
 
         // First scan
-        let (cursor, pairs) = db.zscan("myzset", 0, None, 10).unwrap();
+        let (cursor, pairs) = db.zscan("myzset", "0", None, 10).unwrap();
         assert_eq!(pairs.len(), 10);
-        assert!(cursor > 0);
+        assert!(cursor != "0");
 
         // Continue scanning
-        let (cursor2, pairs2) = db.zscan("myzset", cursor, None, 10).unwrap();
+        let (cursor2, pairs2) = db.zscan("myzset", &cursor, None, 10).unwrap();
         assert_eq!(pairs2.len(), 10);
 
         // Final scan
-        let (cursor3, pairs3) = db.zscan("myzset", cursor2, None, 10).unwrap();
+        let (cursor3, pairs3) = db.zscan("myzset", &cursor2, None, 10).unwrap();
         assert_eq!(pairs3.len(), 5);
-        assert_eq!(cursor3, 0); // Done
+        assert_eq!(cursor3, "0"); // Done
     }
 
     #[test]
@@ -18402,7 +19045,7 @@ mod tests {
             ZMember::new(3.0, b"other:data".to_vec()),
         ]).unwrap();
 
-        let (_, pairs) = db.zscan("myzset", 0, Some("user:*"), 100).unwrap();
+        let (_, pairs) = db.zscan("myzset", "0", Some("user:*"), 100).unwrap();
         assert_eq!(pairs.len(), 2);
         assert!(pairs.iter().any(|(m, _)| m == b"user:alice"));
         assert!(pairs.iter().any(|(m, _)| m == b"user:bob"));
@@ -18412,8 +19055,8 @@ mod tests {
     fn test_zscan_empty() {
         let db = Db::open_memory().unwrap();
 
-        let (cursor, pairs) = db.zscan("nokey", 0, None, 10).unwrap();
-        assert_eq!(cursor, 0);
+        let (cursor, pairs) = db.zscan("nokey", "0", None, 10).unwrap();
+        assert_eq!(cursor, "0");
         assert!(pairs.is_empty());
     }
 
@@ -18422,7 +19065,7 @@ mod tests {
         let db = Db::open_memory().unwrap();
         db.set("string_key", b"value", None).unwrap();
 
-        let result = db.zscan("string_key", 0, None, 10);
+        let result = db.zscan("string_key", "0", None, 10);
         assert!(matches!(result, Err(KvError::WrongType)));
     }
 
@@ -18436,13 +19079,359 @@ mod tests {
             ZMember::new(3.5, b"c".to_vec()),
         ]).unwrap();
 
-        let (_, pairs) = db.zscan("myzset", 0, None, 10).unwrap();
+        let (_, pairs) = db.zscan("myzset", "0", None, 10).unwrap();
         assert_eq!(pairs.len(), 3);
 
         // Verify scores are returned correctly (ordered by score)
         assert_eq!(pairs[0], (b"a".to_vec(), 1.5));
         assert_eq!(pairs[1], (b"b".to_vec(), 2.5));
         assert_eq!(pairs[2], (b"c".to_vec(), 3.5));
+    }
+
+    // --- Bitmap operations tests ---
+
+    #[test]
+    fn test_setbit_getbit_basic() {
+        let db = Db::open_memory().unwrap();
+
+        // Set bit at offset 7 (last bit of first byte)
+        let old = db.setbit("mykey", 7, true).unwrap();
+        assert_eq!(old, 0); // Was 0
+
+        // Get it back
+        assert_eq!(db.getbit("mykey", 7).unwrap(), 1);
+
+        // Set bit at offset 0 (first bit of first byte)
+        let old = db.setbit("mykey", 0, true).unwrap();
+        assert_eq!(old, 0);
+        assert_eq!(db.getbit("mykey", 0).unwrap(), 1);
+
+        // Clear bit at offset 7
+        let old = db.setbit("mykey", 7, false).unwrap();
+        assert_eq!(old, 1); // Was 1
+        assert_eq!(db.getbit("mykey", 7).unwrap(), 0);
+    }
+
+    #[test]
+    fn test_setbit_expands_string() {
+        let db = Db::open_memory().unwrap();
+
+        // Set bit at offset 100 (byte 12)
+        db.setbit("mykey", 100, true).unwrap();
+
+        // String should have expanded
+        let val = db.get("mykey").unwrap().unwrap();
+        assert_eq!(val.len(), 13); // 0-12 = 13 bytes
+
+        // Bit should be set
+        assert_eq!(db.getbit("mykey", 100).unwrap(), 1);
+
+        // Other bits should be 0
+        assert_eq!(db.getbit("mykey", 0).unwrap(), 0);
+        assert_eq!(db.getbit("mykey", 99).unwrap(), 0);
+        assert_eq!(db.getbit("mykey", 101).unwrap(), 0);
+    }
+
+    #[test]
+    fn test_getbit_nonexistent() {
+        let db = Db::open_memory().unwrap();
+
+        // Nonexistent key returns 0
+        assert_eq!(db.getbit("nokey", 0).unwrap(), 0);
+        assert_eq!(db.getbit("nokey", 1000).unwrap(), 0);
+    }
+
+    #[test]
+    fn test_getbit_beyond_length() {
+        let db = Db::open_memory().unwrap();
+
+        db.set("mykey", b"a", None).unwrap(); // 1 byte
+
+        // Bit beyond string length returns 0
+        assert_eq!(db.getbit("mykey", 100).unwrap(), 0);
+    }
+
+    #[test]
+    fn test_bitcount_basic() {
+        let db = Db::open_memory().unwrap();
+
+        // "foobar" in binary has specific number of 1 bits
+        db.set("mykey", b"foobar", None).unwrap();
+        let count = db.bitcount("mykey", None, None).unwrap();
+        assert_eq!(count, 26); // f=4, o=6, o=6, b=3, a=3, r=4 = 26
+
+        // Count in range
+        let count = db.bitcount("mykey", Some(0), Some(0)).unwrap();
+        assert_eq!(count, 4); // 'f' has 4 bits set
+
+        // Count in range (byte 1)
+        let count = db.bitcount("mykey", Some(1), Some(1)).unwrap();
+        assert_eq!(count, 6); // 'o' has 6 bits set
+    }
+
+    #[test]
+    fn test_bitcount_negative_indices() {
+        let db = Db::open_memory().unwrap();
+
+        db.set("mykey", b"foobar", None).unwrap();
+
+        // Last byte
+        let count = db.bitcount("mykey", Some(-1), Some(-1)).unwrap();
+        assert_eq!(count, 4); // 'r' has 4 bits set
+
+        // Last two bytes
+        let count = db.bitcount("mykey", Some(-2), Some(-1)).unwrap();
+        assert_eq!(count, 7); // 'a' + 'r' = 3 + 4 = 7
+    }
+
+    #[test]
+    fn test_bitcount_nonexistent() {
+        let db = Db::open_memory().unwrap();
+        assert_eq!(db.bitcount("nokey", None, None).unwrap(), 0);
+    }
+
+    #[test]
+    fn test_bitop_and() {
+        let db = Db::open_memory().unwrap();
+
+        db.set("key1", &[0xFF, 0xF0], None).unwrap();
+        db.set("key2", &[0x0F, 0xFF], None).unwrap();
+
+        let len = db.bitop("AND", "dest", &["key1", "key2"]).unwrap();
+        assert_eq!(len, 2);
+
+        let result = db.get("dest").unwrap().unwrap();
+        assert_eq!(result, vec![0x0F, 0xF0]);
+    }
+
+    #[test]
+    fn test_bitop_or() {
+        let db = Db::open_memory().unwrap();
+
+        db.set("key1", &[0xF0, 0x00], None).unwrap();
+        db.set("key2", &[0x0F, 0x0F], None).unwrap();
+
+        let len = db.bitop("OR", "dest", &["key1", "key2"]).unwrap();
+        assert_eq!(len, 2);
+
+        let result = db.get("dest").unwrap().unwrap();
+        assert_eq!(result, vec![0xFF, 0x0F]);
+    }
+
+    #[test]
+    fn test_bitop_xor() {
+        let db = Db::open_memory().unwrap();
+
+        db.set("key1", &[0xFF, 0x00], None).unwrap();
+        db.set("key2", &[0x0F, 0x0F], None).unwrap();
+
+        let len = db.bitop("XOR", "dest", &["key1", "key2"]).unwrap();
+        assert_eq!(len, 2);
+
+        let result = db.get("dest").unwrap().unwrap();
+        assert_eq!(result, vec![0xF0, 0x0F]);
+    }
+
+    #[test]
+    fn test_bitop_not() {
+        let db = Db::open_memory().unwrap();
+
+        db.set("key1", &[0x00, 0xFF], None).unwrap();
+
+        let len = db.bitop("NOT", "dest", &["key1"]).unwrap();
+        assert_eq!(len, 2);
+
+        let result = db.get("dest").unwrap().unwrap();
+        assert_eq!(result, vec![0xFF, 0x00]);
+    }
+
+    #[test]
+    fn test_bitop_different_lengths() {
+        let db = Db::open_memory().unwrap();
+
+        db.set("key1", &[0xFF, 0xFF, 0xFF], None).unwrap();
+        db.set("key2", &[0x0F], None).unwrap();
+
+        let len = db.bitop("AND", "dest", &["key1", "key2"]).unwrap();
+        assert_eq!(len, 3);
+
+        let result = db.get("dest").unwrap().unwrap();
+        // key2 is padded with zeros for AND
+        assert_eq!(result, vec![0x0F, 0x00, 0x00]);
+    }
+
+    #[test]
+    fn test_bitop_nonexistent_keys() {
+        let db = Db::open_memory().unwrap();
+
+        db.set("key1", &[0xFF], None).unwrap();
+
+        // Nonexistent key treated as empty (zeros)
+        let len = db.bitop("AND", "dest", &["key1", "nokey"]).unwrap();
+        assert_eq!(len, 1);
+
+        let result = db.get("dest").unwrap().unwrap();
+        assert_eq!(result, vec![0x00]); // AND with zeros = zeros
+    }
+
+    // --- ZINTERSTORE and ZUNIONSTORE tests ---
+
+    #[test]
+    fn test_zinterstore_basic() {
+        let db = Db::open_memory().unwrap();
+
+        db.zadd("zset1", &[
+            ZMember::new(1.0, b"a".to_vec()),
+            ZMember::new(2.0, b"b".to_vec()),
+            ZMember::new(3.0, b"c".to_vec()),
+        ]).unwrap();
+
+        db.zadd("zset2", &[
+            ZMember::new(10.0, b"b".to_vec()),
+            ZMember::new(20.0, b"c".to_vec()),
+            ZMember::new(30.0, b"d".to_vec()),
+        ]).unwrap();
+
+        // Intersection: b and c are in both
+        let count = db.zinterstore("dest", &["zset1", "zset2"], None, None).unwrap();
+        assert_eq!(count, 2);
+
+        // Scores are summed by default
+        assert_eq!(db.zscore("dest", b"b").unwrap(), Some(12.0)); // 2 + 10
+        assert_eq!(db.zscore("dest", b"c").unwrap(), Some(23.0)); // 3 + 20
+        assert!(db.zscore("dest", b"a").unwrap().is_none());
+        assert!(db.zscore("dest", b"d").unwrap().is_none());
+    }
+
+    #[test]
+    fn test_zinterstore_with_weights() {
+        let db = Db::open_memory().unwrap();
+
+        db.zadd("zset1", &[
+            ZMember::new(1.0, b"a".to_vec()),
+            ZMember::new(2.0, b"b".to_vec()),
+        ]).unwrap();
+
+        db.zadd("zset2", &[
+            ZMember::new(10.0, b"a".to_vec()),
+            ZMember::new(20.0, b"b".to_vec()),
+        ]).unwrap();
+
+        let count = db.zinterstore("dest", &["zset1", "zset2"], Some(&[2.0, 3.0]), None).unwrap();
+        assert_eq!(count, 2);
+
+        // Weighted scores: a = 1*2 + 10*3 = 32, b = 2*2 + 20*3 = 64
+        assert_eq!(db.zscore("dest", b"a").unwrap(), Some(32.0));
+        assert_eq!(db.zscore("dest", b"b").unwrap(), Some(64.0));
+    }
+
+    #[test]
+    fn test_zinterstore_aggregate_min() {
+        let db = Db::open_memory().unwrap();
+
+        db.zadd("zset1", &[ZMember::new(5.0, b"a".to_vec())]).unwrap();
+        db.zadd("zset2", &[ZMember::new(10.0, b"a".to_vec())]).unwrap();
+
+        let count = db.zinterstore("dest", &["zset1", "zset2"], None, Some("MIN")).unwrap();
+        assert_eq!(count, 1);
+        assert_eq!(db.zscore("dest", b"a").unwrap(), Some(5.0));
+    }
+
+    #[test]
+    fn test_zinterstore_aggregate_max() {
+        let db = Db::open_memory().unwrap();
+
+        db.zadd("zset1", &[ZMember::new(5.0, b"a".to_vec())]).unwrap();
+        db.zadd("zset2", &[ZMember::new(10.0, b"a".to_vec())]).unwrap();
+
+        let count = db.zinterstore("dest", &["zset1", "zset2"], None, Some("MAX")).unwrap();
+        assert_eq!(count, 1);
+        assert_eq!(db.zscore("dest", b"a").unwrap(), Some(10.0));
+    }
+
+    #[test]
+    fn test_zinterstore_empty_result() {
+        let db = Db::open_memory().unwrap();
+
+        db.zadd("zset1", &[ZMember::new(1.0, b"a".to_vec())]).unwrap();
+        db.zadd("zset2", &[ZMember::new(1.0, b"b".to_vec())]).unwrap();
+
+        // No common members
+        let count = db.zinterstore("dest", &["zset1", "zset2"], None, None).unwrap();
+        assert_eq!(count, 0);
+    }
+
+    #[test]
+    fn test_zunionstore_basic() {
+        let db = Db::open_memory().unwrap();
+
+        db.zadd("zset1", &[
+            ZMember::new(1.0, b"a".to_vec()),
+            ZMember::new(2.0, b"b".to_vec()),
+        ]).unwrap();
+
+        db.zadd("zset2", &[
+            ZMember::new(10.0, b"b".to_vec()),
+            ZMember::new(20.0, b"c".to_vec()),
+        ]).unwrap();
+
+        // Union: a, b, c
+        let count = db.zunionstore("dest", &["zset1", "zset2"], None, None).unwrap();
+        assert_eq!(count, 3);
+
+        assert_eq!(db.zscore("dest", b"a").unwrap(), Some(1.0));
+        assert_eq!(db.zscore("dest", b"b").unwrap(), Some(12.0)); // 2 + 10
+        assert_eq!(db.zscore("dest", b"c").unwrap(), Some(20.0));
+    }
+
+    #[test]
+    fn test_zunionstore_with_weights() {
+        let db = Db::open_memory().unwrap();
+
+        db.zadd("zset1", &[ZMember::new(1.0, b"a".to_vec())]).unwrap();
+        db.zadd("zset2", &[ZMember::new(2.0, b"a".to_vec())]).unwrap();
+
+        let count = db.zunionstore("dest", &["zset1", "zset2"], Some(&[2.0, 3.0]), None).unwrap();
+        assert_eq!(count, 1);
+
+        // Weighted: 1*2 + 2*3 = 8
+        assert_eq!(db.zscore("dest", b"a").unwrap(), Some(8.0));
+    }
+
+    #[test]
+    fn test_zunionstore_aggregate_min() {
+        let db = Db::open_memory().unwrap();
+
+        db.zadd("zset1", &[ZMember::new(5.0, b"a".to_vec())]).unwrap();
+        db.zadd("zset2", &[ZMember::new(10.0, b"a".to_vec())]).unwrap();
+
+        let count = db.zunionstore("dest", &["zset1", "zset2"], None, Some("MIN")).unwrap();
+        assert_eq!(count, 1);
+        assert_eq!(db.zscore("dest", b"a").unwrap(), Some(5.0));
+    }
+
+    #[test]
+    fn test_zunionstore_aggregate_max() {
+        let db = Db::open_memory().unwrap();
+
+        db.zadd("zset1", &[ZMember::new(5.0, b"a".to_vec())]).unwrap();
+        db.zadd("zset2", &[ZMember::new(10.0, b"a".to_vec())]).unwrap();
+
+        let count = db.zunionstore("dest", &["zset1", "zset2"], None, Some("MAX")).unwrap();
+        assert_eq!(count, 1);
+        assert_eq!(db.zscore("dest", b"a").unwrap(), Some(10.0));
+    }
+
+    #[test]
+    fn test_zunionstore_nonexistent_keys() {
+        let db = Db::open_memory().unwrap();
+
+        db.zadd("zset1", &[ZMember::new(1.0, b"a".to_vec())]).unwrap();
+
+        // Union with nonexistent key
+        let count = db.zunionstore("dest", &["zset1", "nokey"], None, None).unwrap();
+        assert_eq!(count, 1);
+        assert_eq!(db.zscore("dest", b"a").unwrap(), Some(1.0));
     }
 
 }

@@ -432,6 +432,11 @@ async fn execute_command(
         "GETDEL" => cmd_getdel(db, cmd_args),
         "SETEX" => cmd_setex(db, cmd_args),
         "PSETEX" => cmd_psetex(db, cmd_args),
+        // Bitmap operations
+        "SETBIT" => cmd_setbit(db, cmd_args),
+        "GETBIT" => cmd_getbit(db, cmd_args),
+        "BITCOUNT" => cmd_bitcount(db, cmd_args),
+        "BITOP" => cmd_bitop(db, cmd_args),
         // Hash operations
         "HSET" => cmd_hset(db, cmd_args),
         "HGET" => cmd_hget(db, cmd_args),
@@ -492,6 +497,8 @@ async fn execute_command(
         "ZINCRBY" => cmd_zincrby(db, cmd_args),
         "ZREMRANGEBYRANK" => cmd_zremrangebyrank(db, cmd_args),
         "ZREMRANGEBYSCORE" => cmd_zremrangebyscore(db, cmd_args),
+        "ZINTERSTORE" => cmd_zinterstore(db, cmd_args),
+        "ZUNIONSTORE" => cmd_zunionstore(db, cmd_args),
         // Custom commands
         "VACUUM" => cmd_vacuum(db),
         "KEYINFO" => cmd_keyinfo(db, cmd_args),
@@ -1091,13 +1098,10 @@ fn cmd_scan(db: &Db, args: &[Vec<u8>]) -> RespValue {
         return RespValue::error("wrong number of arguments for 'scan' command");
     }
 
-    // Parse cursor
-    let cursor: u64 = match std::str::from_utf8(&args[0])
-        .ok()
-        .and_then(|s| s.parse().ok())
-    {
-        Some(c) => c,
-        None => return RespValue::error("invalid cursor"),
+    // Parse cursor as string (keyset pagination uses base64-encoded cursors)
+    let cursor = match std::str::from_utf8(&args[0]) {
+        Ok(c) => c,
+        Err(_) => return RespValue::error("invalid cursor"),
     };
 
     // Parse optional MATCH and COUNT arguments
@@ -1143,7 +1147,7 @@ fn cmd_scan(db: &Db, args: &[Vec<u8>]) -> RespValue {
                 .map(|k| RespValue::BulkString(Some(k.into_bytes())))
                 .collect();
             RespValue::Array(Some(vec![
-                RespValue::BulkString(Some(next_cursor.to_string().into_bytes())),
+                RespValue::BulkString(Some(next_cursor.into_bytes())),
                 RespValue::Array(Some(keys_array)),
             ]))
         }
@@ -1161,12 +1165,10 @@ fn cmd_hscan(db: &Db, args: &[Vec<u8>]) -> RespValue {
         Err(_) => return RespValue::error("invalid key"),
     };
 
-    let cursor: u64 = match std::str::from_utf8(&args[1])
-        .ok()
-        .and_then(|s| s.parse().ok())
-    {
-        Some(c) => c,
-        None => return RespValue::error("invalid cursor"),
+    // Parse cursor as string (keyset pagination uses base64-encoded cursors)
+    let cursor = match std::str::from_utf8(&args[1]) {
+        Ok(c) => c,
+        Err(_) => return RespValue::error("invalid cursor"),
     };
 
     let mut pattern: Option<&str> = None;
@@ -1213,7 +1215,7 @@ fn cmd_hscan(db: &Db, args: &[Vec<u8>]) -> RespValue {
                 items.push(RespValue::BulkString(Some(value)));
             }
             RespValue::Array(Some(vec![
-                RespValue::BulkString(Some(next_cursor.to_string().into_bytes())),
+                RespValue::BulkString(Some(next_cursor.into_bytes())),
                 RespValue::Array(Some(items)),
             ]))
         }
@@ -1232,12 +1234,10 @@ fn cmd_sscan(db: &Db, args: &[Vec<u8>]) -> RespValue {
         Err(_) => return RespValue::error("invalid key"),
     };
 
-    let cursor: u64 = match std::str::from_utf8(&args[1])
-        .ok()
-        .and_then(|s| s.parse().ok())
-    {
-        Some(c) => c,
-        None => return RespValue::error("invalid cursor"),
+    // Parse cursor as string (keyset pagination uses base64-encoded cursors)
+    let cursor = match std::str::from_utf8(&args[1]) {
+        Ok(c) => c,
+        Err(_) => return RespValue::error("invalid cursor"),
     };
 
     let mut pattern: Option<&str> = None;
@@ -1282,7 +1282,7 @@ fn cmd_sscan(db: &Db, args: &[Vec<u8>]) -> RespValue {
                 .map(|m| RespValue::BulkString(Some(m)))
                 .collect();
             RespValue::Array(Some(vec![
-                RespValue::BulkString(Some(next_cursor.to_string().into_bytes())),
+                RespValue::BulkString(Some(next_cursor.into_bytes())),
                 RespValue::Array(Some(items)),
             ]))
         }
@@ -1301,12 +1301,10 @@ fn cmd_zscan(db: &Db, args: &[Vec<u8>]) -> RespValue {
         Err(_) => return RespValue::error("invalid key"),
     };
 
-    let cursor: u64 = match std::str::from_utf8(&args[1])
-        .ok()
-        .and_then(|s| s.parse().ok())
-    {
-        Some(c) => c,
-        None => return RespValue::error("invalid cursor"),
+    // Parse cursor as string (keyset pagination uses base64-encoded cursors)
+    let cursor = match std::str::from_utf8(&args[1]) {
+        Ok(c) => c,
+        Err(_) => return RespValue::error("invalid cursor"),
     };
 
     let mut pattern: Option<&str> = None;
@@ -1353,10 +1351,139 @@ fn cmd_zscan(db: &Db, args: &[Vec<u8>]) -> RespValue {
                 items.push(RespValue::BulkString(Some(score.to_string().into_bytes())));
             }
             RespValue::Array(Some(vec![
-                RespValue::BulkString(Some(next_cursor.to_string().into_bytes())),
+                RespValue::BulkString(Some(next_cursor.into_bytes())),
                 RespValue::Array(Some(items)),
             ]))
         }
+        Err(KvError::WrongType) => RespValue::wrong_type(),
+        Err(e) => RespValue::error(e.to_string()),
+    }
+}
+
+// --- Bitmap operations ---
+
+fn cmd_setbit(db: &Db, args: &[Vec<u8>]) -> RespValue {
+    if args.len() != 3 {
+        return RespValue::error("wrong number of arguments for 'setbit' command");
+    }
+
+    let key = match std::str::from_utf8(&args[0]) {
+        Ok(k) => k,
+        Err(_) => return RespValue::error("invalid key"),
+    };
+
+    let offset: u64 = match std::str::from_utf8(&args[1])
+        .ok()
+        .and_then(|s| s.parse().ok())
+    {
+        Some(o) => o,
+        None => return RespValue::error("bit offset is not an integer or out of range"),
+    };
+
+    let value: bool = match std::str::from_utf8(&args[2])
+        .ok()
+        .and_then(|s| s.parse::<i64>().ok())
+    {
+        Some(0) => false,
+        Some(1) => true,
+        _ => return RespValue::error("bit is not an integer or out of range"),
+    };
+
+    match db.setbit(key, offset, value) {
+        Ok(old) => RespValue::Integer(old),
+        Err(KvError::WrongType) => RespValue::wrong_type(),
+        Err(e) => RespValue::error(e.to_string()),
+    }
+}
+
+fn cmd_getbit(db: &Db, args: &[Vec<u8>]) -> RespValue {
+    if args.len() != 2 {
+        return RespValue::error("wrong number of arguments for 'getbit' command");
+    }
+
+    let key = match std::str::from_utf8(&args[0]) {
+        Ok(k) => k,
+        Err(_) => return RespValue::error("invalid key"),
+    };
+
+    let offset: u64 = match std::str::from_utf8(&args[1])
+        .ok()
+        .and_then(|s| s.parse().ok())
+    {
+        Some(o) => o,
+        None => return RespValue::error("bit offset is not an integer or out of range"),
+    };
+
+    match db.getbit(key, offset) {
+        Ok(bit) => RespValue::Integer(bit),
+        Err(KvError::WrongType) => RespValue::wrong_type(),
+        Err(e) => RespValue::error(e.to_string()),
+    }
+}
+
+fn cmd_bitcount(db: &Db, args: &[Vec<u8>]) -> RespValue {
+    if args.is_empty() {
+        return RespValue::error("wrong number of arguments for 'bitcount' command");
+    }
+
+    let key = match std::str::from_utf8(&args[0]) {
+        Ok(k) => k,
+        Err(_) => return RespValue::error("invalid key"),
+    };
+
+    let (start, end) = if args.len() >= 3 {
+        let start: i64 = match std::str::from_utf8(&args[1])
+            .ok()
+            .and_then(|s| s.parse().ok())
+        {
+            Some(s) => s,
+            None => return RespValue::error("value is not an integer or out of range"),
+        };
+        let end: i64 = match std::str::from_utf8(&args[2])
+            .ok()
+            .and_then(|s| s.parse().ok())
+        {
+            Some(e) => e,
+            None => return RespValue::error("value is not an integer or out of range"),
+        };
+        (Some(start), Some(end))
+    } else {
+        (None, None)
+    };
+
+    match db.bitcount(key, start, end) {
+        Ok(count) => RespValue::Integer(count),
+        Err(KvError::WrongType) => RespValue::wrong_type(),
+        Err(e) => RespValue::error(e.to_string()),
+    }
+}
+
+fn cmd_bitop(db: &Db, args: &[Vec<u8>]) -> RespValue {
+    if args.len() < 3 {
+        return RespValue::error("wrong number of arguments for 'bitop' command");
+    }
+
+    let operation = match std::str::from_utf8(&args[0]) {
+        Ok(op) => op,
+        Err(_) => return RespValue::error("invalid operation"),
+    };
+
+    let destkey = match std::str::from_utf8(&args[1]) {
+        Ok(k) => k,
+        Err(_) => return RespValue::error("invalid destination key"),
+    };
+
+    let keys: Vec<&str> = args[2..]
+        .iter()
+        .filter_map(|a| std::str::from_utf8(a).ok())
+        .collect();
+
+    if keys.len() != args.len() - 2 {
+        return RespValue::error("invalid key");
+    }
+
+    match db.bitop(operation, destkey, &keys) {
+        Ok(len) => RespValue::Integer(len),
         Err(KvError::WrongType) => RespValue::wrong_type(),
         Err(e) => RespValue::error(e.to_string()),
     }
@@ -3596,6 +3723,166 @@ fn cmd_zremrangebyscore(db: &Db, args: &[Vec<u8>]) -> RespValue {
     };
 
     match db.zremrangebyscore(key, min, max) {
+        Ok(count) => RespValue::Integer(count),
+        Err(KvError::WrongType) => RespValue::wrong_type(),
+        Err(e) => RespValue::error(e.to_string()),
+    }
+}
+
+fn cmd_zinterstore(db: &Db, args: &[Vec<u8>]) -> RespValue {
+    // ZINTERSTORE destination numkeys key [key ...] [WEIGHTS weight...] [AGGREGATE SUM|MIN|MAX]
+    if args.len() < 3 {
+        return RespValue::error("wrong number of arguments for 'zinterstore' command");
+    }
+
+    let destination = match std::str::from_utf8(&args[0]) {
+        Ok(k) => k,
+        Err(_) => return RespValue::error("invalid destination key"),
+    };
+
+    let numkeys: usize = match std::str::from_utf8(&args[1])
+        .ok()
+        .and_then(|s| s.parse().ok())
+    {
+        Some(n) => n,
+        None => return RespValue::error("value is not an integer or out of range"),
+    };
+
+    if numkeys == 0 || args.len() < 2 + numkeys {
+        return RespValue::error("wrong number of arguments for 'zinterstore' command");
+    }
+
+    let keys: Vec<&str> = args[2..2 + numkeys]
+        .iter()
+        .filter_map(|a| std::str::from_utf8(a).ok())
+        .collect();
+
+    if keys.len() != numkeys {
+        return RespValue::error("invalid key");
+    }
+
+    // Parse optional WEIGHTS and AGGREGATE
+    let mut weights: Option<Vec<f64>> = None;
+    let mut aggregate: Option<&str> = None;
+    let mut i = 2 + numkeys;
+
+    while i < args.len() {
+        let opt = String::from_utf8_lossy(&args[i]).to_uppercase();
+        match opt.as_str() {
+            "WEIGHTS" => {
+                i += 1;
+                let mut w = Vec::with_capacity(numkeys);
+                for _ in 0..numkeys {
+                    if i >= args.len() {
+                        return RespValue::error("syntax error");
+                    }
+                    match std::str::from_utf8(&args[i])
+                        .ok()
+                        .and_then(|s| s.parse().ok())
+                    {
+                        Some(weight) => w.push(weight),
+                        None => return RespValue::error("weight is not a float"),
+                    }
+                    i += 1;
+                }
+                weights = Some(w);
+            }
+            "AGGREGATE" => {
+                i += 1;
+                if i >= args.len() {
+                    return RespValue::error("syntax error");
+                }
+                match std::str::from_utf8(&args[i]) {
+                    Ok(agg) => aggregate = Some(agg),
+                    Err(_) => return RespValue::error("invalid aggregate"),
+                }
+                i += 1;
+            }
+            _ => return RespValue::error("syntax error"),
+        }
+    }
+
+    match db.zinterstore(destination, &keys, weights.as_deref(), aggregate) {
+        Ok(count) => RespValue::Integer(count),
+        Err(KvError::WrongType) => RespValue::wrong_type(),
+        Err(e) => RespValue::error(e.to_string()),
+    }
+}
+
+fn cmd_zunionstore(db: &Db, args: &[Vec<u8>]) -> RespValue {
+    // ZUNIONSTORE destination numkeys key [key ...] [WEIGHTS weight...] [AGGREGATE SUM|MIN|MAX]
+    if args.len() < 3 {
+        return RespValue::error("wrong number of arguments for 'zunionstore' command");
+    }
+
+    let destination = match std::str::from_utf8(&args[0]) {
+        Ok(k) => k,
+        Err(_) => return RespValue::error("invalid destination key"),
+    };
+
+    let numkeys: usize = match std::str::from_utf8(&args[1])
+        .ok()
+        .and_then(|s| s.parse().ok())
+    {
+        Some(n) => n,
+        None => return RespValue::error("value is not an integer or out of range"),
+    };
+
+    if numkeys == 0 || args.len() < 2 + numkeys {
+        return RespValue::error("wrong number of arguments for 'zunionstore' command");
+    }
+
+    let keys: Vec<&str> = args[2..2 + numkeys]
+        .iter()
+        .filter_map(|a| std::str::from_utf8(a).ok())
+        .collect();
+
+    if keys.len() != numkeys {
+        return RespValue::error("invalid key");
+    }
+
+    // Parse optional WEIGHTS and AGGREGATE
+    let mut weights: Option<Vec<f64>> = None;
+    let mut aggregate: Option<&str> = None;
+    let mut i = 2 + numkeys;
+
+    while i < args.len() {
+        let opt = String::from_utf8_lossy(&args[i]).to_uppercase();
+        match opt.as_str() {
+            "WEIGHTS" => {
+                i += 1;
+                let mut w = Vec::with_capacity(numkeys);
+                for _ in 0..numkeys {
+                    if i >= args.len() {
+                        return RespValue::error("syntax error");
+                    }
+                    match std::str::from_utf8(&args[i])
+                        .ok()
+                        .and_then(|s| s.parse().ok())
+                    {
+                        Some(weight) => w.push(weight),
+                        None => return RespValue::error("weight is not a float"),
+                    }
+                    i += 1;
+                }
+                weights = Some(w);
+            }
+            "AGGREGATE" => {
+                i += 1;
+                if i >= args.len() {
+                    return RespValue::error("syntax error");
+                }
+                match std::str::from_utf8(&args[i]) {
+                    Ok(agg) => aggregate = Some(agg),
+                    Err(_) => return RespValue::error("invalid aggregate"),
+                }
+                i += 1;
+            }
+            _ => return RespValue::error("syntax error"),
+        }
+    }
+
+    match db.zunionstore(destination, &keys, weights.as_deref(), aggregate) {
         Ok(count) => RespValue::Integer(count),
         Err(KvError::WrongType) => RespValue::wrong_type(),
         Err(e) => RespValue::error(e.to_string()),
@@ -7931,6 +8218,11 @@ async fn execute_command_in_transaction(db: &mut Db, args: &[Vec<u8>]) -> RespVa
         "GETDEL" => cmd_getdel(db, cmd_args),
         "SETEX" => cmd_setex(db, cmd_args),
         "PSETEX" => cmd_psetex(db, cmd_args),
+        // Bitmap operations
+        "SETBIT" => cmd_setbit(db, cmd_args),
+        "GETBIT" => cmd_getbit(db, cmd_args),
+        "BITCOUNT" => cmd_bitcount(db, cmd_args),
+        "BITOP" => cmd_bitop(db, cmd_args),
         // Hash operations
         "HSET" => cmd_hset(db, cmd_args),
         "HGET" => cmd_hget(db, cmd_args),
@@ -7989,6 +8281,8 @@ async fn execute_command_in_transaction(db: &mut Db, args: &[Vec<u8>]) -> RespVa
         "ZINCRBY" => cmd_zincrby(db, cmd_args),
         "ZREMRANGEBYRANK" => cmd_zremrangebyrank(db, cmd_args),
         "ZREMRANGEBYSCORE" => cmd_zremrangebyscore(db, cmd_args),
+        "ZINTERSTORE" => cmd_zinterstore(db, cmd_args),
+        "ZUNIONSTORE" => cmd_zunionstore(db, cmd_args),
         // Custom commands
         "VACUUM" => cmd_vacuum(db),
         "AUTOVACUUM" => cmd_autovacuum(db, cmd_args),
