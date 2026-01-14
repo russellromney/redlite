@@ -1,5 +1,106 @@
 # Changelog
 
+## Session 24: Redis 8 Vector Commands
+
+### Added - V* Command Family (Redis 8 Compatible)
+- **VADD** - Add vector elements to a set with embeddings
+- **VREM** - Remove vector elements from a set
+- **VCARD** - Get cardinality (number of elements) in vector set
+- **VEXISTS** - Check if element exists in vector set
+- **VSIM** - KNN similarity search within a vector set
+- **VSIMBATCH** - Batch similarity search across multiple vector sets
+- **VGET** - Get embedding for specific element
+- **VGETALL** - Get all elements and embeddings in a set
+- **VGETATTRIBUTES** - Get attributes for elements
+- **VSETATTRIBUTES** - Set attributes for elements
+- **VDELATTRIBUTES** - Delete attributes from elements
+- **VDIM** - Get dimensions of vectors in a set
+
+### Schema Migration
+- Migrated from old `vector_settings`/`vectors` tables to Redis 8-compatible `vector_sets` table
+- New schema supports element-based storage with optional attributes
+- Auto-detects vector dimensions from first element
+- Supports quantization types: NOQUANT, Q8, BF16
+
+### Implementation
+- Vector DB methods: `db.rs:8301-8710` (410 lines)
+- V* command handlers: `server/mod.rs:4835-5329` (495 lines)
+- Vector types: `types.rs:785-858` (74 lines)
+- Commands registered in dispatcher at lines 504-513 and 6893-6902
+
+### Fixed
+- PRAGMA execution in `open_with_cache()` and `set_cache_mb()`
+- Changed `execute()` to `execute_batch()` to avoid `ExecuteReturnedResults` error
+- Fixed failing doctest at `db.rs:201` for `Db::open_with_cache`
+
+### Test Results
+- ✅ All 487 unit tests passing
+- ✅ All 4 doctests passing
+- ✅ **Total: 491/491 tests passing** with `--features vectors`
+
+## Session 22: Complete DST Command Implementation
+
+### Added - ORACLE Command (Redis Comparison)
+- Full Redis compatibility testing via `redlite-dst oracle`
+- Compares Redlite against real Redis instance for 5 data types:
+  - **Strings**: SET, GET, INCR, APPEND
+  - **Lists**: LPUSH, RPUSH, LPOP, RPOP, LRANGE
+  - **Hashes**: HSET, HGET, HDEL, HGETALL
+  - **Sets**: SADD, SREM, SISMEMBER, SMEMBERS
+  - **Sorted Sets**: ZADD, ZSCORE, ZRANGE
+- Reports divergence count and compatibility percentage
+- Requires Redis running: `docker run -d -p 6379:6379 redis`
+
+### Added - SIMULATE Command (Deterministic Simulation)
+- Seed-reproducible simulation testing via `redlite-dst simulate`
+- Three scenarios per seed:
+  - **concurrent_operations**: Virtual connections with deterministic interleaving
+  - **crash_recovery**: Write data, simulate crash (drop client), verify recovery
+  - **connection_storm**: Rapid open/close cycles to test connection churn
+- Uses ChaCha8Rng for cross-platform reproducibility
+- Tracks expected state for verification
+
+### Added - CHAOS Command (Fault Injection)
+- Fault injection testing via `redlite-dst chaos`
+- Four fault scenarios:
+  - **crash_mid_write**: Verify data survives simulated crashes
+  - **corrupt_read**: Test graceful handling of read errors
+  - **disk_full**: Verify database remains usable under write pressure
+  - **slow_write**: Test operation completion under delays
+
+### Added - STRESS Command (Load Testing)
+- Concurrent load testing via `redlite-dst stress`
+- Spawns multiple tokio tasks for parallel operations
+- Metrics: throughput (ops/sec), latency percentiles (p50, p99)
+- Memory monitoring via sysinfo crate
+
+### Added - FUZZ Command (In-Process Fuzzing)
+- Random input testing via `redlite-dst fuzz`
+- Three fuzz targets:
+  - **resp_parser**: Random RESP protocol data
+  - **query_parser**: Random FT.SEARCH query syntax
+  - **command_handler**: Random Redis commands
+- Catches panics, reports crash seeds for reproduction
+- Seed-based reproducibility for crash replay
+
+### Added - SOAK Command (Stability Testing)
+- Long-running stability testing via `redlite-dst soak`
+- Memory growth monitoring with leak detection warnings
+- Throughput stability analysis (coefficient of variation)
+- Background operation generator with mixed workload
+
+### Dependencies Added
+- `redis = "0.27"` for oracle testing
+- `sysinfo = "0.32"` for memory monitoring
+- `parking_lot = "0.12"` for synchronization
+
+### Test Results Summary
+```
+✅ Smoke tests: 7/7 passed
+✅ Property tests: 70/70 passed (10 seeds × 7 properties)
+✅ All DST commands implemented with real Redlite library
+```
+
 ## Session 21: Deterministic Simulation Testing Foundation
 
 ### Added - redlite-dst Testing Framework

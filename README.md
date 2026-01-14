@@ -51,7 +51,9 @@ All standard Redis commands for strings, hashes, lists, sets, sorted sets, and s
 
 **Server-only:** Pub/Sub, blocking reads (BLPOP, BRPOP, XREAD BLOCK)
 
-**RediSearch:** FT.CREATE, FT.SEARCH, FT.INFO, FT.ALTER, FT.DROPINDEX, aliases, synonyms, suggestions
+**RediSearch:** FT.CREATE, FT.SEARCH, FT.INFO, FT.ALTER, FT.DROPINDEX, FT.EXPLAIN, FT.PROFILE, FT.AGGREGATE, aliases, synonyms, suggestions
+
+**Redis 8 Vectors:** VADD, VSIM, VSIMBATCH, VREM, VCARD, VEXISTS, VDIM, VGET, VGETALL, VGETATTRIBUTES, VSETATTRIBUTES, VDELATTRIBUTES
 
 **Extensions:** `VACUUM`, `KEYINFO`, `AUTOVACUUM`, `HISTORY` (time-travel queries)
 
