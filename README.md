@@ -75,6 +75,19 @@ Embedded mode eliminates network overhead:
 
 Tune with `--cache` for near-memory reads with SQLite durability.
 
+## Testing
+
+Redlite includes a comprehensive deterministic simulation testing framework ([redlite-dst](./redlite-dst)) inspired by TigerBeetle VOPR and sled simulation:
+
+```bash
+cd redlite-dst
+cargo run -- smoke              # Quick sanity checks
+cargo run -- properties         # Property-based tests
+cargo run -- seeds test         # Regression seed bank
+```
+
+Every test failure includes a reproducible seed for debugging.
+
 ## Backups
 
 Use [walsync](https://github.com/russellromney/walsync) or [Litestream](https://litestream.io) for continuous backups.

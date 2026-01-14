@@ -316,6 +316,80 @@ Uses SQLite Geopoly for polygon contains/intersects operations. R*Tree handles M
 - HSCAN, SSCAN, ZSCAN
 - ZINTERSTORE, ZUNIONSTORE
 
+### Session 27: Battle Testing (Deterministic Simulation)
+
+**Goal**: Make redlite Jepsen-proof before public release.
+
+**See [BATTLE_TESTING.md](./BATTLE_TESTING.md) for full details.**
+
+Inspired by [sled](https://sled.rs/simulation.html), [TigerBeetle VOPR](https://github.com/tigerbeetle/tigerbeetle/blob/main/docs/internals/vopr.md), and [MadSim](https://github.com/madsim-rs/madsim).
+
+#### Phase 1: Property-Based Testing + Fuzzing (Session 27.1)
+- [ ] Add `proptest`, `arbitrary`, `libfuzzer-sys` dependencies
+- [ ] Create `tests/properties.rs`
+- [ ] Properties: `set_get_roundtrip`, `incr_atomic`, `list_ordering`, `set_uniqueness`
+- [ ] Properties: `zset_score_ordering`, `hash_field_roundtrip`, `stream_id_monotonic`
+- [ ] Properties: `expire_respected`, `watch_conflict_aborts`, `multi_exec_atomic`
+- [ ] Create `fuzz/` targets for RESP parser and FT.SEARCH query parser
+- [ ] Create `tests/regression_seeds.txt` — permanent seed bank for found bugs
+- [ ] Verify: `PROPTEST_CASES=10000 cargo test properties`
+- [ ] Verify: `cargo +nightly fuzz run resp_parser` (10 min no crash)
+- [ ] Verify: `cargo +nightly miri test` (no UB in unsafe blocks)
+
+#### Phase 2: Redis Oracle (Session 27.2)
+- [ ] Add `redis` crate as dev dependency
+- [ ] Create `tests/oracle.rs`
+- [ ] Test groups: Strings, Lists, Hashes, Sets, Sorted Sets, Keys
+- [ ] Assert identical results for identical operation sequences
+- [ ] Verify: `docker run -d redis && cargo test oracle`
+
+#### Phase 3: MadSim Integration (Session 27.3)
+- [ ] Add `madsim`, `madsim-tokio` dependencies (cfg-gated)
+- [ ] Create `tests/simulation.rs`
+- [ ] Tests: `concurrent_operations`, `crash_recovery`, `connection_storm`, `pubsub_delivery`
+- [ ] Seed-based reproducibility for all failures
+- [ ] Verify: `RUSTFLAGS="--cfg madsim" cargo test simulation`
+
+#### Phase 4: Storage Fault Injection (Session 27.4)
+- [ ] Create `src/storage.rs` with `StorageBackend` trait
+- [ ] Implement `SqliteStorage` (production) and `FaultStorage<S>` (testing)
+- [ ] Faults: `DiskFull`, `CorruptedRead`, `SlowWrite`, `RandomFailure`
+- [ ] Minimal refactor to `db.rs` to use trait
+
+#### Phase 5: redlite-dst Project (Session 27.5) - ✅ PARTIALLY COMPLETE
+- [x] Create `redlite-dst/` crate — standalone DST suite (like redlite-bench)
+- [x] Wire up actual redlite library (replaced in-memory mock)
+- [x] Implement 7 smoke tests with real operation verification
+- [x] Implement seed management: `seeds list`, `seeds add`, `seeds test`
+- [x] All property tests working with real Redlite (70/70 passed)
+- [ ] CLI commands: `oracle`, `simulate`, `chaos`, `stress`, `fuzz`, `soak`, `cloud`
+- [ ] Spec-driven scenarios in `spec/scenarios.yaml`
+- [ ] JSON + Markdown report output
+- [ ] README with badges (seeds tested, redis compat %, fuzz time)
+
+#### Phase 6: Soak Testing + Extras (Session 27.6)
+- [ ] `redlite-dst soak --duration 24h` — long-running stability test
+- [ ] Monitor: RSS memory, open FDs, disk usage over time
+- [ ] Fail if memory grows unbounded (leak detection)
+- [ ] `make sanitize` — run with AddressSanitizer + ThreadSanitizer
+- [ ] `make coverage` — generate coverage report with cargo-llvm-cov
+
+#### Phase 7: Fly.io Cloud Testing (Session 27.7)
+- [ ] `redlite-dst cloud --seeds 1M --machines 10`
+- [ ] Add `Dockerfile`, `fly.toml` for ephemeral machines
+- [ ] Parallel seed ranges across machines
+- [ ] Aggregate results from all machines
+- [ ] Cost target: ~$0.03 per 100K seeds
+
+#### Success Criteria (Pre-HN Launch)
+- [ ] 100K+ seeds pass property tests
+- [ ] Zero divergences from Redis oracle (common commands)
+- [ ] Crash recovery verified with fault injection
+- [ ] 1M key scale tested without OOM
+- [ ] 1000 connection scale without deadlock
+- [ ] 24h soak test with stable memory (no leaks)
+- [ ] 10min fuzz with no crashes (RESP + query parser)
+
 ### Future
 
 - In-memory mode with periodic snapshots (like Redis RDB)
@@ -327,6 +401,7 @@ Uses SQLite Geopoly for polygon contains/intersects operations. R*Tree handles M
 - Lua scripting (EVAL/EVALSHA)
 - XAUTOCLAIM
 - ACL system
+- Nightly CI for battle tests (`.github/workflows/battle-test.yml`, 1M seeds)
 
 ## Not Planned
 

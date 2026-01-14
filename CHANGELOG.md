@@ -1,5 +1,92 @@
 # Changelog
 
+## Session 21: Deterministic Simulation Testing Foundation
+
+### Added - redlite-dst Testing Framework
+- Created `redlite-dst/` crate for deterministic simulation testing
+- Integrated actual Redlite library (replaced in-memory mock)
+- Implemented 7 comprehensive smoke tests:
+  - `basic_set_get` - SET/GET roundtrip validation
+  - `basic_incr_decr` - INCR/DECR monotonicity checks
+  - `basic_list_ops` - LPUSH/RPUSH/LRANGE/LPOP verification
+  - `basic_hash_ops` - HSET/HGET/HGETALL validation
+  - `basic_set_ops` - SADD/SMEMBERS/SISMEMBER checks
+  - `basic_sorted_set` - ZADD/ZRANGE/ZSCORE ordering verification
+  - `basic_persistence` - File-backed database recovery testing
+- All smoke tests: **7/7 passing** (34ms)
+
+### Added - Regression Seed Management
+- `redlite-dst seeds list` - Display all regression seeds
+- `redlite-dst seeds add` - Add failing seeds with descriptions to permanent bank
+- `redlite-dst seeds test` - Replay all regression seeds with property tests
+- Seed file format: `SEED TEST_TYPE DESCRIPTION` in `tests/regression_seeds.txt`
+
+### Added - Property-Based Testing
+- 7 properties testing core Redis operations:
+  - `set_get_roundtrip` - SET k v; GET k => v
+  - `incr_is_monotonic` - INCR always increases
+  - `list_order_preserved` - LPUSH/RPUSH preserve order
+  - `hash_fields_unique` - Hash field updates work correctly
+  - `sorted_set_ordering` - ZRANGE returns sorted results
+  - `expire_removes_key` - TTL/expiration behavior
+  - `crash_recovery_consistent` - Persistence verification
+- All property tests: **70/70 passing** (223ms, 10 seeds × 7 properties)
+
+### Infrastructure
+- Added tempfile dependency for persistence testing
+- Created `.gitignore` for redlite-dst target directory
+- Updated README with testing framework section
+- Updated ROADMAP marking Phase 5 partially complete
+
+### Test Results Summary
+```
+✅ Smoke tests: 7/7 passed (34ms)
+✅ Property tests: 70/70 passed (223ms)
+✅ Regression seeds: 1/1 passed (80ms)
+```
+
+## Session 20: Monorepo & Multi-Language SDKs
+
+### Changed - Monorepo Migration
+- **BREAKING**: Reorganized into monorepo structure
+  - Rust core moved to `crates/redlite/`
+  - Python SDK moved to `bindings/python/`
+  - TypeScript SDK added at `bindings/node/`
+- Fixed Rust build: Disabled turso backend in server mode
+- Updated all SDK build scripts to reference monorepo paths
+
+### Added - TypeScript/Node SDK
+- Created `@redlite/node` package with full feature parity
+- Embedded mode with binary bundling (darwin-arm64, darwin-x86_64, linux-x86_64, win32-x86_64)
+- Extends ioredis for full Redis compatibility
+- FTS namespace implementation
+- Works with both Node.js and Bun
+- Vitest test suite with embedded mode support
+
+### Added - Python SDK Enhancements
+- Binary bundling infrastructure with platform-specific builds
+- Updated build scripts for monorepo structure
+- Maturin-ready for future PyO3 optimization
+- 98 unit tests passing (including embedded mode)
+
+### Added - Documentation System
+- LLM-powered doc generation templates
+- Language-agnostic pseudocode template (`docs/templates/sdk-guide.template.md`)
+- Focus on use cases: "Embedded Redis + SQLite durability"
+- Emphasizes CLI/desktop/serverless use cases over feature lists
+
+### Infrastructure
+- Unified GitHub Actions CI workflow (`monorepo-ci.yml`)
+- Cross-platform binary builds (macOS, Linux, Windows)
+- Automated SDK testing with real binaries
+- Root-level Makefile for building all SDKs
+- Migration guide (`MONOREPO_MIGRATION.md`)
+
+### Roadmap Updates
+- Async client for Python: Decided to skip for v1 (use run_in_executor)
+- SDK priority: TypeScript ✅, WASM (Q1 2026), Go (Q2), Kotlin (Q2)
+- Documentation approach: Template-based, LLM-assisted generation
+
 ## Sessions 1-23.2 (Complete)
 
 ### Benchmark Suite Enhancements
