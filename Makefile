@@ -130,6 +130,31 @@ smoke:
 	@redis-cli -p 6379 QUIT
 	@echo "Smoke test passed!"
 
+# SDK Generation
+sdk-commands:
+	@echo "# Redlite Supported Commands" > sdks/COMMANDS.md
+	@echo "" >> sdks/COMMANDS.md
+	@echo "Auto-generated from \`crates/redlite/src/server/mod.rs\`" >> sdks/COMMANDS.md
+	@echo "" >> sdks/COMMANDS.md
+	@echo "## Command List" >> sdks/COMMANDS.md
+	@echo "" >> sdks/COMMANDS.md
+	@grep -oE '"[A-Z][A-Z0-9._]+" => cmd_' crates/redlite/src/server/mod.rs \
+		| sed 's/" => cmd_//' | sed 's/"//' | sort -u \
+		| while read cmd; do echo "- \`$$cmd\`"; done >> sdks/COMMANDS.md
+	@echo "" >> sdks/COMMANDS.md
+	@echo "**Total:** $$(grep -c '`' sdks/COMMANDS.md) commands" >> sdks/COMMANDS.md
+	@echo "Generated sdks/COMMANDS.md"
+
+sdk-update:
+	@test -n "$(lang)" || (echo "Usage: make sdk-update lang=<python|go|...>" && exit 1)
+	@echo "Updating $(lang) SDK..."
+	claude -c "Update sdks/$(lang)/ to implement all commands in sdks/COMMANDS.md. Follow sdks/TEMPLATE.md for README style. Generate idiomatic $(lang) code that wraps a Redis client."
+
+sdk-sync: sdk-commands
+	@echo "Syncing all SDKs..."
+	@make sdk-update lang=python || true
+	@make sdk-update lang=go || true
+
 help:
 	@echo "Available targets:"
 	@echo "  build             - Build debug binary"
@@ -152,4 +177,7 @@ help:
 	@echo "  check             - Run fmt-check + lint + test-unit"
 	@echo "  clean             - Clean build artifacts and DB files"
 	@echo "  docs              - Generate and open documentation"
+	@echo "  sdk-commands      - Generate sdks/COMMANDS.md from Rust source"
+	@echo "  sdk-update lang=X - Update SDK for language X using Claude"
+	@echo "  sdk-sync          - Update all SDKs"
 	@echo "  help              - Show this help"
