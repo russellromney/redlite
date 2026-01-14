@@ -321,12 +321,13 @@ Inspired by [sled](https://sled.rs/simulation.html), [TigerBeetle VOPR](https://
 
 #### Phase 2: Redis Oracle (Session 27.2) - COMPLETE
 - [x] Add `redis` crate as dev dependency
-- [x] Create `tests/oracle.rs` with 24 comprehensive tests
-- [x] Test groups: Strings, Lists, Hashes, Sets, Sorted Sets, Keys
+- [x] Create `tests/oracle.rs` with 66 comprehensive tests
+- [x] Test groups: Strings, Lists, Hashes, Sets, Sorted Sets, Keys, Streams, Bitmaps
 - [x] Assert identical results for identical operation sequences
 - [x] Verify: `redis-server & cargo test --test oracle -- --test-threads=1`
 - [x] Tests: Basic operations, random operations, comprehensive mixed operations
-- [x] All 24 oracle tests passing with zero divergences
+- [x] All 66 oracle tests passing with zero divergences
+- [ ] TODO: Expand to cover all 121 commands with type mismatch tests
 
 #### Phase 3: MadSim Integration (Session 27.3) - ✅ COMPLETE
 - [x] Add `madsim`, `madsim-tokio` dependencies (cfg-gated)

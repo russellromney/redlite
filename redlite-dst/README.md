@@ -53,8 +53,8 @@ redlite-dst oracle --redis localhost:6379 --ops 1000
 # Run oracle integration tests (sequential required)
 cargo test --test oracle -- --test-threads=1
 
-# Tests 6 data types: strings, lists, hashes, sets, sorted_sets, keys
-# 24 comprehensive tests with zero divergences
+# Tests 8 data types: strings, lists, hashes, sets, sorted_sets, keys, streams, bitmaps
+# 66 comprehensive tests with zero divergences
 # Reports divergence count and compatibility percentage
 ```
 
