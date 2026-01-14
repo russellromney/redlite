@@ -126,6 +126,28 @@ impl RedliteClient {
         Ok(self.db.ttl(key)?)
     }
 
+    // Key operations
+    pub fn exists(&self, keys: &[&str]) -> Result<usize> {
+        Ok(self.db.exists(keys)? as usize)
+    }
+
+    pub fn del(&mut self, keys: &[&str]) -> Result<usize> {
+        Ok(self.db.del(keys)? as usize)
+    }
+
+    pub fn key_type(&self, key: &str) -> Result<Option<String>> {
+        Ok(self.db.key_type(key)?.map(|t| format!("{:?}", t).to_lowercase()))
+    }
+
+    pub fn keys(&self, pattern: &str) -> Result<Vec<String>> {
+        Ok(self.db.keys(pattern)?)
+    }
+
+    pub fn rename(&mut self, key: &str, newkey: &str) -> Result<()> {
+        self.db.rename(key, newkey)?;
+        Ok(())
+    }
+
     // Cleanup
     pub fn flush(&mut self) -> Result<()> {
         self.db.flushdb()?;

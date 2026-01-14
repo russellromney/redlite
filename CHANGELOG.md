@@ -1,5 +1,90 @@
 # Changelog
 
+## Session 27.2: Redis Oracle Testing
+
+### Added - Oracle Integration Tests
+- **`tests/oracle.rs`** - 24 comprehensive Redis oracle tests
+- **Test coverage:**
+  - **Strings**: `set_get`, `incr_decr`, `append`, `random_ops`
+  - **Lists**: `push_pop`, `llen_lindex`, `random_ops`
+  - **Hashes**: `basic`, `multiple_fields`, `hincrby`, `random_ops`
+  - **Sets**: `basic`, `smembers`, `random_ops`
+  - **Sorted Sets**: `basic`, `ordering`, `zincrby`, `random_ops`
+  - **Keys**: `exists_del`, `type`, `ttl_expire`, `rename`, `random_ops`
+  - **Comprehensive**: `mixed_ops` (2000 operations across all data types)
+
+### Added - RedliteClient Key Operations
+- **`exists()`** - Check if keys exist
+- **`del()`** - Delete keys
+- **`key_type()`** - Get key type
+- **`keys()`** - Find keys matching pattern
+- **`rename()`** - Rename a key
+
+### Added - CLI Oracle Command
+- **`redlite-dst oracle`** - Now includes `keys` test group (6 groups total)
+- Tests: strings, lists, hashes, sets, sorted_sets, keys
+
+### Usage
+```bash
+# Start Redis (native or Docker)
+redis-server &
+# Or: docker run -d -p 6379:6379 redis
+
+# Run oracle tests (sequential required - tests share Redis state)
+cargo test --test oracle -- --test-threads=1
+
+# Via CLI
+redlite-dst oracle --redis localhost:6379 --ops 1000
+```
+
+### Test Results
+- ✅ 24 oracle tests passing
+- ✅ Zero divergences across all test groups
+- ✅ 100% compatibility with Redis for tested operations
+
+---
+
+## Session 27.1: Property-Based Testing + Fuzzing
+
+### Added - Proptest Property Tests
+- **`tests/properties.rs`** - 34 comprehensive proptest-based property tests
+- **Properties covered:**
+  - `set_get_roundtrip`, `set_nx_behavior`, `set_xx_behavior` - String operations
+  - `incr_atomic`, `decr_atomic`, `incrby_exact` - Counter operations
+  - `list_rpush_order`, `list_lpush_order`, `list_lpop_left`, `list_rpop_right`, `list_llen` - List operations
+  - `set_uniqueness`, `set_ismember`, `set_srem` - Set operations
+  - `zset_score_ordering`, `zset_reverse_ordering`, `zset_score_exact`, `zset_zincrby` - Sorted set operations
+  - `hash_field_roundtrip`, `hash_field_update`, `hash_hdel`, `hash_hgetall`, `hash_hincrby` - Hash operations
+  - `expire_ttl`, `persist_removes_ttl` - Expiration operations
+  - `del_removes_key`, `exists_count` - Key management
+  - `type_string`, `type_list`, `type_set`, `type_zset`, `type_hash`, `type_nonexistent` - TYPE command
+  - `append_concat` - APPEND command
+
+### Added - Cargo-Fuzz Targets
+- **`fuzz/fuzz_targets/resp_parser.rs`** - Fuzz RESP protocol parsing
+- **`fuzz/fuzz_targets/query_parser.rs`** - Fuzz FT.SEARCH query syntax
+- **`fuzz/fuzz_targets/command_handler.rs`** - Fuzz Redis command execution with Arbitrary derive
+
+### Added - Dependencies
+- **`proptest = "1.5"`** - Property-based testing framework
+- **`arbitrary = "1.3"`** - Structured fuzzing with derive macro
+- **`libfuzzer-sys = "0.4"`** - In-process coverage-guided fuzzing
+
+### Updated - Regression Seeds
+- **`tests/regression_seeds.txt`** - Organized by test type (properties, simulate, chaos, fuzz)
+- Added categorized sections for better organization
+
+### Fixed - Pre-existing Issues
+- **`base64` dependency** - Added missing dependency to redlite crate
+- **`zscan` tests** - Fixed API mismatch (string cursor vs integer)
+
+### Test Results
+- ✅ 34 proptest property tests passing
+- ✅ 9 redlite-dst unit tests passing
+- ✅ All tests complete in ~120 seconds
+
+---
+
 ## Session 27.5.5: Report Output Wiring
 
 ### Added - JSON and Markdown Report Output

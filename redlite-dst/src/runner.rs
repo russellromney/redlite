@@ -379,6 +379,7 @@ impl TestRunner {
             ("hashes", Self::oracle_test_hashes),
             ("sets", Self::oracle_test_sets),
             ("sorted_sets", Self::oracle_test_sorted_sets),
+            ("keys", Self::oracle_test_keys),
         ];
 
         let pb = self.progress_bar(test_groups.len() as u64, "Running oracle tests...");
@@ -753,6 +754,58 @@ impl TestRunner {
                     let redlite_vals = redlite.zrange(&key, 0, -1)?;
                     let redis_vals: Vec<Vec<u8>> = redis.zrange(&key, 0, -1)?;
                     if redlite_vals != redis_vals {
+                        stats.divergences += 1;
+                    }
+                }
+            }
+            stats.operations += 1;
+        }
+
+        Ok(stats)
+    }
+
+    fn oracle_test_keys(
+        redlite: &mut RedliteClient,
+        redis: &mut redis::Connection,
+        rng: &mut rand_chacha::ChaCha8Rng,
+        ops: usize,
+    ) -> Result<OracleStats> {
+        use rand::Rng;
+        use redis::Commands;
+        let mut stats = OracleStats::new();
+
+        for _ in 0..ops {
+            let key = format!("key_{}", rng.gen_range(0..10));
+            let op = rng.gen_range(0..4);
+
+            match op {
+                0 => {
+                    // SET (to create keys)
+                    let value: Vec<u8> = format!("value_{}", rng.gen::<u32>()).into_bytes();
+                    redlite.set(&key, value.clone())?;
+                    let _: () = redis.set(&key, &value)?;
+                }
+                1 => {
+                    // EXISTS
+                    let redlite_res = redlite.exists(&[&key])?;
+                    let redis_res: usize = redis.exists(&key)?;
+                    if redlite_res != redis_res {
+                        stats.divergences += 1;
+                    }
+                }
+                2 => {
+                    // DEL
+                    let redlite_res = redlite.del(&[&key])?;
+                    let redis_res: usize = redis.del(&key)?;
+                    if redlite_res != redis_res {
+                        stats.divergences += 1;
+                    }
+                }
+                _ => {
+                    // TTL
+                    let redlite_ttl = redlite.ttl(&key)?;
+                    let redis_ttl: i64 = redis.ttl(&key)?;
+                    if redlite_ttl != redis_ttl {
                         stats.divergences += 1;
                     }
                 }

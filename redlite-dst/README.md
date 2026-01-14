@@ -43,13 +43,18 @@ cargo run -- full
 #### ORACLE - Redis Compatibility Testing
 Compare Redlite behavior against a real Redis instance:
 ```bash
-# Start Redis first
-docker run -d -p 6379:6379 redis
+# Start Redis first (native or Docker)
+redis-server &
+# Or: docker run -d -p 6379:6379 redis
 
-# Run oracle tests
-redlite-dst oracle --redis localhost:6379 --ops 100
+# Run oracle tests via CLI
+redlite-dst oracle --redis localhost:6379 --ops 1000
 
-# Tests 5 data types: strings, lists, hashes, sets, sorted_sets
+# Run oracle integration tests (sequential required)
+cargo test --test oracle -- --test-threads=1
+
+# Tests 6 data types: strings, lists, hashes, sets, sorted_sets, keys
+# 24 comprehensive tests with zero divergences
 # Reports divergence count and compatibility percentage
 ```
 
