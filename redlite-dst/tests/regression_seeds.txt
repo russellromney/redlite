@@ -1,0 +1,10 @@
+# Regression Seeds for redlite-dst
+# Format: SEED TEST_TYPE DESCRIPTION
+#
+# These seeds represent previously discovered bugs.
+# Run `redlite-dst seeds test` to verify all regressions stay fixed.
+#
+# Example:
+# 8675309 simulate SET/GET inconsistency under concurrent writes
+# 1234567 chaos Crash recovery failed with disk_full fault
+12345 properties Test seed for verification

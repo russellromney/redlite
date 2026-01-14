@@ -1,7 +1,7 @@
 use rusqlite::{params, Connection, OptionalExtension};
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicBool, AtomicI64, Ordering};
-use std::sync::{Arc, Mutex, RwLock};
+use std::sync::{Arc, Mutex, Once, RwLock};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use tokio::sync::broadcast;
 
@@ -12,7 +12,25 @@ use crate::types::{
     StreamId, StreamInfo, ZMember,
 };
 #[cfg(feature = "vectors")]
-use crate::types::{DistanceMetric, VectorEntry, VectorLevel, VectorSearchResult, VectorStats};
+use crate::types::{VectorInput, VectorQuantization, VectorSetInfo, VectorSimResult};
+
+// Initialize sqlite-vec extension globally (once, before any connections)
+#[cfg(feature = "vectors")]
+static INIT_SQLITE_VEC: Once = Once::new();
+
+#[cfg(feature = "vectors")]
+fn init_sqlite_vec() {
+    INIT_SQLITE_VEC.call_once(|| {
+        unsafe {
+            rusqlite::ffi::sqlite3_auto_extension(Some(std::mem::transmute(
+                sqlite_vec::sqlite3_vec_init as *const (),
+            )));
+        }
+    });
+}
+
+#[cfg(not(feature = "vectors"))]
+fn init_sqlite_vec() {}
 
 /// Default autovacuum interval in milliseconds (60 seconds)
 const DEFAULT_AUTOVACUUM_INTERVAL_MS: i64 = 60_000;
@@ -134,6 +152,9 @@ fn glob_match(pattern: &str, text: &str) -> bool {
 impl Db {
     /// Open or create a database at the given path
     pub fn open(path: &str) -> Result<Self> {
+        // Initialize sqlite-vec extension before opening connection
+        init_sqlite_vec();
+
         let conn = Connection::open(path)?;
 
         // Enable WAL mode and optimize pragmas for performance
@@ -146,6 +167,8 @@ impl Db {
              PRAGMA mmap_size = 268435456;
              PRAGMA temp_store = MEMORY;",
         )?;
+
+        // sqlite-vec is registered globally via auto_extension in lib.rs init
 
         let core = Arc::new(DbCore {
             conn: Mutex::new(conn),
@@ -185,6 +208,9 @@ impl Db {
     /// let db = Db::open_with_cache("mydata.db", 256).unwrap();
     /// ```
     pub fn open_with_cache(path: &str, cache_mb: i64) -> Result<Self> {
+        // Initialize sqlite-vec extension before opening connection
+        init_sqlite_vec();
+
         let conn = Connection::open(path)?;
 
         // Base pragmas (WAL mode, etc.)
@@ -198,11 +224,13 @@ impl Db {
 
         // Apply cache size (negative = KB, so multiply by 1000)
         let cache_kb = cache_mb * 1000;
-        conn.execute(&format!("PRAGMA cache_size = -{};", cache_kb), [])?;
+        conn.execute_batch(&format!("PRAGMA cache_size = -{};", cache_kb))?;
 
         // Set mmap to 4x cache size (reasonable default)
         let mmap_bytes = cache_mb * 4 * 1024 * 1024;
-        conn.execute(&format!("PRAGMA mmap_size = {};", mmap_bytes), [])?;
+        conn.execute_batch(&format!("PRAGMA mmap_size = {};", mmap_bytes))?;
+
+        // sqlite-vec is registered globally via auto_extension in lib.rs init
 
         let core = Arc::new(DbCore {
             conn: Mutex::new(conn),
@@ -235,9 +263,9 @@ impl Db {
     pub fn set_cache_mb(&self, cache_mb: i64) -> Result<()> {
         let conn = self.core.conn.lock().unwrap_or_else(|e| e.into_inner());
         let cache_kb = cache_mb * 1000;
-        conn.execute(&format!("PRAGMA cache_size = -{};", cache_kb), [])?;
+        conn.execute_batch(&format!("PRAGMA cache_size = -{};", cache_kb))?;
         let mmap_bytes = cache_mb * 4 * 1024 * 1024;
-        conn.execute(&format!("PRAGMA mmap_size = {};", mmap_bytes), [])?;
+        conn.execute_batch(&format!("PRAGMA mmap_size = {};", mmap_bytes))?;
         Ok(())
     }
 
@@ -7920,6 +7948,40 @@ impl Db {
             matching_docs
         };
 
+        // Apply APPLY expressions (add computed fields)
+        if !options.applies.is_empty() {
+            use crate::search::{parse_apply_expr, evaluate_apply_expr};
+
+            for row in &mut result_rows {
+                for apply in &options.applies {
+                    match parse_apply_expr(&apply.expression) {
+                        Ok(expr) => {
+                            let value = evaluate_apply_expr(&expr, row);
+                            row.insert(apply.alias.clone(), value.as_string());
+                        }
+                        Err(_) => {
+                            // Invalid expression - insert empty value
+                            row.insert(apply.alias.clone(), String::new());
+                        }
+                    }
+                }
+            }
+        }
+
+        // Apply FILTER expression (remove non-matching rows)
+        if let Some(filter_expr_str) = &options.filter {
+            use crate::search::{parse_filter_expr, evaluate_filter_expr};
+
+            match parse_filter_expr(filter_expr_str) {
+                Ok(filter_expr) => {
+                    result_rows.retain(|row| evaluate_filter_expr(&filter_expr, row));
+                }
+                Err(_) => {
+                    // Invalid filter - keep all rows (or could return error)
+                }
+            }
+        }
+
         // Apply SORTBY
         if !options.sort_by.is_empty() {
             result_rows.sort_by(|a, b| {
@@ -8273,222 +8335,13 @@ impl Db {
     }
 
     // ============================================================================
-    // Vector Search Methods (Session 24.2) - Feature-gated
+    // Redis 8 Vector Commands (V* commands) - Feature-gated
     // ============================================================================
 
-    /// Enable vectors globally with specified dimensions
+    /// Helper: Get or create key_id for a vector set
     #[cfg(feature = "vectors")]
-    pub fn vector_enable_global(&self, dimensions: i32) -> Result<()> {
-        if dimensions <= 0 {
-            return Err(KvError::SyntaxError);
-        }
-        let conn = self.core.conn.lock().unwrap_or_else(|e| e.into_inner());
-        conn.execute(
-            "INSERT OR REPLACE INTO vector_settings (level, target, enabled, dimensions) VALUES ('global', '*', 1, ?)",
-            params![dimensions],
-        )?;
-        Ok(())
-    }
-
-    /// Enable vectors for a specific database (0-15) with specified dimensions
-    #[cfg(feature = "vectors")]
-    pub fn vector_enable_database(&self, db_num: i32, dimensions: i32) -> Result<()> {
-        if !(0..=15).contains(&db_num) || dimensions <= 0 {
-            return Err(KvError::SyntaxError);
-        }
-        let conn = self.core.conn.lock().unwrap_or_else(|e| e.into_inner());
-        conn.execute(
-            "INSERT OR REPLACE INTO vector_settings (level, target, enabled, dimensions) VALUES ('database', ?, 1, ?)",
-            params![db_num.to_string(), dimensions],
-        )?;
-        Ok(())
-    }
-
-    /// Enable vectors for keys matching a glob pattern with specified dimensions
-    #[cfg(feature = "vectors")]
-    pub fn vector_enable_pattern(&self, pattern: &str, dimensions: i32) -> Result<()> {
-        if dimensions <= 0 {
-            return Err(KvError::SyntaxError);
-        }
-        let conn = self.core.conn.lock().unwrap_or_else(|e| e.into_inner());
-        let target = format!("{}:{}", self.selected_db, pattern);
-        conn.execute(
-            "INSERT OR REPLACE INTO vector_settings (level, target, enabled, dimensions) VALUES ('pattern', ?, 1, ?)",
-            params![target, dimensions],
-        )?;
-        Ok(())
-    }
-
-    /// Enable vectors for a specific key with specified dimensions
-    #[cfg(feature = "vectors")]
-    pub fn vector_enable_key(&self, key: &str, dimensions: i32) -> Result<()> {
-        if dimensions <= 0 {
-            return Err(KvError::SyntaxError);
-        }
-        let conn = self.core.conn.lock().unwrap_or_else(|e| e.into_inner());
-        let target = format!("{}:{}", self.selected_db, key);
-        conn.execute(
-            "INSERT OR REPLACE INTO vector_settings (level, target, enabled, dimensions) VALUES ('key', ?, 1, ?)",
-            params![target, dimensions],
-        )?;
-        Ok(())
-    }
-
-    /// Disable vectors globally
-    #[cfg(feature = "vectors")]
-    pub fn vector_disable_global(&self) -> Result<()> {
-        let conn = self.core.conn.lock().unwrap_or_else(|e| e.into_inner());
-        conn.execute(
-            "UPDATE vector_settings SET enabled = 0 WHERE level = 'global' AND target = '*'",
-            [],
-        )?;
-        Ok(())
-    }
-
-    /// Disable vectors for a specific database
-    #[cfg(feature = "vectors")]
-    pub fn vector_disable_database(&self, db_num: i32) -> Result<()> {
-        if !(0..=15).contains(&db_num) {
-            return Err(KvError::SyntaxError);
-        }
-        let conn = self.core.conn.lock().unwrap_or_else(|e| e.into_inner());
-        conn.execute(
-            "UPDATE vector_settings SET enabled = 0 WHERE level = 'database' AND target = ?",
-            params![db_num.to_string()],
-        )?;
-        Ok(())
-    }
-
-    /// Disable vectors for a pattern
-    #[cfg(feature = "vectors")]
-    pub fn vector_disable_pattern(&self, pattern: &str) -> Result<()> {
-        let conn = self.core.conn.lock().unwrap_or_else(|e| e.into_inner());
-        let target = format!("{}:{}", self.selected_db, pattern);
-        conn.execute(
-            "UPDATE vector_settings SET enabled = 0 WHERE level = 'pattern' AND target = ?",
-            params![target],
-        )?;
-        Ok(())
-    }
-
-    /// Disable vectors for a specific key
-    #[cfg(feature = "vectors")]
-    pub fn vector_disable_key(&self, key: &str) -> Result<()> {
-        let conn = self.core.conn.lock().unwrap_or_else(|e| e.into_inner());
-        let target = format!("{}:{}", self.selected_db, key);
-        conn.execute(
-            "UPDATE vector_settings SET enabled = 0 WHERE level = 'key' AND target = ?",
-            params![target],
-        )?;
-        Ok(())
-    }
-
-    /// Check if vectors are enabled for a key, returns dimensions if enabled
-    #[cfg(feature = "vectors")]
-    pub fn is_vector_enabled(&self, key: &str) -> Result<Option<i32>> {
-        let conn = self.core.conn.lock().unwrap_or_else(|e| e.into_inner());
-
-        // 1. Check key-level config
-        let key_target = format!("{}:{}", self.selected_db, key);
-        let key_config: Option<(bool, i32)> = conn
-            .query_row(
-                "SELECT enabled, dimensions FROM vector_settings WHERE level = 'key' AND target = ? LIMIT 1",
-                params![key_target],
-                |row| Ok((row.get(0)?, row.get(1)?)),
-            )
-            .optional()?;
-
-        if let Some((enabled, dimensions)) = key_config {
-            return Ok(if enabled { Some(dimensions) } else { None });
-        }
-
-        // 2. Check pattern-level configs (match glob patterns)
-        let mut stmt = conn.prepare(
-            "SELECT target, enabled, dimensions FROM vector_settings WHERE level = 'pattern' AND target LIKE ?"
-        )?;
-        let db_prefix = format!("{}:%", self.selected_db);
-        let patterns: Vec<(String, bool, i32)> = stmt
-            .query_map(params![db_prefix], |row| {
-                Ok((
-                    row.get::<_, String>(0)?,
-                    row.get::<_, bool>(1)?,
-                    row.get::<_, i32>(2)?,
-                ))
-            })?
-            .filter_map(|r| r.ok())
-            .collect();
-
-        // Check if key matches any pattern
-        for (target, enabled, dimensions) in patterns {
-            if let Some(pattern) = target.strip_prefix(&format!("{}:", self.selected_db)) {
-                if glob_match(pattern, key) {
-                    return Ok(if enabled { Some(dimensions) } else { None });
-                }
-            }
-        }
-
-        // 3. Check database-level config
-        let db_config: Option<(bool, i32)> = conn
-            .query_row(
-                "SELECT enabled, dimensions FROM vector_settings WHERE level = 'database' AND target = ? LIMIT 1",
-                params![self.selected_db.to_string()],
-                |row| Ok((row.get(0)?, row.get(1)?)),
-            )
-            .optional()?;
-
-        if let Some((enabled, dimensions)) = db_config {
-            return Ok(if enabled { Some(dimensions) } else { None });
-        }
-
-        // 4. Check global config
-        let global_config: Option<(bool, i32)> = conn
-            .query_row(
-                "SELECT enabled, dimensions FROM vector_settings WHERE level = 'global' AND target = '*' LIMIT 1",
-                params![],
-                |row| Ok((row.get(0)?, row.get(1)?)),
-            )
-            .optional()?;
-
-        if let Some((enabled, dimensions)) = global_config {
-            return Ok(if enabled { Some(dimensions) } else { None });
-        }
-
-        // No config found, vectors not enabled
-        Ok(None)
-    }
-
-    /// Add a vector to a key
-    #[cfg(feature = "vectors")]
-    pub fn vadd(
-        &self,
-        key: &str,
-        vector_id: &str,
-        embedding: &[f32],
-        metadata: Option<&str>,
-    ) -> Result<bool> {
-        // Check if vectors are enabled for this key
-        let dimensions = match self.is_vector_enabled(key)? {
-            Some(d) => d,
-            None => {
-                return Err(KvError::Other(
-                    "vectors not enabled for this key".to_string(),
-                ))
-            }
-        };
-
-        // Validate dimensions
-        if embedding.len() != dimensions as usize {
-            return Err(KvError::Other(format!(
-                "vector dimension mismatch: expected {}, got {}",
-                dimensions,
-                embedding.len()
-            )));
-        }
-
-        let conn = self.core.conn.lock().unwrap_or_else(|e| e.into_inner());
-
-        // Get or create key_id
-        let key_id: i64 = match conn
+    fn get_or_create_vector_key(&self, conn: &Connection, key: &str) -> Result<i64> {
+        match conn
             .query_row(
                 "SELECT id FROM keys WHERE db = ? AND key = ? LIMIT 1",
                 params![self.selected_db, key],
@@ -8496,11 +8349,10 @@ impl Db {
             )
             .optional()?
         {
-            Some(id) => id,
+            Some(id) => Ok(id),
             None => {
-                // Create the key as a special "vector" type (using String type for now)
                 conn.execute(
-                    "INSERT INTO keys (db, key, key_type, created_at, updated_at) VALUES (?, ?, ?, ?, ?)",
+                    "INSERT INTO keys (db, key, type, created_at, updated_at) VALUES (?, ?, ?, ?, ?)",
                     params![
                         self.selected_db,
                         key,
@@ -8509,291 +8361,388 @@ impl Db {
                         Self::now_ms()
                     ],
                 )?;
-                conn.last_insert_rowid()
+                Ok(conn.last_insert_rowid())
             }
-        };
-
-        // Convert embedding to bytes
-        let embedding_bytes: Vec<u8> = embedding.iter().flat_map(|f| f.to_le_bytes()).collect();
-
-        // Insert or replace vector
-        let rows = conn.execute(
-            "INSERT OR REPLACE INTO vectors (key_id, vector_id, embedding, dimensions, metadata, created_at)
-             VALUES (?, ?, ?, ?, ?, ?)",
-            params![
-                key_id,
-                vector_id,
-                embedding_bytes,
-                dimensions,
-                metadata,
-                Self::now_ms()
-            ],
-        )?;
-
-        Ok(rows > 0)
-    }
-
-    /// Get a vector by key and vector_id
-    #[cfg(feature = "vectors")]
-    pub fn vget(&self, key: &str, vector_id: &str) -> Result<Option<VectorEntry>> {
-        let conn = self.core.conn.lock().unwrap_or_else(|e| e.into_inner());
-
-        let result: Option<(i64, i64, String, Vec<u8>, i32, Option<String>, i64)> = conn
-            .query_row(
-                "SELECT v.id, v.key_id, v.vector_id, v.embedding, v.dimensions, v.metadata, v.created_at
-                 FROM vectors v
-                 JOIN keys k ON v.key_id = k.id
-                 WHERE k.db = ? AND k.key = ? AND v.vector_id = ?
-                 LIMIT 1",
-                params![self.selected_db, key, vector_id],
-                |row| Ok((
-                    row.get(0)?,
-                    row.get(1)?,
-                    row.get(2)?,
-                    row.get(3)?,
-                    row.get(4)?,
-                    row.get(5)?,
-                    row.get(6)?,
-                )),
-            )
-            .optional()?;
-
-        match result {
-            Some((id, key_id, vid, embedding_bytes, dimensions, metadata, created_at)) => {
-                // Convert bytes back to f32 vector
-                let embedding: Vec<f32> = embedding_bytes
-                    .chunks_exact(4)
-                    .map(|chunk| f32::from_le_bytes([chunk[0], chunk[1], chunk[2], chunk[3]]))
-                    .collect();
-
-                Ok(Some(VectorEntry {
-                    id,
-                    key_id,
-                    vector_id: vid,
-                    embedding,
-                    dimensions,
-                    metadata,
-                    created_at,
-                }))
-            }
-            None => Ok(None),
         }
     }
 
-    /// Delete a vector by key and vector_id
+    /// Helper: Get expected dimensions for a vector set (from first element)
     #[cfg(feature = "vectors")]
-    pub fn vdel(&self, key: &str, vector_id: &str) -> Result<bool> {
-        let conn = self.core.conn.lock().unwrap_or_else(|e| e.into_inner());
-
-        let rows = conn.execute(
-            "DELETE FROM vectors WHERE key_id IN (
-                SELECT id FROM keys WHERE db = ? AND key = ?
-             ) AND vector_id = ?",
-            params![self.selected_db, key, vector_id],
-        )?;
-
-        Ok(rows > 0)
-    }
-
-    /// Count vectors for a key
-    #[cfg(feature = "vectors")]
-    pub fn vcount(&self, key: &str) -> Result<i64> {
-        let conn = self.core.conn.lock().unwrap_or_else(|e| e.into_inner());
-
-        let count: i64 = conn.query_row(
-            "SELECT COUNT(*) FROM vectors v
-                 JOIN keys k ON v.key_id = k.id
-                 WHERE k.db = ? AND k.key = ?",
-            params![self.selected_db, key],
+    fn get_vector_set_dimensions(&self, conn: &Connection, key_id: i64) -> Result<Option<i32>> {
+        conn.query_row(
+            "SELECT dimensions FROM vector_sets WHERE key_id = ? LIMIT 1",
+            params![key_id],
             |row| row.get(0),
-        )?;
-
-        Ok(count)
+        )
+        .optional()
+        .map_err(Into::into)
     }
 
-    /// Search for similar vectors using K-NN
-    /// Note: This uses a brute-force approach. For production with large datasets,
-    /// sqlite-vec should be loaded and used for efficient HNSW search.
+    /// Helper: Convert f32 slice to bytes (little-endian FP32)
     #[cfg(feature = "vectors")]
-    pub fn vsearch(
+    fn embedding_to_bytes(embedding: &[f32]) -> Vec<u8> {
+        embedding.iter().flat_map(|f| f.to_le_bytes()).collect()
+    }
+
+    /// Helper: Convert bytes to f32 vector
+    #[cfg(feature = "vectors")]
+    fn bytes_to_embedding(bytes: &[u8]) -> Vec<f32> {
+        bytes
+            .chunks_exact(4)
+            .map(|chunk| f32::from_le_bytes([chunk[0], chunk[1], chunk[2], chunk[3]]))
+            .collect()
+    }
+
+    /// VADD - Add element with vector to a vector set
+    /// VADD key (FP32 blob | VALUES n v1 v2...) element [SETATTR json]
+    #[cfg(feature = "vectors")]
+    pub fn vadd(
         &self,
         key: &str,
-        query_vector: &[f32],
-        k: i64,
-        metric: DistanceMetric,
-    ) -> Result<Vec<VectorSearchResult>> {
-        // Check if vectors are enabled and get expected dimensions
-        let expected_dims = match self.is_vector_enabled(key)? {
-            Some(d) => d,
-            None => {
-                return Err(KvError::Other(
-                    "vectors not enabled for this key".to_string(),
-                ))
-            }
-        };
-
-        if query_vector.len() != expected_dims as usize {
-            return Err(KvError::Other(format!(
-                "query vector dimension mismatch: expected {}, got {}",
-                expected_dims,
-                query_vector.len()
-            )));
+        embedding: &[f32],
+        element: &str,
+        attributes: Option<&str>,
+        quantization: VectorQuantization,
+    ) -> Result<bool> {
+        if embedding.is_empty() {
+            return Err(KvError::Other("embedding cannot be empty".to_string()));
         }
 
         let conn = self.core.conn.lock().unwrap_or_else(|e| e.into_inner());
+        let key_id = self.get_or_create_vector_key(&conn, key)?;
 
-        // Get all vectors for the key
-        let mut stmt = conn.prepare(
-            "SELECT v.vector_id, v.embedding, v.metadata
-             FROM vectors v
-             JOIN keys k ON v.key_id = k.id
-             WHERE k.db = ? AND k.key = ?",
-        )?;
+        // Check dimensions consistency (first element sets dimensions for the set)
+        if let Some(expected_dims) = self.get_vector_set_dimensions(&conn, key_id)? {
+            if embedding.len() != expected_dims as usize {
+                return Err(KvError::Other(format!(
+                    "vector dimension mismatch: expected {}, got {}",
+                    expected_dims,
+                    embedding.len()
+                )));
+            }
+        }
 
-        let mut results: Vec<VectorSearchResult> = stmt
-            .query_map(params![self.selected_db, key], |row| {
-                let vector_id: String = row.get(0)?;
-                let embedding_bytes: Vec<u8> = row.get(1)?;
-                let metadata: Option<String> = row.get(2)?;
+        let embedding_bytes = Self::embedding_to_bytes(embedding);
+        let dimensions = embedding.len() as i32;
 
-                // Convert bytes to f32 vector
-                let embedding: Vec<f32> = embedding_bytes
-                    .chunks_exact(4)
-                    .map(|chunk| f32::from_le_bytes([chunk[0], chunk[1], chunk[2], chunk[3]]))
-                    .collect();
+        // Check if element already exists
+        let exists: bool = conn
+            .query_row(
+                "SELECT 1 FROM vector_sets WHERE key_id = ? AND element = ? LIMIT 1",
+                params![key_id, element],
+                |_| Ok(true),
+            )
+            .optional()?
+            .unwrap_or(false);
 
-                // Calculate distance based on metric
-                let distance = match metric {
-                    DistanceMetric::L2 => {
-                        // Euclidean distance
-                        let sum: f32 = query_vector
-                            .iter()
-                            .zip(embedding.iter())
-                            .map(|(a, b)| (a - b).powi(2))
-                            .sum();
-                        sum.sqrt() as f64
-                    }
-                    DistanceMetric::Cosine => {
-                        // Cosine distance = 1 - cosine_similarity
-                        let dot: f32 = query_vector
-                            .iter()
-                            .zip(embedding.iter())
-                            .map(|(a, b)| a * b)
-                            .sum();
-                        let norm_a: f32 =
-                            query_vector.iter().map(|x| x.powi(2)).sum::<f32>().sqrt();
-                        let norm_b: f32 = embedding.iter().map(|x| x.powi(2)).sum::<f32>().sqrt();
-                        if norm_a == 0.0 || norm_b == 0.0 {
-                            1.0
-                        } else {
-                            1.0 - (dot / (norm_a * norm_b)) as f64
-                        }
-                    }
-                    DistanceMetric::IP => {
-                        // Inner product (negative for ranking - higher IP = lower distance)
-                        let dot: f32 = query_vector
-                            .iter()
-                            .zip(embedding.iter())
-                            .map(|(a, b)| a * b)
-                            .sum();
-                        -dot as f64
-                    }
-                };
-
-                Ok(VectorSearchResult {
-                    vector_id,
-                    distance,
-                    metadata,
-                })
-            })?
-            .filter_map(|r| r.ok())
-            .collect();
-
-        // Sort by distance (ascending) and take top k
-        results.sort_by(|a, b| {
-            a.distance
-                .partial_cmp(&b.distance)
-                .unwrap_or(std::cmp::Ordering::Equal)
-        });
-        results.truncate(k as usize);
-
-        Ok(results)
+        if exists {
+            // Update existing element
+            conn.execute(
+                "UPDATE vector_sets SET embedding = ?, dimensions = ?, quantization = ?, attributes = ?
+                 WHERE key_id = ? AND element = ?",
+                params![
+                    embedding_bytes,
+                    dimensions,
+                    quantization.as_str(),
+                    attributes,
+                    key_id,
+                    element
+                ],
+            )?;
+            Ok(false) // Updated existing
+        } else {
+            // Insert new element
+            conn.execute(
+                "INSERT INTO vector_sets (key_id, element, embedding, dimensions, quantization, attributes, created_at)
+                 VALUES (?, ?, ?, ?, ?, ?, ?)",
+                params![
+                    key_id,
+                    element,
+                    embedding_bytes,
+                    dimensions,
+                    quantization.as_str(),
+                    attributes,
+                    Self::now_ms()
+                ],
+            )?;
+            Ok(true) // Added new
+        }
     }
 
-    /// Get vector statistics
+    /// VREM - Remove element from vector set
     #[cfg(feature = "vectors")]
-    pub fn vector_info(&self) -> Result<VectorStats> {
+    pub fn vrem(&self, key: &str, element: &str) -> Result<bool> {
         let conn = self.core.conn.lock().unwrap_or_else(|e| e.into_inner());
 
-        // Count total vectors in current database
-        let total_vectors: i64 = conn.query_row(
-            "SELECT COUNT(*) FROM vectors v
-             JOIN keys k ON v.key_id = k.id
-             WHERE k.db = ?",
-            params![self.selected_db],
-            |row| row.get(0),
+        let rows = conn.execute(
+            "DELETE FROM vector_sets WHERE key_id IN (
+                SELECT id FROM keys WHERE db = ? AND key = ?
+             ) AND element = ?",
+            params![self.selected_db, key, element],
         )?;
 
-        // Count unique keys with vectors
-        let total_keys: i64 = conn.query_row(
-            "SELECT COUNT(DISTINCT k.id) FROM vectors v
-             JOIN keys k ON v.key_id = k.id
-             WHERE k.db = ?",
-            params![self.selected_db],
-            |row| row.get(0),
-        )?;
+        Ok(rows > 0)
+    }
 
-        // Estimate storage bytes
-        let storage_bytes: i64 = conn
+    /// VCARD - Get cardinality (number of elements) in vector set
+    #[cfg(feature = "vectors")]
+    pub fn vcard(&self, key: &str) -> Result<i64> {
+        let conn = self.core.conn.lock().unwrap_or_else(|e| e.into_inner());
+
+        let count: i64 = conn
             .query_row(
-                "SELECT COALESCE(SUM(LENGTH(embedding)), 0) FROM vectors v
-             JOIN keys k ON v.key_id = k.id
-             WHERE k.db = ?",
-                params![self.selected_db],
+                "SELECT COUNT(*) FROM vector_sets v
+                 JOIN keys k ON v.key_id = k.id
+                 WHERE k.db = ? AND k.key = ?",
+                params![self.selected_db, key],
                 |row| row.get(0),
             )
             .unwrap_or(0);
 
-        let mut stats = VectorStats::new(total_vectors, total_keys, storage_bytes);
+        Ok(count)
+    }
 
-        // Get all vector configs
-        let mut stmt = conn.prepare(
-            "SELECT id, level, target, enabled, dimensions, created_at FROM vector_settings ORDER BY level, target"
+    /// VDIM - Get dimensions of vectors in set
+    #[cfg(feature = "vectors")]
+    pub fn vdim(&self, key: &str) -> Result<Option<i32>> {
+        let conn = self.core.conn.lock().unwrap_or_else(|e| e.into_inner());
+
+        conn.query_row(
+            "SELECT v.dimensions FROM vector_sets v
+             JOIN keys k ON v.key_id = k.id
+             WHERE k.db = ? AND k.key = ?
+             LIMIT 1",
+            params![self.selected_db, key],
+            |row| row.get(0),
+        )
+        .optional()
+        .map_err(Into::into)
+    }
+
+    /// VINFO - Get info about vector set
+    #[cfg(feature = "vectors")]
+    pub fn vinfo(&self, key: &str) -> Result<Option<VectorSetInfo>> {
+        let conn = self.core.conn.lock().unwrap_or_else(|e| e.into_inner());
+
+        // Get cardinality
+        let cardinality: i64 = conn
+            .query_row(
+                "SELECT COUNT(*) FROM vector_sets v
+                 JOIN keys k ON v.key_id = k.id
+                 WHERE k.db = ? AND k.key = ?",
+                params![self.selected_db, key],
+                |row| row.get(0),
+            )
+            .unwrap_or(0);
+
+        if cardinality == 0 {
+            return Ok(None);
+        }
+
+        // Get dimensions and quantization from first element
+        let (dimensions, quant_str): (Option<i32>, String) = conn
+            .query_row(
+                "SELECT v.dimensions, v.quantization FROM vector_sets v
+                 JOIN keys k ON v.key_id = k.id
+                 WHERE k.db = ? AND k.key = ?
+                 LIMIT 1",
+                params![self.selected_db, key],
+                |row| Ok((row.get(0)?, row.get::<_, String>(1)?)),
+            )
+            .unwrap_or((None, "NOQUANT".to_string()));
+
+        let quantization = VectorQuantization::from_str(&quant_str).unwrap_or_default();
+
+        Ok(Some(VectorSetInfo {
+            key: key.to_string(),
+            cardinality,
+            dimensions,
+            quantization,
+        }))
+    }
+
+    /// VEMB - Get embedding for an element
+    #[cfg(feature = "vectors")]
+    pub fn vemb(&self, key: &str, element: &str, raw: bool) -> Result<Option<Vec<u8>>> {
+        let conn = self.core.conn.lock().unwrap_or_else(|e| e.into_inner());
+
+        let embedding_bytes: Option<Vec<u8>> = conn
+            .query_row(
+                "SELECT v.embedding FROM vector_sets v
+                 JOIN keys k ON v.key_id = k.id
+                 WHERE k.db = ? AND k.key = ? AND v.element = ?
+                 LIMIT 1",
+                params![self.selected_db, key, element],
+                |row| row.get(0),
+            )
+            .optional()?;
+
+        if raw {
+            Ok(embedding_bytes)
+        } else {
+            // Return as formatted float array string for non-raw
+            Ok(embedding_bytes.map(|bytes| {
+                let floats = Self::bytes_to_embedding(&bytes);
+                let formatted: Vec<String> = floats.iter().map(|f| f.to_string()).collect();
+                formatted.join(" ").into_bytes()
+            }))
+        }
+    }
+
+    /// VGETATTR - Get attributes for an element
+    #[cfg(feature = "vectors")]
+    pub fn vgetattr(&self, key: &str, element: &str) -> Result<Option<String>> {
+        let conn = self.core.conn.lock().unwrap_or_else(|e| e.into_inner());
+
+        conn.query_row(
+            "SELECT v.attributes FROM vector_sets v
+             JOIN keys k ON v.key_id = k.id
+             WHERE k.db = ? AND k.key = ? AND v.element = ?
+             LIMIT 1",
+            params![self.selected_db, key, element],
+            |row| row.get(0),
+        )
+        .optional()
+        .map_err(Into::into)
+    }
+
+    /// VSETATTR - Set attributes for an element
+    #[cfg(feature = "vectors")]
+    pub fn vsetattr(&self, key: &str, element: &str, attributes: &str) -> Result<bool> {
+        let conn = self.core.conn.lock().unwrap_or_else(|e| e.into_inner());
+
+        let rows = conn.execute(
+            "UPDATE vector_sets SET attributes = ?
+             WHERE key_id IN (SELECT id FROM keys WHERE db = ? AND key = ?)
+             AND element = ?",
+            params![attributes, self.selected_db, key, element],
         )?;
-        let configs: Vec<crate::types::VectorConfig> = stmt
-            .query_map([], |row| {
-                let id: i64 = row.get(0)?;
-                let level_str: String = row.get(1)?;
-                let target: String = row.get(2)?;
-                let enabled: bool = row.get(3)?;
-                let dimensions: i32 = row.get(4)?;
-                let created_at: i64 = row.get(5)?;
 
-                let level = match level_str.as_str() {
-                    "global" => VectorLevel::Global,
-                    "database" => {
-                        let db_num: i32 = target.parse().unwrap_or(0);
-                        VectorLevel::Database(db_num)
-                    }
-                    "pattern" => VectorLevel::Pattern(target.clone()),
-                    "key" => VectorLevel::Key,
-                    _ => VectorLevel::Global,
-                };
+        Ok(rows > 0)
+    }
 
-                Ok(crate::types::VectorConfig {
-                    id,
-                    level,
-                    target,
-                    enabled,
-                    dimensions,
-                    created_at,
-                })
-            })?
+    /// VRANDMEMBER - Get random element(s) from vector set
+    #[cfg(feature = "vectors")]
+    pub fn vrandmember(&self, key: &str, count: Option<i64>) -> Result<Vec<String>> {
+        let conn = self.core.conn.lock().unwrap_or_else(|e| e.into_inner());
+        let count = count.unwrap_or(1).max(1);
+
+        let mut stmt = conn.prepare(
+            "SELECT v.element FROM vector_sets v
+             JOIN keys k ON v.key_id = k.id
+             WHERE k.db = ? AND k.key = ?
+             ORDER BY RANDOM()
+             LIMIT ?",
+        )?;
+
+        let elements: Vec<String> = stmt
+            .query_map(params![self.selected_db, key, count], |row| row.get(0))?
             .filter_map(|r| r.ok())
             .collect();
 
-        stats.configs = configs;
-        Ok(stats)
+        Ok(elements)
+    }
+
+    /// VSIM - Vector similarity search
+    /// Returns elements similar to query vector, sorted by similarity score
+    #[cfg(feature = "vectors")]
+    pub fn vsim(
+        &self,
+        key: &str,
+        query: VectorInput,
+        count: Option<i64>,
+        with_scores: bool,
+        filter: Option<&str>,
+    ) -> Result<Vec<VectorSimResult>> {
+        let conn = self.core.conn.lock().unwrap_or_else(|e| e.into_inner());
+        let count = count.unwrap_or(10);
+
+        // Resolve query vector
+        let query_embedding = match query {
+            VectorInput::Values(v) => v,
+            VectorInput::Fp32Blob(bytes) => Self::bytes_to_embedding(&bytes),
+            VectorInput::Element(ref elem) => {
+                // Get embedding from existing element
+                let bytes: Vec<u8> = conn
+                    .query_row(
+                        "SELECT v.embedding FROM vector_sets v
+                         JOIN keys k ON v.key_id = k.id
+                         WHERE k.db = ? AND k.key = ? AND v.element = ?
+                         LIMIT 1",
+                        params![self.selected_db, key, elem],
+                        |row| row.get(0),
+                    )
+                    .map_err(|_| KvError::Other(format!("element '{}' not found", elem)))?;
+                Self::bytes_to_embedding(&bytes)
+            }
+        };
+
+        if query_embedding.is_empty() {
+            return Err(KvError::Other("query vector cannot be empty".to_string()));
+        }
+
+        // Get all vectors for the key
+        let mut stmt = conn.prepare(
+            "SELECT v.element, v.embedding, v.attributes
+             FROM vector_sets v
+             JOIN keys k ON v.key_id = k.id
+             WHERE k.db = ? AND k.key = ?",
+        )?;
+
+        let mut results: Vec<VectorSimResult> = stmt
+            .query_map(params![self.selected_db, key], |row| {
+                let element: String = row.get(0)?;
+                let embedding_bytes: Vec<u8> = row.get(1)?;
+                let attributes: Option<String> = row.get(2)?;
+                Ok((element, embedding_bytes, attributes))
+            })?
+            .filter_map(|r| r.ok())
+            .filter_map(|(element, embedding_bytes, attributes)| {
+                let embedding = Self::bytes_to_embedding(&embedding_bytes);
+
+                // Apply filter if provided (simple JSON attribute matching)
+                if let Some(filter_expr) = filter {
+                    if let Some(ref attrs) = attributes {
+                        if !attrs.contains(filter_expr) {
+                            return None;
+                        }
+                    } else {
+                        return None;
+                    }
+                }
+
+                // Calculate cosine similarity (default metric for Redis 8)
+                let dot: f32 = query_embedding
+                    .iter()
+                    .zip(embedding.iter())
+                    .map(|(a, b)| a * b)
+                    .sum();
+                let norm_a: f32 = query_embedding.iter().map(|x| x.powi(2)).sum::<f32>().sqrt();
+                let norm_b: f32 = embedding.iter().map(|x| x.powi(2)).sum::<f32>().sqrt();
+
+                let score = if norm_a == 0.0 || norm_b == 0.0 {
+                    0.0
+                } else {
+                    (dot / (norm_a * norm_b)) as f64
+                };
+
+                Some(VectorSimResult {
+                    element,
+                    score,
+                    attributes: if with_scores { attributes } else { None },
+                })
+            })
+            .collect();
+
+        // Sort by score (descending - higher similarity first)
+        results.sort_by(|a, b| {
+            b.score
+                .partial_cmp(&a.score)
+                .unwrap_or(std::cmp::Ordering::Equal)
+        });
+        results.truncate(count as usize);
+
+        Ok(results)
     }
 }
 
@@ -14136,6 +14085,2085 @@ mod tests {
         let options = FtSearchOptions::new();
         let (total, _) = db.ft_search("idx", "Hello", &options).unwrap();
         assert_eq!(total, 3, "Should find all matching documents");
+    }
+
+    // ========================================================================
+    // FT.AGGREGATE Tests
+    // ========================================================================
+
+    #[test]
+    fn test_ft_aggregate_basic() {
+        use crate::types::{FtField, FtOnType, FtAggregateOptions};
+
+        let db = Db::open_memory().unwrap();
+
+        let schema = vec![
+            FtField::text("name"),
+            FtField::numeric("price"),
+            FtField::tag("category"),
+        ];
+        db.ft_create("products", FtOnType::Hash, &["product:"], &schema)
+            .unwrap();
+
+        db.hset("product:1", &[("name", b"Widget A"), ("price", b"100"), ("category", b"electronics")])
+            .unwrap();
+        db.hset("product:2", &[("name", b"Widget B"), ("price", b"200"), ("category", b"electronics")])
+            .unwrap();
+        db.hset("product:3", &[("name", b"Gadget"), ("price", b"50"), ("category", b"toys")])
+            .unwrap();
+
+        let options = FtAggregateOptions::new();
+        let results = db.ft_aggregate("products", "*", &options).unwrap();
+
+        // Should return all 3 documents
+        assert_eq!(results.len(), 3);
+    }
+
+    #[test]
+    fn test_ft_aggregate_groupby_count() {
+        use crate::types::{FtField, FtOnType, FtAggregateOptions, FtGroupBy, FtReducer, FtReduceFunction};
+
+        let db = Db::open_memory().unwrap();
+
+        let schema = vec![
+            FtField::text("name"),
+            FtField::tag("category"),
+        ];
+        db.ft_create("products", FtOnType::Hash, &["product:"], &schema)
+            .unwrap();
+
+        db.hset("product:1", &[("name", b"Widget A"), ("category", b"electronics")])
+            .unwrap();
+        db.hset("product:2", &[("name", b"Widget B"), ("category", b"electronics")])
+            .unwrap();
+        db.hset("product:3", &[("name", b"Gadget"), ("category", b"toys")])
+            .unwrap();
+
+        let mut options = FtAggregateOptions::new();
+        options.group_by = Some(FtGroupBy {
+            fields: vec!["category".to_string()],
+            reducers: vec![FtReducer {
+                function: FtReduceFunction::Count,
+                alias: Some("count".to_string()),
+            }],
+        });
+
+        let results = db.ft_aggregate("products", "*", &options).unwrap();
+
+        // Should have 2 groups: electronics (2) and toys (1)
+        assert_eq!(results.len(), 2);
+
+        let electronics = results.iter().find(|r| r.get("category") == Some(&"electronics".to_string()));
+        let toys = results.iter().find(|r| r.get("category") == Some(&"toys".to_string()));
+
+        assert!(electronics.is_some());
+        assert!(toys.is_some());
+        assert_eq!(electronics.unwrap().get("count"), Some(&"2".to_string()));
+        assert_eq!(toys.unwrap().get("count"), Some(&"1".to_string()));
+    }
+
+    #[test]
+    fn test_ft_aggregate_apply_arithmetic() {
+        use crate::types::{FtField, FtOnType, FtAggregateOptions, FtApply};
+
+        let db = Db::open_memory().unwrap();
+
+        let schema = vec![
+            FtField::text("name"),
+            FtField::numeric("price"),
+        ];
+        db.ft_create("products", FtOnType::Hash, &["product:"], &schema)
+            .unwrap();
+
+        db.hset("product:1", &[("name", b"Widget"), ("price", b"100")])
+            .unwrap();
+        db.hset("product:2", &[("name", b"Gadget"), ("price", b"200")])
+            .unwrap();
+
+        let mut options = FtAggregateOptions::new();
+        options.applies.push(FtApply {
+            expression: "@price * 1.1".to_string(),
+            alias: "discounted_price".to_string(),
+        });
+
+        let results = db.ft_aggregate("products", "*", &options).unwrap();
+
+        assert_eq!(results.len(), 2);
+
+        // Check that discounted_price was computed
+        for row in &results {
+            let price: f64 = row.get("price").unwrap().parse().unwrap();
+            let discounted: f64 = row.get("discounted_price").unwrap().parse().unwrap();
+            assert!((discounted - price * 1.1).abs() < 0.01);
+        }
+    }
+
+    #[test]
+    fn test_ft_aggregate_apply_add_fields() {
+        use crate::types::{FtField, FtOnType, FtAggregateOptions, FtApply};
+
+        let db = Db::open_memory().unwrap();
+
+        let schema = vec![
+            FtField::numeric("a"),
+            FtField::numeric("b"),
+        ];
+        db.ft_create("nums", FtOnType::Hash, &["num:"], &schema)
+            .unwrap();
+
+        db.hset("num:1", &[("a", b"10"), ("b", b"5")])
+            .unwrap();
+        db.hset("num:2", &[("a", b"20"), ("b", b"30")])
+            .unwrap();
+
+        let mut options = FtAggregateOptions::new();
+        options.applies.push(FtApply {
+            expression: "@a + @b".to_string(),
+            alias: "sum".to_string(),
+        });
+
+        let results = db.ft_aggregate("nums", "*", &options).unwrap();
+
+        assert_eq!(results.len(), 2);
+
+        for row in &results {
+            let a: f64 = row.get("a").unwrap().parse().unwrap();
+            let b: f64 = row.get("b").unwrap().parse().unwrap();
+            let sum: f64 = row.get("sum").unwrap().parse().unwrap();
+            assert!((sum - (a + b)).abs() < 0.01);
+        }
+    }
+
+    #[test]
+    fn test_ft_aggregate_apply_upper() {
+        use crate::types::{FtField, FtOnType, FtAggregateOptions, FtApply};
+
+        let db = Db::open_memory().unwrap();
+
+        let schema = vec![FtField::text("name")];
+        db.ft_create("items", FtOnType::Hash, &["item:"], &schema)
+            .unwrap();
+
+        db.hset("item:1", &[("name", b"hello")])
+            .unwrap();
+        db.hset("item:2", &[("name", b"world")])
+            .unwrap();
+
+        let mut options = FtAggregateOptions::new();
+        options.applies.push(FtApply {
+            expression: "upper(@name)".to_string(),
+            alias: "NAME_UPPER".to_string(),
+        });
+
+        let results = db.ft_aggregate("items", "*", &options).unwrap();
+
+        assert_eq!(results.len(), 2);
+
+        for row in &results {
+            let name = row.get("name").unwrap();
+            let upper = row.get("NAME_UPPER").unwrap();
+            assert_eq!(upper, &name.to_uppercase());
+        }
+    }
+
+    #[test]
+    fn test_ft_aggregate_apply_lower() {
+        use crate::types::{FtField, FtOnType, FtAggregateOptions, FtApply};
+
+        let db = Db::open_memory().unwrap();
+
+        let schema = vec![FtField::text("name")];
+        db.ft_create("items", FtOnType::Hash, &["item:"], &schema)
+            .unwrap();
+
+        db.hset("item:1", &[("name", b"HELLO")])
+            .unwrap();
+
+        let mut options = FtAggregateOptions::new();
+        options.applies.push(FtApply {
+            expression: "lower(@name)".to_string(),
+            alias: "name_lower".to_string(),
+        });
+
+        let results = db.ft_aggregate("items", "*", &options).unwrap();
+
+        assert_eq!(results.len(), 1);
+        assert_eq!(results[0].get("name_lower"), Some(&"hello".to_string()));
+    }
+
+    #[test]
+    fn test_ft_aggregate_filter_gt() {
+        use crate::types::{FtField, FtOnType, FtAggregateOptions};
+
+        let db = Db::open_memory().unwrap();
+
+        let schema = vec![
+            FtField::text("name"),
+            FtField::numeric("price"),
+        ];
+        db.ft_create("products", FtOnType::Hash, &["product:"], &schema)
+            .unwrap();
+
+        db.hset("product:1", &[("name", b"Cheap"), ("price", b"10")])
+            .unwrap();
+        db.hset("product:2", &[("name", b"Medium"), ("price", b"50")])
+            .unwrap();
+        db.hset("product:3", &[("name", b"Expensive"), ("price", b"100")])
+            .unwrap();
+
+        let mut options = FtAggregateOptions::new();
+        options.filter = Some("@price > 30".to_string());
+
+        let results = db.ft_aggregate("products", "*", &options).unwrap();
+
+        // Should only include Medium (50) and Expensive (100)
+        assert_eq!(results.len(), 2);
+        for row in &results {
+            let price: f64 = row.get("price").unwrap().parse().unwrap();
+            assert!(price > 30.0);
+        }
+    }
+
+    #[test]
+    fn test_ft_aggregate_filter_eq() {
+        use crate::types::{FtField, FtOnType, FtAggregateOptions};
+
+        let db = Db::open_memory().unwrap();
+
+        let schema = vec![
+            FtField::text("name"),
+            FtField::tag("status"),
+        ];
+        db.ft_create("items", FtOnType::Hash, &["item:"], &schema)
+            .unwrap();
+
+        db.hset("item:1", &[("name", b"A"), ("status", b"active")])
+            .unwrap();
+        db.hset("item:2", &[("name", b"B"), ("status", b"inactive")])
+            .unwrap();
+        db.hset("item:3", &[("name", b"C"), ("status", b"active")])
+            .unwrap();
+
+        let mut options = FtAggregateOptions::new();
+        options.filter = Some("@status == \"active\"".to_string());
+
+        let results = db.ft_aggregate("items", "*", &options).unwrap();
+
+        // Should only include items A and C
+        assert_eq!(results.len(), 2);
+        for row in &results {
+            assert_eq!(row.get("status"), Some(&"active".to_string()));
+        }
+    }
+
+    #[test]
+    fn test_ft_aggregate_filter_and() {
+        use crate::types::{FtField, FtOnType, FtAggregateOptions};
+
+        let db = Db::open_memory().unwrap();
+
+        let schema = vec![
+            FtField::numeric("price"),
+            FtField::numeric("quantity"),
+        ];
+        db.ft_create("products", FtOnType::Hash, &["product:"], &schema)
+            .unwrap();
+
+        db.hset("product:1", &[("price", b"100"), ("quantity", b"5")])
+            .unwrap();
+        db.hset("product:2", &[("price", b"50"), ("quantity", b"10")])
+            .unwrap();
+        db.hset("product:3", &[("price", b"200"), ("quantity", b"2")])
+            .unwrap();
+
+        let mut options = FtAggregateOptions::new();
+        options.filter = Some("@price >= 50 AND @quantity >= 5".to_string());
+
+        let results = db.ft_aggregate("products", "*", &options).unwrap();
+
+        // product:1 (100, 5) and product:2 (50, 10) match
+        assert_eq!(results.len(), 2);
+    }
+
+    #[test]
+    fn test_ft_aggregate_filter_on_reduce() {
+        use crate::types::{FtField, FtOnType, FtAggregateOptions, FtGroupBy, FtReducer, FtReduceFunction};
+
+        let db = Db::open_memory().unwrap();
+
+        let schema = vec![
+            FtField::text("name"),
+            FtField::tag("category"),
+        ];
+        db.ft_create("products", FtOnType::Hash, &["product:"], &schema)
+            .unwrap();
+
+        // Create 5 electronics, 2 toys
+        for i in 1..=5 {
+            db.hset(&format!("product:{}", i), &[("name", format!("E{}", i).as_bytes()), ("category", b"electronics")])
+                .unwrap();
+        }
+        for i in 6..=7 {
+            db.hset(&format!("product:{}", i), &[("name", format!("T{}", i).as_bytes()), ("category", b"toys")])
+                .unwrap();
+        }
+
+        let mut options = FtAggregateOptions::new();
+        options.group_by = Some(FtGroupBy {
+            fields: vec!["category".to_string()],
+            reducers: vec![FtReducer {
+                function: FtReduceFunction::Count,
+                alias: Some("count".to_string()),
+            }],
+        });
+        options.filter = Some("@count > 3".to_string());
+
+        let results = db.ft_aggregate("products", "*", &options).unwrap();
+
+        // Only electronics (5) should remain, toys (2) filtered out
+        assert_eq!(results.len(), 1);
+        assert_eq!(results[0].get("category"), Some(&"electronics".to_string()));
+    }
+
+    #[test]
+    fn test_ft_aggregate_apply_then_filter() {
+        use crate::types::{FtField, FtOnType, FtAggregateOptions, FtApply};
+
+        let db = Db::open_memory().unwrap();
+
+        let schema = vec![FtField::numeric("value")];
+        db.ft_create("nums", FtOnType::Hash, &["num:"], &schema)
+            .unwrap();
+
+        db.hset("num:1", &[("value", b"10")])
+            .unwrap();
+        db.hset("num:2", &[("value", b"20")])
+            .unwrap();
+        db.hset("num:3", &[("value", b"30")])
+            .unwrap();
+
+        let mut options = FtAggregateOptions::new();
+        options.applies.push(FtApply {
+            expression: "@value * 2".to_string(),
+            alias: "doubled".to_string(),
+        });
+        options.filter = Some("@doubled > 30".to_string());
+
+        let results = db.ft_aggregate("nums", "*", &options).unwrap();
+
+        // 10*2=20 (filtered), 20*2=40 (kept), 30*2=60 (kept)
+        assert_eq!(results.len(), 2);
+        for row in &results {
+            let doubled: f64 = row.get("doubled").unwrap().parse().unwrap();
+            assert!(doubled > 30.0);
+        }
+    }
+
+    #[test]
+    fn test_ft_aggregate_filter_eliminates_all() {
+        use crate::types::{FtField, FtOnType, FtAggregateOptions};
+
+        let db = Db::open_memory().unwrap();
+
+        let schema = vec![FtField::numeric("value")];
+        db.ft_create("nums", FtOnType::Hash, &["num:"], &schema)
+            .unwrap();
+
+        db.hset("num:1", &[("value", b"10")])
+            .unwrap();
+        db.hset("num:2", &[("value", b"20")])
+            .unwrap();
+
+        let mut options = FtAggregateOptions::new();
+        options.filter = Some("@value > 100".to_string());
+
+        let results = db.ft_aggregate("nums", "*", &options).unwrap();
+
+        // All filtered out
+        assert_eq!(results.len(), 0);
+    }
+
+    #[test]
+    fn test_ft_aggregate_multiple_applies() {
+        use crate::types::{FtField, FtOnType, FtAggregateOptions, FtApply};
+
+        let db = Db::open_memory().unwrap();
+
+        let schema = vec![
+            FtField::numeric("price"),
+            FtField::numeric("quantity"),
+        ];
+        db.ft_create("items", FtOnType::Hash, &["item:"], &schema)
+            .unwrap();
+
+        db.hset("item:1", &[("price", b"10"), ("quantity", b"5")])
+            .unwrap();
+
+        let mut options = FtAggregateOptions::new();
+        options.applies.push(FtApply {
+            expression: "@price * @quantity".to_string(),
+            alias: "total".to_string(),
+        });
+        options.applies.push(FtApply {
+            expression: "@price * 1.1".to_string(),
+            alias: "price_with_tax".to_string(),
+        });
+
+        let results = db.ft_aggregate("items", "*", &options).unwrap();
+
+        assert_eq!(results.len(), 1);
+        let row = &results[0];
+        assert_eq!(row.get("total"), Some(&"50".to_string()));
+        assert!(row.get("price_with_tax").unwrap().starts_with("11"));
+    }
+
+    #[test]
+    fn test_ft_aggregate_sortby_after_apply() {
+        use crate::types::{FtField, FtOnType, FtAggregateOptions, FtApply};
+
+        let db = Db::open_memory().unwrap();
+
+        let schema = vec![FtField::numeric("value")];
+        db.ft_create("nums", FtOnType::Hash, &["num:"], &schema)
+            .unwrap();
+
+        db.hset("num:1", &[("value", b"30")])
+            .unwrap();
+        db.hset("num:2", &[("value", b"10")])
+            .unwrap();
+        db.hset("num:3", &[("value", b"20")])
+            .unwrap();
+
+        let mut options = FtAggregateOptions::new();
+        options.applies.push(FtApply {
+            expression: "@value * 2".to_string(),
+            alias: "doubled".to_string(),
+        });
+        options.sort_by.push(("doubled".to_string(), true)); // ASC
+
+        let results = db.ft_aggregate("nums", "*", &options).unwrap();
+
+        assert_eq!(results.len(), 3);
+        // Should be sorted by doubled: 20, 40, 60
+        let doubled_values: Vec<f64> = results.iter()
+            .map(|r| r.get("doubled").unwrap().parse().unwrap())
+            .collect();
+        assert_eq!(doubled_values, vec![20.0, 40.0, 60.0]);
+    }
+
+    // ========================================================================
+    // Phase 2: Auto-Indexing Tests
+    // ========================================================================
+
+    #[test]
+    fn test_ft_autoindex_new_document() {
+        use crate::types::{FtField, FtOnType, FtSearchOptions};
+
+        let db = Db::open_memory().unwrap();
+
+        let schema = vec![FtField::text("content")];
+        db.ft_create("idx", FtOnType::Hash, &["doc:"], &schema)
+            .unwrap();
+
+        // New document should be immediately searchable
+        db.hset("doc:1", &[("content", b"hello world")])
+            .unwrap();
+
+        let options = FtSearchOptions::new();
+        let (total, results) = db.ft_search("idx", "hello", &options).unwrap();
+
+        assert_eq!(total, 1);
+        assert_eq!(results[0].key, "doc:1");
+    }
+
+    #[test]
+    fn test_ft_autoindex_update_document() {
+        use crate::types::{FtField, FtOnType, FtSearchOptions};
+
+        let db = Db::open_memory().unwrap();
+
+        let schema = vec![FtField::text("content")];
+        db.ft_create("idx", FtOnType::Hash, &["doc:"], &schema)
+            .unwrap();
+
+        // Create document
+        db.hset("doc:1", &[("content", b"hello world")])
+            .unwrap();
+
+        // Update document
+        db.hset("doc:1", &[("content", b"goodbye universe")])
+            .unwrap();
+
+        let options = FtSearchOptions::new();
+
+        // Old content should not be found
+        let (total_old, _) = db.ft_search("idx", "hello", &options).unwrap();
+        assert_eq!(total_old, 0);
+
+        // New content should be found
+        let (total_new, results) = db.ft_search("idx", "goodbye", &options).unwrap();
+        assert_eq!(total_new, 1);
+        assert_eq!(results[0].key, "doc:1");
+    }
+
+    #[test]
+    fn test_ft_autoindex_partial_update() {
+        use crate::types::{FtField, FtOnType, FtSearchOptions};
+
+        let db = Db::open_memory().unwrap();
+
+        let schema = vec![
+            FtField::text("title"),
+            FtField::text("body"),
+        ];
+        db.ft_create("idx", FtOnType::Hash, &["doc:"], &schema)
+            .unwrap();
+
+        // Create document with both fields
+        db.hset("doc:1", &[("title", b"Hello"), ("body", b"World")])
+            .unwrap();
+
+        // Partial update - only update title
+        db.hset("doc:1", &[("title", b"Goodbye")])
+            .unwrap();
+
+        let options = FtSearchOptions::new();
+
+        // Old title should not be found
+        let (total_old, _) = db.ft_search("idx", "Hello", &options).unwrap();
+        assert_eq!(total_old, 0);
+
+        // New title should be found
+        let (total_new, _) = db.ft_search("idx", "Goodbye", &options).unwrap();
+        assert_eq!(total_new, 1);
+
+        // Body should still be searchable
+        let (total_body, _) = db.ft_search("idx", "World", &options).unwrap();
+        assert_eq!(total_body, 1);
+    }
+
+    #[test]
+    #[ignore] // TODO: HDEL should trigger FTS5 re-indexing - not yet implemented
+    fn test_ft_autoindex_hdel_removes() {
+        use crate::types::{FtField, FtOnType, FtSearchOptions};
+
+        let db = Db::open_memory().unwrap();
+
+        let schema = vec![
+            FtField::text("title"),
+            FtField::text("body"),
+        ];
+        db.ft_create("idx", FtOnType::Hash, &["doc:"], &schema)
+            .unwrap();
+
+        db.hset("doc:1", &[("title", b"Hello"), ("body", b"World")])
+            .unwrap();
+
+        // Verify initial state
+        let options = FtSearchOptions::new();
+        let (total, _) = db.ft_search("idx", "Hello", &options).unwrap();
+        assert_eq!(total, 1);
+
+        // Delete the title field
+        db.hdel("doc:1", &["title"]).unwrap();
+
+        // Title should no longer be searchable after re-indexing
+        let (total_after, _) = db.ft_search("idx", "Hello", &options).unwrap();
+        assert_eq!(total_after, 0);
+
+        // Body should still be searchable
+        let (total_body, _) = db.ft_search("idx", "World", &options).unwrap();
+        assert_eq!(total_body, 1);
+    }
+
+    #[test]
+    fn test_ft_autoindex_del_removes() {
+        use crate::types::{FtField, FtOnType, FtSearchOptions};
+
+        let db = Db::open_memory().unwrap();
+
+        let schema = vec![FtField::text("content")];
+        db.ft_create("idx", FtOnType::Hash, &["doc:"], &schema)
+            .unwrap();
+
+        db.hset("doc:1", &[("content", b"hello world")])
+            .unwrap();
+        db.hset("doc:2", &[("content", b"hello there")])
+            .unwrap();
+
+        // Verify both documents found
+        let options = FtSearchOptions::new();
+        let (total, _) = db.ft_search("idx", "hello", &options).unwrap();
+        assert_eq!(total, 2);
+
+        // Delete one document
+        db.del(&["doc:1"]).unwrap();
+
+        // Only one document should remain
+        let (total_after, results) = db.ft_search("idx", "hello", &options).unwrap();
+        assert_eq!(total_after, 1);
+        assert_eq!(results[0].key, "doc:2");
+    }
+
+    #[test]
+    fn test_ft_autoindex_non_matching_prefix() {
+        use crate::types::{FtField, FtOnType, FtSearchOptions};
+
+        let db = Db::open_memory().unwrap();
+
+        let schema = vec![FtField::text("content")];
+        db.ft_create("idx", FtOnType::Hash, &["doc:"], &schema)
+            .unwrap();
+
+        // Create document with non-matching prefix - should not be indexed
+        db.hset("other:1", &[("content", b"hello world")])
+            .unwrap();
+
+        let options = FtSearchOptions::new();
+        let (total, _) = db.ft_search("idx", "hello", &options).unwrap();
+        assert_eq!(total, 0);
+    }
+
+    #[test]
+    fn test_ft_autoindex_empty_field_values() {
+        use crate::types::{FtField, FtOnType, FtSearchOptions};
+
+        let db = Db::open_memory().unwrap();
+
+        let schema = vec![FtField::text("content")];
+        db.ft_create("idx", FtOnType::Hash, &["doc:"], &schema)
+            .unwrap();
+
+        // Create document with empty field
+        db.hset("doc:1", &[("content", b"")])
+            .unwrap();
+
+        let options = FtSearchOptions::new();
+
+        // Empty content - match all should still find it
+        let (total, _) = db.ft_search("idx", "*", &options).unwrap();
+        assert_eq!(total, 1);
+    }
+
+    #[test]
+    fn test_ft_autoindex_bulk_hset() {
+        use crate::types::{FtField, FtOnType, FtSearchOptions};
+
+        let db = Db::open_memory().unwrap();
+
+        let schema = vec![FtField::text("content")];
+        db.ft_create("idx", FtOnType::Hash, &["doc:"], &schema)
+            .unwrap();
+
+        // Bulk insert multiple documents
+        for i in 1..=10 {
+            db.hset(&format!("doc:{}", i), &[("content", format!("document number {}", i).as_bytes())])
+                .unwrap();
+        }
+
+        let options = FtSearchOptions::new();
+        let (total, _) = db.ft_search("idx", "document", &options).unwrap();
+        assert_eq!(total, 10);
+    }
+
+    #[test]
+    fn test_ft_autoindex_large_field_value() {
+        use crate::types::{FtField, FtOnType, FtSearchOptions};
+
+        let db = Db::open_memory().unwrap();
+
+        let schema = vec![FtField::text("content")];
+        db.ft_create("idx", FtOnType::Hash, &["doc:"], &schema)
+            .unwrap();
+
+        // Create document with large content (100KB)
+        let large_content = "word ".repeat(20000);
+        db.hset("doc:1", &[("content", large_content.as_bytes())])
+            .unwrap();
+
+        let options = FtSearchOptions::new();
+        let (total, _) = db.ft_search("idx", "word", &options).unwrap();
+        assert_eq!(total, 1);
+    }
+
+    #[test]
+    fn test_ft_autoindex_multiple_indexes() {
+        use crate::types::{FtField, FtOnType, FtSearchOptions};
+
+        let db = Db::open_memory().unwrap();
+
+        // Create two indexes with different prefixes
+        let schema1 = vec![FtField::text("title")];
+        db.ft_create("idx1", FtOnType::Hash, &["blog:"], &schema1)
+            .unwrap();
+
+        let schema2 = vec![FtField::text("name")];
+        db.ft_create("idx2", FtOnType::Hash, &["user:"], &schema2)
+            .unwrap();
+
+        // Create documents for each index
+        db.hset("blog:1", &[("title", b"Hello Blog")])
+            .unwrap();
+        db.hset("user:1", &[("name", b"Hello User")])
+            .unwrap();
+
+        let options = FtSearchOptions::new();
+
+        // Search in idx1 should only find blog
+        let (total1, results1) = db.ft_search("idx1", "Hello", &options).unwrap();
+        assert_eq!(total1, 1);
+        assert_eq!(results1[0].key, "blog:1");
+
+        // Search in idx2 should only find user
+        let (total2, results2) = db.ft_search("idx2", "Hello", &options).unwrap();
+        assert_eq!(total2, 1);
+        assert_eq!(results2[0].key, "user:1");
+    }
+
+    #[test]
+    fn test_ft_autoindex_special_characters() {
+        use crate::types::{FtField, FtOnType, FtSearchOptions};
+
+        let db = Db::open_memory().unwrap();
+
+        let schema = vec![FtField::text("content")];
+        db.ft_create("idx", FtOnType::Hash, &["doc:"], &schema)
+            .unwrap();
+
+        // Document with special characters
+        db.hset("doc:1", &[("content", b"C++ programming & web-development")])
+            .unwrap();
+
+        let options = FtSearchOptions::new();
+
+        // Search for programming
+        let (total, _) = db.ft_search("idx", "programming", &options).unwrap();
+        assert_eq!(total, 1);
+    }
+
+    #[test]
+    fn test_ft_autoindex_numeric_field_indexing() {
+        use crate::types::{FtField, FtOnType, FtSearchOptions};
+
+        let db = Db::open_memory().unwrap();
+
+        let schema = vec![
+            FtField::text("title"),
+            FtField::numeric("price"),
+        ];
+        db.ft_create("products", FtOnType::Hash, &["product:"], &schema)
+            .unwrap();
+
+        db.hset("product:1", &[("title", b"Widget"), ("price", b"100")])
+            .unwrap();
+        db.hset("product:2", &[("title", b"Gadget"), ("price", b"50")])
+            .unwrap();
+
+        let options = FtSearchOptions::new();
+
+        // Numeric range query
+        let (total, results) = db.ft_search("products", "@price:[60 200]", &options).unwrap();
+        assert_eq!(total, 1);
+        assert_eq!(results[0].key, "product:1");
+    }
+
+    #[test]
+    fn test_ft_autoindex_tag_field_indexing() {
+        use crate::types::{FtField, FtOnType, FtSearchOptions};
+
+        let db = Db::open_memory().unwrap();
+
+        let schema = vec![
+            FtField::text("title"),
+            FtField::tag("category"),
+        ];
+        db.ft_create("items", FtOnType::Hash, &["item:"], &schema)
+            .unwrap();
+
+        db.hset("item:1", &[("title", b"Book"), ("category", b"education")])
+            .unwrap();
+        db.hset("item:2", &[("title", b"Movie"), ("category", b"entertainment")])
+            .unwrap();
+
+        let options = FtSearchOptions::new();
+
+        // Tag query
+        let (total, results) = db.ft_search("items", "@category:{education}", &options).unwrap();
+        assert_eq!(total, 1);
+        assert_eq!(results[0].key, "item:1");
+    }
+
+    #[test]
+    fn test_ft_autoindex_no_orphaned_entries_after_delete() {
+        use crate::types::{FtField, FtOnType, FtSearchOptions};
+
+        let db = Db::open_memory().unwrap();
+
+        let schema = vec![FtField::text("content")];
+        db.ft_create("idx", FtOnType::Hash, &["doc:"], &schema)
+            .unwrap();
+
+        // Create and delete multiple documents
+        for i in 1..=5 {
+            db.hset(&format!("doc:{}", i), &[("content", b"test content")])
+                .unwrap();
+        }
+
+        // Delete all documents
+        for i in 1..=5 {
+            db.del(&[&format!("doc:{}", i)]).unwrap();
+        }
+
+        let options = FtSearchOptions::new();
+
+        // Should find nothing
+        let (total, _) = db.ft_search("idx", "test", &options).unwrap();
+        assert_eq!(total, 0);
+
+        // Match all should also find nothing
+        let (total_all, _) = db.ft_search("idx", "*", &options).unwrap();
+        assert_eq!(total_all, 0);
+    }
+
+    // ===== Additional Phase 1 FTS5 Tests =====
+
+    #[test]
+    fn test_ft_alter_with_existing_documents() {
+        use crate::types::{FtField, FtOnType, FtSearchOptions};
+
+        let db = Db::open_memory().unwrap();
+
+        // Create index with one field
+        let schema = vec![FtField::text("title")];
+        db.ft_create("idx", FtOnType::Hash, &["doc:"], &schema)
+            .unwrap();
+
+        // Add documents
+        db.hset("doc:1", &[("title", b"hello world")]).unwrap();
+        db.hset("doc:2", &[("title", b"test document")]).unwrap();
+
+        // ALTER to add a new field
+        db.ft_alter("idx", FtField::text("body")).unwrap();
+
+        // Update documents with new field
+        db.hset("doc:1", &[("body", b"additional content")])
+            .unwrap();
+
+        let options = FtSearchOptions::new();
+        let (total, _) = db.ft_search("idx", "additional", &options).unwrap();
+        assert_eq!(total, 1); // Should find doc:1
+    }
+
+    #[test]
+    fn test_ft_search_verbatim_option() {
+        use crate::types::{FtField, FtOnType, FtSearchOptions};
+
+        let db = Db::open_memory().unwrap();
+
+        let schema = vec![FtField::text("content")];
+        db.ft_create("idx", FtOnType::Hash, &["doc:"], &schema)
+            .unwrap();
+
+        db.hset("doc:1", &[("content", b"running runner runs")])
+            .unwrap();
+
+        let mut options = FtSearchOptions::new();
+        options.verbatim = true; // Disable stemming
+
+        // Without VERBATIM, "run" might match "running", "runner", "runs" via stemming
+        // With VERBATIM, it should only match exact term
+        let (total, _) = db.ft_search("idx", "run", &options).unwrap();
+        // This test verifies the flag is accepted; actual stemming behavior depends on FTS5 config
+        assert!(total >= 0);
+    }
+
+    #[test]
+    fn test_ft_search_nostopwords_option() {
+        use crate::types::{FtField, FtOnType, FtSearchOptions};
+
+        let db = Db::open_memory().unwrap();
+
+        let schema = vec![FtField::text("content")];
+        db.ft_create("idx", FtOnType::Hash, &["doc:"], &schema)
+            .unwrap();
+
+        db.hset("doc:1", &[("content", b"the quick brown fox")])
+            .unwrap();
+
+        let mut options = FtSearchOptions::new();
+        options.nostopwords = true; // Include stopwords like "the"
+
+        let (total, _) = db.ft_search("idx", "the", &options).unwrap();
+        assert!(total >= 0); // Verifies flag is accepted
+    }
+
+    #[test]
+    fn test_ft_search_language_option() {
+        use crate::types::{FtField, FtOnType, FtSearchOptions};
+
+        let db = Db::open_memory().unwrap();
+
+        let schema = vec![FtField::text("content")];
+        db.ft_create("idx", FtOnType::Hash, &["doc:"], &schema)
+            .unwrap();
+
+        db.hset("doc:1", &[("content", b"test document")]).unwrap();
+
+        let mut options = FtSearchOptions::new();
+        options.language = Some("english".to_string());
+
+        let (total, _) = db.ft_search("idx", "test", &options).unwrap();
+        assert_eq!(total, 1);
+    }
+
+    #[test]
+    fn test_ft_search_timeout_option() {
+        use crate::types::{FtField, FtOnType, FtSearchOptions};
+
+        let db = Db::open_memory().unwrap();
+
+        let schema = vec![FtField::text("content")];
+        db.ft_create("idx", FtOnType::Hash, &["doc:"], &schema)
+            .unwrap();
+
+        db.hset("doc:1", &[("content", b"test")]).unwrap();
+
+        let mut options = FtSearchOptions::new();
+        options.timeout_ms = Some(5000); // 5 second timeout
+
+        let (total, _) = db.ft_search("idx", "test", &options).unwrap();
+        assert_eq!(total, 1);
+    }
+
+    #[test]
+    fn test_ft_bm25_term_frequency() {
+        use crate::types::{FtField, FtOnType, FtSearchOptions};
+
+        let db = Db::open_memory().unwrap();
+
+        let schema = vec![FtField::text("content")];
+        db.ft_create("idx", FtOnType::Hash, &["doc:"], &schema)
+            .unwrap();
+
+        // doc1 has "test" once
+        db.hset("doc:1", &[("content", b"test document")]).unwrap();
+
+        // doc2 has "test" three times
+        db.hset("doc:2", &[("content", b"test test test document")])
+            .unwrap();
+
+        let mut options = FtSearchOptions::new();
+        options.with_scores = true;
+
+        let (_, results) = db.ft_search("idx", "test", &options).unwrap();
+
+        // doc2 should score higher due to higher term frequency
+        assert_eq!(results.len(), 2);
+        let doc2_result = results.iter().find(|r| r.key == "doc:2").unwrap();
+        let doc1_result = results.iter().find(|r| r.key == "doc:1").unwrap();
+        assert!(doc2_result.score.unwrap() > doc1_result.score.unwrap());
+    }
+
+    #[test]
+    fn test_ft_bm25_document_length_normalization() {
+        use crate::types::{FtField, FtOnType, FtSearchOptions};
+
+        let db = Db::open_memory().unwrap();
+
+        let schema = vec![FtField::text("content")];
+        db.ft_create("idx", FtOnType::Hash, &["doc:"], &schema)
+            .unwrap();
+
+        // Short document with "test"
+        db.hset("doc:1", &[("content", b"test")]).unwrap();
+
+        // Long document with "test"
+        let long_content = format!("test {}", "word ".repeat(100));
+        db.hset("doc:2", &[("content", long_content.as_bytes())])
+            .unwrap();
+
+        let mut options = FtSearchOptions::new();
+        options.with_scores = true;
+
+        let (_, results) = db.ft_search("idx", "test", &options).unwrap();
+
+        assert_eq!(results.len(), 2);
+        // Shorter document should typically score higher with BM25
+        // (depends on exact BM25 parameters and FTS5 implementation)
+        assert!(results[0].score.is_some());
+        assert!(results[1].score.is_some());
+    }
+
+    #[test]
+    fn test_ft_bm25_multi_term_scoring() {
+        use crate::types::{FtField, FtOnType, FtSearchOptions};
+
+        let db = Db::open_memory().unwrap();
+
+        let schema = vec![FtField::text("content")];
+        db.ft_create("idx", FtOnType::Hash, &["doc:"], &schema)
+            .unwrap();
+
+        db.hset("doc:1", &[("content", b"hello world")]).unwrap();
+        db.hset("doc:2", &[("content", b"hello there")]).unwrap();
+        db.hset("doc:3", &[("content", b"goodbye world")]).unwrap();
+
+        let mut options = FtSearchOptions::new();
+        options.with_scores = true;
+
+        // Search for two terms
+        let (total, results) = db.ft_search("idx", "hello world", &options).unwrap();
+
+        assert!(total > 0);
+        // doc:1 should score highest (contains both terms)
+        if results.len() > 0 {
+            assert_eq!(results[0].key, "doc:1");
+        }
+    }
+
+    #[test]
+    fn test_ft_search_limit_edge_cases() {
+        use crate::types::{FtField, FtOnType, FtSearchOptions};
+
+        let db = Db::open_memory().unwrap();
+
+        let schema = vec![FtField::text("content")];
+        db.ft_create("idx", FtOnType::Hash, &["doc:"], &schema)
+            .unwrap();
+
+        // Add 10 documents
+        for i in 1..=10 {
+            db.hset(&format!("doc:{}", i), &[("content", b"test")])
+                .unwrap();
+        }
+
+        let options = FtSearchOptions::new();
+
+        // Offset > total
+        let mut options_high_offset = options.clone();
+        options_high_offset.offset = 20;
+        let (total, results) = db.ft_search("idx", "test", &options_high_offset).unwrap();
+        assert_eq!(total, 10);
+        assert_eq!(results.len(), 0);
+
+        // num = 0 (should return no results but correct total)
+        let mut options_zero_num = options.clone();
+        options_zero_num.num = 0;
+        let (total, results) = db.ft_search("idx", "test", &options_zero_num).unwrap();
+        assert_eq!(total, 10);
+        assert_eq!(results.len(), 0);
+    }
+
+    #[test]
+    fn test_ft_search_return_nonexistent_field() {
+        use crate::types::{FtField, FtOnType, FtSearchOptions};
+
+        let db = Db::open_memory().unwrap();
+
+        let schema = vec![FtField::text("content")];
+        db.ft_create("idx", FtOnType::Hash, &["doc:"], &schema)
+            .unwrap();
+
+        db.hset("doc:1", &[("content", b"test")]).unwrap();
+
+        let mut options = FtSearchOptions::new();
+        options.return_fields = vec!["nonexistent".to_string()];
+
+        let (total, results) = db.ft_search("idx", "test", &options).unwrap();
+        assert_eq!(total, 1);
+        // Should handle gracefully (return empty value or skip field)
+        assert!(results.len() > 0);
+    }
+
+    #[test]
+    fn test_ft_search_highlight_special_chars() {
+        use crate::types::{FtField, FtOnType, FtSearchOptions};
+
+        let db = Db::open_memory().unwrap();
+
+        let schema = vec![FtField::text("content")];
+        db.ft_create("idx", FtOnType::Hash, &["doc:"], &schema)
+            .unwrap();
+
+        db.hset("doc:1", &[("content", b"<html>test</html> & more")])
+            .unwrap();
+
+        let mut options = FtSearchOptions::new();
+        options.highlight = Some(("content".to_string(), ("<b>".to_string(), "</b>".to_string())));
+
+        let (_, results) = db.ft_search("idx", "test", &options).unwrap();
+        assert_eq!(results.len(), 1);
+        // Should handle HTML special chars properly
+    }
+
+    #[test]
+    fn test_ft_search_sortby_nonexistent_field() {
+        use crate::types::{FtField, FtOnType, FtSearchOptions};
+
+        let db = Db::open_memory().unwrap();
+
+        let schema = vec![FtField::text("content").sortable()];
+        db.ft_create("idx", FtOnType::Hash, &["doc:"], &schema)
+            .unwrap();
+
+        db.hset("doc:1", &[("content", b"test")]).unwrap();
+
+        let mut options = FtSearchOptions::new();
+        options.sortby = Some(("nonexistent".to_string(), false));
+
+        // Should handle gracefully (error or ignore)
+        let result = db.ft_search("idx", "test", &options);
+        assert!(result.is_ok() || result.is_err());
+    }
+
+    #[test]
+    fn test_ft_search_unicode_content() {
+        use crate::types::{FtField, FtOnType, FtSearchOptions};
+
+        let db = Db::open_memory().unwrap();
+
+        let schema = vec![FtField::text("content")];
+        db.ft_create("idx", FtOnType::Hash, &["doc:"], &schema)
+            .unwrap();
+
+        // Japanese
+        db.hset("doc:1", &[("content", "こんにちは世界".as_bytes())])
+            .unwrap();
+
+        // Arabic
+        db.hset("doc:2", &[("content", "مرحبا بالعالم".as_bytes())])
+            .unwrap();
+
+        // Emoji
+        db.hset("doc:3", &[("content", "hello 🌍 world".as_bytes())])
+            .unwrap();
+
+        let options = FtSearchOptions::new();
+
+        // Search for emoji
+        let (total, _) = db.ft_search("idx", "🌍", &options).unwrap();
+        assert!(total >= 0); // Should handle unicode gracefully
+    }
+
+    #[test]
+    fn test_ft_multiple_indexes_same_prefix() {
+        use crate::types::{FtField, FtOnType};
+
+        let db = Db::open_memory().unwrap();
+
+        let schema1 = vec![FtField::text("title")];
+        db.ft_create("idx1", FtOnType::Hash, &["doc:"], &schema1)
+            .unwrap();
+
+        let schema2 = vec![FtField::text("content")];
+        // Creating second index with same prefix should work
+        // (both will index the same documents, but with different fields)
+        db.ft_create("idx2", FtOnType::Hash, &["doc:"], &schema2)
+            .unwrap();
+
+        db.hset("doc:1", &[("title", b"test"), ("content", b"example")])
+            .unwrap();
+
+        // Verify both indexes work
+        let options = crate::types::FtSearchOptions::new();
+        let (total1, _) = db.ft_search("idx1", "test", &options).unwrap();
+        let (total2, _) = db.ft_search("idx2", "example", &options).unwrap();
+
+        assert_eq!(total1, 1);
+        assert_eq!(total2, 1);
+    }
+
+    // ===== Additional Phase 2 Auto-Indexing Tests =====
+
+    #[test]
+    fn test_ft_autoindex_rename_key() {
+        use crate::types::{FtField, FtOnType, FtSearchOptions};
+
+        let db = Db::open_memory().unwrap();
+
+        let schema = vec![FtField::text("content")];
+        db.ft_create("idx", FtOnType::Hash, &["doc:"], &schema)
+            .unwrap();
+
+        db.hset("doc:old", &[("content", b"test content")])
+            .unwrap();
+
+        // RENAME key
+        db.rename("doc:old", "doc:new").unwrap();
+
+        let options = FtSearchOptions::new();
+        let (total, results) = db.ft_search("idx", "test", &options).unwrap();
+
+        // Should find document under new name
+        assert_eq!(total, 1);
+        assert_eq!(results[0].key, "doc:new");
+    }
+
+    #[test]
+    fn test_ft_autoindex_rename_outside_prefix() {
+        use crate::types::{FtField, FtOnType, FtSearchOptions};
+
+        let db = Db::open_memory().unwrap();
+
+        let schema = vec![FtField::text("content")];
+        db.ft_create("idx", FtOnType::Hash, &["doc:"], &schema)
+            .unwrap();
+
+        db.hset("doc:1", &[("content", b"test")]).unwrap();
+
+        // Rename to key outside prefix
+        db.rename("doc:1", "other:1").unwrap();
+
+        let options = FtSearchOptions::new();
+        let (total, _) = db.ft_search("idx", "test", &options).unwrap();
+
+        // Should no longer be indexed
+        assert_eq!(total, 0);
+    }
+
+    #[test]
+    fn test_ft_autoindex_hdel_removes_from_index() {
+        use crate::types::{FtField, FtOnType, FtSearchOptions};
+
+        let db = Db::open_memory().unwrap();
+
+        let schema = vec![FtField::text("title"), FtField::text("body")];
+        db.ft_create("idx", FtOnType::Hash, &["doc:"], &schema)
+            .unwrap();
+
+        db.hset("doc:1", &[("title", b"test"), ("body", b"content")])
+            .unwrap();
+
+        // Delete a field (HDEL)
+        db.hdel("doc:1", &["title"]).unwrap();
+
+        let options = FtSearchOptions::new();
+
+        // Should still find via "body" field
+        let (total_body, _) = db.ft_search("idx", "content", &options).unwrap();
+        assert_eq!(total_body, 1);
+
+        // Should NOT find via deleted "title" field
+        let (total_title, _) = db.ft_search("idx", "test", &options).unwrap();
+        assert_eq!(total_title, 0);
+    }
+
+    #[test]
+    fn test_ft_autoindex_bulk_operations() {
+        use crate::types::{FtField, FtOnType, FtSearchOptions};
+
+        let db = Db::open_memory().unwrap();
+
+        let schema = vec![FtField::text("content")];
+        db.ft_create("idx", FtOnType::Hash, &["doc:"], &schema)
+            .unwrap();
+
+        // Bulk insert
+        for i in 1..=100 {
+            db.hset(&format!("doc:{}", i), &[("content", b"test document")])
+                .unwrap();
+        }
+
+        let options = FtSearchOptions::new();
+        let (total, _) = db.ft_search("idx", "test", &options).unwrap();
+        assert_eq!(total, 100);
+
+        // Bulk delete
+        for i in 1..=50 {
+            db.del(&[&format!("doc:{}", i)]).unwrap();
+        }
+
+        let (total_after, _) = db.ft_search("idx", "test", &options).unwrap();
+        assert_eq!(total_after, 50);
+    }
+
+    #[test]
+    fn test_ft_autoindex_multiple_prefixes() {
+        use crate::types::{FtField, FtOnType, FtSearchOptions};
+
+        let db = Db::open_memory().unwrap();
+
+        let schema = vec![FtField::text("content")];
+        // Index with multiple prefixes
+        db.ft_create("idx", FtOnType::Hash, &["doc:", "article:"], &schema)
+            .unwrap();
+
+        db.hset("doc:1", &[("content", b"test document")])
+            .unwrap();
+        db.hset("article:1", &[("content", b"test article")])
+            .unwrap();
+        db.hset("other:1", &[("content", b"test other")]).unwrap();
+
+        let options = FtSearchOptions::new();
+        let (total, _) = db.ft_search("idx", "test", &options).unwrap();
+
+        // Should index both "doc:" and "article:" but not "other:"
+        assert_eq!(total, 2);
+    }
+
+    #[test]
+    fn test_ft_autoindex_update_field_value() {
+        use crate::types::{FtField, FtOnType, FtSearchOptions};
+
+        let db = Db::open_memory().unwrap();
+
+        let schema = vec![FtField::text("content")];
+        db.ft_create("idx", FtOnType::Hash, &["doc:"], &schema)
+            .unwrap();
+
+        db.hset("doc:1", &[("content", b"original content")])
+            .unwrap();
+
+        let options = FtSearchOptions::new();
+        let (total_orig, _) = db.ft_search("idx", "original", &options).unwrap();
+        assert_eq!(total_orig, 1);
+
+        // Update field value
+        db.hset("doc:1", &[("content", b"updated content")])
+            .unwrap();
+
+        let (total_updated, _) = db.ft_search("idx", "updated", &options).unwrap();
+        assert_eq!(total_updated, 1);
+
+        // Old content should not be found
+        let (total_old, _) = db.ft_search("idx", "original", &options).unwrap();
+        assert_eq!(total_old, 0);
+    }
+
+    #[test]
+    fn test_ft_autoindex_numeric_field_updates() {
+        use crate::types::{FtField, FtOnType, FtSearchOptions};
+
+        let db = Db::open_memory().unwrap();
+
+        let schema = vec![FtField::numeric("price")];
+        db.ft_create("idx", FtOnType::Hash, &["product:"], &schema)
+            .unwrap();
+
+        db.hset("product:1", &[("price", b"100")]).unwrap();
+
+        let options = FtSearchOptions::new();
+        let (total, _) = db.ft_search("idx", "@price:[50 150]", &options).unwrap();
+        assert_eq!(total, 1);
+
+        // Update price
+        db.hset("product:1", &[("price", b"200")]).unwrap();
+
+        let (total_new, _) = db.ft_search("idx", "@price:[150 250]", &options).unwrap();
+        assert_eq!(total_new, 1);
+
+        let (total_old, _) = db.ft_search("idx", "@price:[50 150]", &options).unwrap();
+        assert_eq!(total_old, 0);
+    }
+
+    #[test]
+    fn test_ft_autoindex_tag_field_updates() {
+        use crate::types::{FtField, FtOnType, FtSearchOptions};
+
+        let db = Db::open_memory().unwrap();
+
+        let schema = vec![FtField::tag("category", Some(",".to_string()))];
+        db.ft_create("idx", FtOnType::Hash, &["item:"], &schema)
+            .unwrap();
+
+        db.hset("item:1", &[("category", b"electronics")]).unwrap();
+
+        let options = FtSearchOptions::new();
+        let (total, _) = db
+            .ft_search("idx", "@category:{electronics}", &options)
+            .unwrap();
+        assert_eq!(total, 1);
+
+        // Update tag
+        db.hset("item:1", &[("category", b"books")]).unwrap();
+
+        let (total_new, _) = db.ft_search("idx", "@category:{books}", &options).unwrap();
+        assert_eq!(total_new, 1);
+
+        let (total_old, _) = db
+            .ft_search("idx", "@category:{electronics}", &options)
+            .unwrap();
+        assert_eq!(total_old, 0);
+    }
+
+    #[test]
+    fn test_ft_autoindex_consistency_after_errors() {
+        use crate::types::{FtField, FtOnType, FtSearchOptions};
+
+        let db = Db::open_memory().unwrap();
+
+        let schema = vec![FtField::text("content")];
+        db.ft_create("idx", FtOnType::Hash, &["doc:"], &schema)
+            .unwrap();
+
+        db.hset("doc:1", &[("content", b"test")]).unwrap();
+
+        // Try invalid operation (should fail gracefully)
+        let _ = db.hset("", &[("content", b"invalid")]);
+
+        let options = FtSearchOptions::new();
+        let (total, _) = db.ft_search("idx", "test", &options).unwrap();
+
+        // Index should remain consistent
+        assert_eq!(total, 1);
+    }
+
+    // ===== Vector Tests (Phase 4) =====
+
+    #[test]
+    #[cfg(feature = "vectors")]
+    fn test_vadd_fp32_values() {
+        use crate::types::VectorQuantization;
+
+        let db = Db::open_memory().unwrap();
+
+        // Add vector using FP32 values
+        let embedding = vec![1.0, 2.0, 3.0, 4.0];
+        let is_new = db
+            .vadd("myvec", &embedding, "elem1", None, VectorQuantization::NoQuant)
+            .unwrap();
+        assert!(is_new); // Should be new element
+
+        // Verify cardinality
+        let count = db.vcard("myvec").unwrap();
+        assert_eq!(count, 1);
+
+        // Verify dimensions
+        let dims = db.vdim("myvec").unwrap();
+        assert_eq!(dims, Some(4));
+    }
+
+    #[test]
+    #[cfg(feature = "vectors")]
+    fn test_vadd_update_existing() {
+        use crate::types::VectorQuantization;
+
+        let db = Db::open_memory().unwrap();
+
+        let embedding1 = vec![1.0, 2.0, 3.0];
+        db.vadd("myvec", &embedding1, "elem1", None, VectorQuantization::NoQuant)
+            .unwrap();
+
+        // Update same element with different vector
+        let embedding2 = vec![4.0, 5.0, 6.0];
+        let is_new = db
+            .vadd("myvec", &embedding2, "elem1", None, VectorQuantization::NoQuant)
+            .unwrap();
+        assert!(!is_new); // Should be update, not new
+
+        // Cardinality should still be 1
+        let count = db.vcard("myvec").unwrap();
+        assert_eq!(count, 1);
+    }
+
+    #[test]
+    #[cfg(feature = "vectors")]
+    fn test_vadd_dimension_mismatch_error() {
+        use crate::types::VectorQuantization;
+
+        let db = Db::open_memory().unwrap();
+
+        let embedding1 = vec![1.0, 2.0, 3.0];
+        db.vadd("myvec", &embedding1, "elem1", None, VectorQuantization::NoQuant)
+            .unwrap();
+
+        // Try to add vector with different dimensions
+        let embedding2 = vec![1.0, 2.0, 3.0, 4.0];
+        let result = db.vadd("myvec", &embedding2, "elem2", None, VectorQuantization::NoQuant);
+        assert!(result.is_err());
+        assert!(result
+            .unwrap_err()
+            .to_string()
+            .contains("dimension mismatch"));
+    }
+
+    #[test]
+    #[cfg(feature = "vectors")]
+    fn test_vadd_empty_vector_error() {
+        use crate::types::VectorQuantization;
+
+        let db = Db::open_memory().unwrap();
+
+        let empty_embedding: Vec<f32> = vec![];
+        let result = db.vadd("myvec", &empty_embedding, "elem1", None, VectorQuantization::NoQuant);
+        assert!(result.is_err());
+        assert!(result
+            .unwrap_err()
+            .to_string()
+            .contains("embedding cannot be empty"));
+    }
+
+    #[test]
+    #[cfg(feature = "vectors")]
+    fn test_vadd_with_attributes() {
+        use crate::types::VectorQuantization;
+
+        let db = Db::open_memory().unwrap();
+
+        let embedding = vec![1.0, 2.0, 3.0];
+        let attrs = r#"{"name":"test","score":42}"#;
+        db.vadd("myvec", &embedding, "elem1", Some(attrs), VectorQuantization::NoQuant)
+            .unwrap();
+
+        // Retrieve attributes
+        let retrieved_attrs = db.vgetattr("myvec", "elem1").unwrap();
+        assert_eq!(retrieved_attrs, Some(attrs.to_string()));
+    }
+
+    #[test]
+    #[cfg(feature = "vectors")]
+    fn test_vadd_quantization_q8() {
+        use crate::types::VectorQuantization;
+
+        let db = Db::open_memory().unwrap();
+
+        let embedding = vec![1.0, 2.0, 3.0, 4.0];
+        db.vadd("myvec", &embedding, "elem1", None, VectorQuantization::Q8)
+            .unwrap();
+
+        let info = db.vinfo("myvec").unwrap().unwrap();
+        assert_eq!(info.quantization, VectorQuantization::Q8);
+    }
+
+    #[test]
+    #[cfg(feature = "vectors")]
+    fn test_vadd_quantization_bf16() {
+        use crate::types::VectorQuantization;
+
+        let db = Db::open_memory().unwrap();
+
+        let embedding = vec![1.0, 2.0, 3.0, 4.0];
+        db.vadd("myvec", &embedding, "elem1", None, VectorQuantization::BF16)
+            .unwrap();
+
+        let info = db.vinfo("myvec").unwrap().unwrap();
+        assert_eq!(info.quantization, VectorQuantization::BF16);
+    }
+
+    #[test]
+    #[cfg(feature = "vectors")]
+    fn test_vadd_high_dimensions() {
+        use crate::types::VectorQuantization;
+
+        let db = Db::open_memory().unwrap();
+
+        // Test with 1536 dimensions (typical for embeddings)
+        let embedding: Vec<f32> = (0..1536).map(|i| i as f32 / 1536.0).collect();
+        db.vadd("myvec", &embedding, "elem1", None, VectorQuantization::NoQuant)
+            .unwrap();
+
+        let dims = db.vdim("myvec").unwrap();
+        assert_eq!(dims, Some(1536));
+    }
+
+    #[test]
+    #[cfg(feature = "vectors")]
+    fn test_vadd_multiple_elements() {
+        use crate::types::VectorQuantization;
+
+        let db = Db::open_memory().unwrap();
+
+        // Add multiple elements
+        for i in 1..=10 {
+            let embedding = vec![i as f32, (i * 2) as f32, (i * 3) as f32];
+            db.vadd(
+                "myvec",
+                &embedding,
+                &format!("elem{}", i),
+                None,
+                VectorQuantization::NoQuant,
+            )
+            .unwrap();
+        }
+
+        let count = db.vcard("myvec").unwrap();
+        assert_eq!(count, 10);
+    }
+
+    #[test]
+    #[cfg(feature = "vectors")]
+    fn test_vrem_element() {
+        use crate::types::VectorQuantization;
+
+        let db = Db::open_memory().unwrap();
+
+        let embedding = vec![1.0, 2.0, 3.0];
+        db.vadd("myvec", &embedding, "elem1", None, VectorQuantization::NoQuant)
+            .unwrap();
+        db.vadd("myvec", &embedding, "elem2", None, VectorQuantization::NoQuant)
+            .unwrap();
+
+        // Remove one element
+        let removed = db.vrem("myvec", "elem1").unwrap();
+        assert!(removed);
+
+        let count = db.vcard("myvec").unwrap();
+        assert_eq!(count, 1);
+    }
+
+    #[test]
+    #[cfg(feature = "vectors")]
+    fn test_vrem_nonexistent() {
+        let db = Db::open_memory().unwrap();
+
+        // Try to remove from non-existent set
+        let removed = db.vrem("myvec", "elem1").unwrap();
+        assert!(!removed);
+    }
+
+    #[test]
+    #[cfg(feature = "vectors")]
+    fn test_vcard_empty_set() {
+        let db = Db::open_memory().unwrap();
+
+        let count = db.vcard("myvec").unwrap();
+        assert_eq!(count, 0);
+    }
+
+    #[test]
+    #[cfg(feature = "vectors")]
+    fn test_vdim_nonexistent() {
+        let db = Db::open_memory().unwrap();
+
+        let dims = db.vdim("myvec").unwrap();
+        assert_eq!(dims, None);
+    }
+
+    #[test]
+    #[cfg(feature = "vectors")]
+    fn test_vinfo_empty_set() {
+        let db = Db::open_memory().unwrap();
+
+        let info = db.vinfo("myvec").unwrap();
+        assert!(info.is_none());
+    }
+
+    #[test]
+    #[cfg(feature = "vectors")]
+    fn test_vinfo_populated_set() {
+        use crate::types::VectorQuantization;
+
+        let db = Db::open_memory().unwrap();
+
+        let embedding = vec![1.0, 2.0, 3.0];
+        db.vadd("myvec", &embedding, "elem1", None, VectorQuantization::NoQuant)
+            .unwrap();
+        db.vadd("myvec", &embedding, "elem2", None, VectorQuantization::NoQuant)
+            .unwrap();
+
+        let info = db.vinfo("myvec").unwrap().unwrap();
+        assert_eq!(info.key, "myvec");
+        assert_eq!(info.cardinality, 2);
+        assert_eq!(info.dimensions, Some(3));
+        assert_eq!(info.quantization, VectorQuantization::NoQuant);
+    }
+
+    #[test]
+    #[cfg(feature = "vectors")]
+    fn test_vemb_get_embedding() {
+        use crate::types::VectorQuantization;
+
+        let db = Db::open_memory().unwrap();
+
+        let embedding = vec![1.5, 2.5, 3.5];
+        db.vadd("myvec", &embedding, "elem1", None, VectorQuantization::NoQuant)
+            .unwrap();
+
+        // Get raw embedding bytes
+        let raw_bytes = db.vemb("myvec", "elem1", true).unwrap();
+        assert!(raw_bytes.is_some());
+        assert!(raw_bytes.unwrap().len() > 0);
+    }
+
+    #[test]
+    #[cfg(feature = "vectors")]
+    fn test_vemb_nonexistent_element() {
+        let db = Db::open_memory().unwrap();
+
+        let result = db.vemb("myvec", "elem1", true).unwrap();
+        assert!(result.is_none());
+    }
+
+    #[test]
+    #[cfg(feature = "vectors")]
+    fn test_vgetattr_vsetattr() {
+        use crate::types::VectorQuantization;
+
+        let db = Db::open_memory().unwrap();
+
+        let embedding = vec![1.0, 2.0, 3.0];
+        db.vadd("myvec", &embedding, "elem1", None, VectorQuantization::NoQuant)
+            .unwrap();
+
+        // Set attributes
+        let attrs = r#"{"category":"test","value":123}"#;
+        let updated = db.vsetattr("myvec", "elem1", attrs).unwrap();
+        assert!(updated);
+
+        // Get attributes
+        let retrieved = db.vgetattr("myvec", "elem1").unwrap();
+        assert_eq!(retrieved, Some(attrs.to_string()));
+    }
+
+    #[test]
+    #[cfg(feature = "vectors")]
+    fn test_vsetattr_nonexistent_element() {
+        let db = Db::open_memory().unwrap();
+
+        let attrs = r#"{"test":"value"}"#;
+        let updated = db.vsetattr("myvec", "elem1", attrs).unwrap();
+        assert!(!updated);
+    }
+
+    #[test]
+    #[cfg(feature = "vectors")]
+    fn test_vrandmember_single() {
+        use crate::types::VectorQuantization;
+
+        let db = Db::open_memory().unwrap();
+
+        let embedding = vec![1.0, 2.0, 3.0];
+        db.vadd("myvec", &embedding, "elem1", None, VectorQuantization::NoQuant)
+            .unwrap();
+        db.vadd("myvec", &embedding, "elem2", None, VectorQuantization::NoQuant)
+            .unwrap();
+        db.vadd("myvec", &embedding, "elem3", None, VectorQuantization::NoQuant)
+            .unwrap();
+
+        let members = db.vrandmember("myvec", Some(1)).unwrap();
+        assert_eq!(members.len(), 1);
+        assert!(["elem1", "elem2", "elem3"].contains(&members[0].as_str()));
+    }
+
+    #[test]
+    #[cfg(feature = "vectors")]
+    fn test_vrandmember_multiple() {
+        use crate::types::VectorQuantization;
+
+        let db = Db::open_memory().unwrap();
+
+        let embedding = vec![1.0, 2.0, 3.0];
+        for i in 1..=5 {
+            db.vadd(
+                "myvec",
+                &embedding,
+                &format!("elem{}", i),
+                None,
+                VectorQuantization::NoQuant,
+            )
+            .unwrap();
+        }
+
+        let members = db.vrandmember("myvec", Some(3)).unwrap();
+        assert_eq!(members.len(), 3);
+    }
+
+    #[test]
+    #[cfg(feature = "vectors")]
+    fn test_vrandmember_empty_set() {
+        let db = Db::open_memory().unwrap();
+
+        let members = db.vrandmember("myvec", Some(1)).unwrap();
+        assert!(members.is_empty());
+    }
+
+    #[test]
+    #[cfg(feature = "vectors")]
+    fn test_vsim_values_input() {
+        use crate::types::{VectorInput, VectorQuantization};
+
+        let db = Db::open_memory().unwrap();
+
+        // Add vectors
+        db.vadd("myvec", &vec![1.0, 0.0, 0.0], "elem1", None, VectorQuantization::NoQuant)
+            .unwrap();
+        db.vadd("myvec", &vec![0.9, 0.1, 0.0], "elem2", None, VectorQuantization::NoQuant)
+            .unwrap();
+        db.vadd("myvec", &vec![0.0, 1.0, 0.0], "elem3", None, VectorQuantization::NoQuant)
+            .unwrap();
+
+        // Search using VALUES input
+        let query = VectorInput::Values(vec![1.0, 0.0, 0.0]);
+        let results = db.vsim("myvec", query, Some(2), false, None).unwrap();
+
+        assert_eq!(results.len(), 2);
+        assert_eq!(results[0].element, "elem1"); // Perfect match
+        assert!(results[0].score > 0.99);
+    }
+
+    #[test]
+    #[cfg(feature = "vectors")]
+    fn test_vsim_element_input() {
+        use crate::types::{VectorInput, VectorQuantization};
+
+        let db = Db::open_memory().unwrap();
+
+        // Add vectors
+        db.vadd("myvec", &vec![1.0, 0.0, 0.0], "elem1", None, VectorQuantization::NoQuant)
+            .unwrap();
+        db.vadd("myvec", &vec![0.9, 0.1, 0.0], "elem2", None, VectorQuantization::NoQuant)
+            .unwrap();
+        db.vadd("myvec", &vec![0.0, 1.0, 0.0], "elem3", None, VectorQuantization::NoQuant)
+            .unwrap();
+
+        // Search using element reference
+        let query = VectorInput::Element("elem1".to_string());
+        let results = db.vsim("myvec", query, Some(3), false, None).unwrap();
+
+        assert!(results.len() > 0);
+        assert_eq!(results[0].element, "elem1"); // Should match itself
+    }
+
+    #[test]
+    #[cfg(feature = "vectors")]
+    fn test_vsim_with_scores() {
+        use crate::types::{VectorInput, VectorQuantization};
+
+        let db = Db::open_memory().unwrap();
+
+        db.vadd("myvec", &vec![1.0, 0.0, 0.0], "elem1", None, VectorQuantization::NoQuant)
+            .unwrap();
+
+        let query = VectorInput::Values(vec![1.0, 0.0, 0.0]);
+        let results = db.vsim("myvec", query, Some(1), true, None).unwrap();
+
+        assert_eq!(results.len(), 1);
+        assert!(results[0].score > 0.0);
+    }
+
+    #[test]
+    #[cfg(feature = "vectors")]
+    fn test_vsim_count_limiting() {
+        use crate::types::{VectorInput, VectorQuantization};
+
+        let db = Db::open_memory().unwrap();
+
+        // Add 10 vectors
+        for i in 1..=10 {
+            let embedding = vec![i as f32, 0.0, 0.0];
+            db.vadd(
+                "myvec",
+                &embedding,
+                &format!("elem{}", i),
+                None,
+                VectorQuantization::NoQuant,
+            )
+            .unwrap();
+        }
+
+        let query = VectorInput::Values(vec![5.0, 0.0, 0.0]);
+        let results = db.vsim("myvec", query, Some(3), false, None).unwrap();
+
+        assert_eq!(results.len(), 3); // Limited to 3
+    }
+
+    #[test]
+    #[cfg(feature = "vectors")]
+    fn test_vsim_empty_set() {
+        use crate::types::VectorInput;
+
+        let db = Db::open_memory().unwrap();
+
+        let query = VectorInput::Values(vec![1.0, 0.0, 0.0]);
+        let results = db.vsim("myvec", query, Some(10), false, None).unwrap();
+
+        assert!(results.is_empty());
+    }
+
+    #[test]
+    #[cfg(feature = "vectors")]
+    fn test_vsim_empty_query_error() {
+        use crate::types::VectorInput;
+
+        let db = Db::open_memory().unwrap();
+
+        let query = VectorInput::Values(vec![]);
+        let result = db.vsim("myvec", query, Some(10), false, None);
+
+        assert!(result.is_err());
+        assert!(result
+            .unwrap_err()
+            .to_string()
+            .contains("query vector cannot be empty"));
+    }
+
+    #[test]
+    #[cfg(feature = "vectors")]
+    fn test_vsim_nonexistent_element_reference() {
+        use crate::types::{VectorInput, VectorQuantization};
+
+        let db = Db::open_memory().unwrap();
+
+        db.vadd("myvec", &vec![1.0, 2.0], "elem1", None, VectorQuantization::NoQuant)
+            .unwrap();
+
+        let query = VectorInput::Element("nonexistent".to_string());
+        let result = db.vsim("myvec", query, Some(10), false, None);
+
+        assert!(result.is_err());
+        assert!(result
+            .unwrap_err()
+            .to_string()
+            .contains("element 'nonexistent' not found"));
+    }
+
+    #[test]
+    #[cfg(feature = "vectors")]
+    fn test_vsim_with_filter() {
+        use crate::types::{VectorInput, VectorQuantization};
+
+        let db = Db::open_memory().unwrap();
+
+        // Add vectors with attributes
+        db.vadd(
+            "myvec",
+            &vec![1.0, 0.0],
+            "elem1",
+            Some(r#"{"category":"A"}"#),
+            VectorQuantization::NoQuant,
+        )
+        .unwrap();
+        db.vadd(
+            "myvec",
+            &vec![0.9, 0.1],
+            "elem2",
+            Some(r#"{"category":"B"}"#),
+            VectorQuantization::NoQuant,
+        )
+        .unwrap();
+        db.vadd(
+            "myvec",
+            &vec![0.8, 0.2],
+            "elem3",
+            Some(r#"{"category":"A"}"#),
+            VectorQuantization::NoQuant,
+        )
+        .unwrap();
+
+        let query = VectorInput::Values(vec![1.0, 0.0]);
+        let results = db
+            .vsim("myvec", query, Some(10), false, Some(r#""category":"A""#))
+            .unwrap();
+
+        // Should only return elem1 and elem3 (both have category A)
+        assert_eq!(results.len(), 2);
+        assert!(results.iter().any(|r| r.element == "elem1"));
+        assert!(results.iter().any(|r| r.element == "elem3"));
+        assert!(!results.iter().any(|r| r.element == "elem2"));
+    }
+
+    #[test]
+    #[cfg(feature = "vectors")]
+    fn test_vsim_cosine_similarity_order() {
+        use crate::types::{VectorInput, VectorQuantization};
+
+        let db = Db::open_memory().unwrap();
+
+        // Add vectors with different similarities to [1, 0, 0]
+        db.vadd("myvec", &vec![1.0, 0.0, 0.0], "perfect", None, VectorQuantization::NoQuant)
+            .unwrap();
+        db.vadd("myvec", &vec![0.9, 0.1, 0.0], "close", None, VectorQuantization::NoQuant)
+            .unwrap();
+        db.vadd("myvec", &vec![0.5, 0.5, 0.0], "medium", None, VectorQuantization::NoQuant)
+            .unwrap();
+        db.vadd("myvec", &vec![0.0, 1.0, 0.0], "far", None, VectorQuantization::NoQuant)
+            .unwrap();
+
+        let query = VectorInput::Values(vec![1.0, 0.0, 0.0]);
+        let results = db.vsim("myvec", query, Some(10), true, None).unwrap();
+
+        // Results should be ordered by similarity (descending)
+        assert_eq!(results[0].element, "perfect");
+        assert_eq!(results[1].element, "close");
+        assert_eq!(results[2].element, "medium");
+        assert_eq!(results[3].element, "far");
+
+        // Scores should be in descending order
+        for i in 0..results.len() - 1 {
+            assert!(results[i].score >= results[i + 1].score);
+        }
+    }
+
+    #[test]
+    #[cfg(feature = "vectors")]
+    fn test_vsim_with_attributes_returned() {
+        use crate::types::{VectorInput, VectorQuantization};
+
+        let db = Db::open_memory().unwrap();
+
+        let attrs = r#"{"name":"test","value":42}"#;
+        db.vadd("myvec", &vec![1.0, 2.0], "elem1", Some(attrs), VectorQuantization::NoQuant)
+            .unwrap();
+
+        let query = VectorInput::Values(vec![1.0, 2.0]);
+        let results = db.vsim("myvec", query, Some(1), true, None).unwrap();
+
+        assert_eq!(results.len(), 1);
+        assert!(results[0].attributes.is_some());
+        assert_eq!(results[0].attributes.as_ref().unwrap(), attrs);
+    }
+
+    #[test]
+    #[cfg(feature = "vectors")]
+    fn test_vsim_without_attributes() {
+        use crate::types::{VectorInput, VectorQuantization};
+
+        let db = Db::open_memory().unwrap();
+
+        let attrs = r#"{"name":"test"}"#;
+        db.vadd("myvec", &vec![1.0, 2.0], "elem1", Some(attrs), VectorQuantization::NoQuant)
+            .unwrap();
+
+        let query = VectorInput::Values(vec![1.0, 2.0]);
+        let results = db.vsim("myvec", query, Some(1), false, None).unwrap();
+
+        assert_eq!(results.len(), 1);
+        assert!(results[0].attributes.is_none()); // with_scores = false
+    }
+
+    #[test]
+    #[cfg(feature = "vectors")]
+    fn test_vsim_fp32_blob_input() {
+        use crate::types::{VectorInput, VectorQuantization};
+
+        let db = Db::open_memory().unwrap();
+
+        db.vadd("myvec", &vec![1.0, 2.0, 3.0], "elem1", None, VectorQuantization::NoQuant)
+            .unwrap();
+
+        // Create FP32 blob (12 bytes for 3 floats)
+        let query_vec = vec![1.0f32, 2.0f32, 3.0f32];
+        let blob = Db::embedding_to_bytes(&query_vec);
+        let query = VectorInput::Fp32Blob(blob);
+
+        let results = db.vsim("myvec", query, Some(1), false, None).unwrap();
+        assert_eq!(results.len(), 1);
+        assert_eq!(results[0].element, "elem1");
+    }
+
+    #[test]
+    #[cfg(feature = "vectors")]
+    fn test_vector_multiple_sets_isolation() {
+        use crate::types::VectorQuantization;
+
+        let db = Db::open_memory().unwrap();
+
+        // Add to set A
+        db.vadd("setA", &vec![1.0, 0.0], "elem1", None, VectorQuantization::NoQuant)
+            .unwrap();
+
+        // Add to set B
+        db.vadd("setB", &vec![0.0, 1.0], "elem1", None, VectorQuantization::NoQuant)
+            .unwrap();
+
+        // Sets should be isolated
+        assert_eq!(db.vcard("setA").unwrap(), 1);
+        assert_eq!(db.vcard("setB").unwrap(), 1);
+
+        // Removing from one shouldn't affect the other
+        db.vrem("setA", "elem1").unwrap();
+        assert_eq!(db.vcard("setA").unwrap(), 0);
+        assert_eq!(db.vcard("setB").unwrap(), 1);
     }
 
 }

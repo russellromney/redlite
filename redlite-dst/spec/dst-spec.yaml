@@ -1,0 +1,298 @@
+# redlite-dst: Deterministic Simulation Testing Specification
+# Version: 1.0.0
+#
+# This spec defines all test scenarios, invariants, and fault types
+# for comprehensive testing of Redlite.
+
+version: "1.0"
+
+# =============================================================================
+# INVARIANTS
+# =============================================================================
+# These are properties that must ALWAYS hold, regardless of faults or timing.
+
+invariants:
+  # Data integrity
+  - name: "set_get_roundtrip"
+    description: "SET k v; GET k => v"
+    category: "data_integrity"
+
+  - name: "incr_monotonic"
+    description: "INCR on same key always increases value"
+    category: "data_integrity"
+
+  - name: "list_order_preserved"
+    description: "LPUSH/RPUSH preserve insertion order"
+    category: "data_integrity"
+
+  - name: "hash_fields_unique"
+    description: "Hash fields are unique per key"
+    category: "data_integrity"
+
+  - name: "sorted_set_ordering"
+    description: "ZRANGE returns elements in score order"
+    category: "data_integrity"
+
+  # Persistence
+  - name: "crash_recovery_consistent"
+    description: "Data survives crash and restart"
+    category: "persistence"
+
+  - name: "wal_durability"
+    description: "Committed writes survive crash"
+    category: "persistence"
+
+  # Expiration
+  - name: "expire_removes_key"
+    description: "Expired keys return nil"
+    category: "expiration"
+
+  - name: "ttl_monotonic_decrease"
+    description: "TTL decreases monotonically"
+    category: "expiration"
+
+# =============================================================================
+# FAULT TYPES
+# =============================================================================
+# Faults that can be injected during chaos testing.
+
+faults:
+  - name: "disk_full"
+    description: "Simulate disk full error on write"
+    severity: "high"
+    recovery: "Should return error, not corrupt data"
+
+  - name: "corrupt_read"
+    description: "Return corrupted data from disk read"
+    severity: "critical"
+    recovery: "Should detect corruption via checksum"
+
+  - name: "corrupt_write"
+    description: "Corrupt data being written to disk"
+    severity: "critical"
+    recovery: "Should be detected on next read"
+
+  - name: "slow_write"
+    description: "Introduce latency on disk writes"
+    severity: "low"
+    recovery: "Should complete eventually, no data loss"
+
+  - name: "connection_drop"
+    description: "Drop client connection mid-operation"
+    severity: "medium"
+    recovery: "Should handle partial writes correctly"
+
+  - name: "crash_mid_write"
+    description: "Process crash during write operation"
+    severity: "high"
+    recovery: "WAL should ensure consistency on restart"
+
+  - name: "memory_pressure"
+    description: "Simulate low memory conditions"
+    severity: "medium"
+    recovery: "Should handle gracefully or reject new writes"
+
+# =============================================================================
+# TEST SCENARIOS
+# =============================================================================
+# Pre-defined test scenarios for different testing modes.
+
+scenarios:
+  smoke:
+    description: "Quick sanity checks (<1 min)"
+    tests:
+      - name: "basic_set_get"
+        operations: ["SET", "GET"]
+        keys: 100
+        iterations: 1000
+
+      - name: "basic_incr_decr"
+        operations: ["INCR", "DECR", "INCRBY", "DECRBY"]
+        keys: 50
+        iterations: 500
+
+      - name: "basic_list_ops"
+        operations: ["LPUSH", "RPUSH", "LPOP", "RPOP", "LRANGE"]
+        keys: 20
+        iterations: 500
+
+      - name: "basic_hash_ops"
+        operations: ["HSET", "HGET", "HDEL", "HGETALL"]
+        keys: 20
+        iterations: 500
+
+      - name: "basic_set_ops"
+        operations: ["SADD", "SREM", "SMEMBERS", "SISMEMBER"]
+        keys: 20
+        iterations: 500
+
+      - name: "basic_sorted_set"
+        operations: ["ZADD", "ZREM", "ZRANGE", "ZSCORE"]
+        keys: 20
+        iterations: 500
+
+      - name: "basic_persistence"
+        operations: ["SET", "GET"]
+        keys: 100
+        iterations: 100
+        include_restart: true
+
+  properties:
+    description: "Property-based testing scenarios"
+    default_seeds: 1000
+    tests:
+      - name: "string_operations"
+        invariants: ["set_get_roundtrip"]
+        operations: ["SET", "GET", "APPEND", "STRLEN", "GETRANGE"]
+
+      - name: "numeric_operations"
+        invariants: ["incr_monotonic"]
+        operations: ["INCR", "DECR", "INCRBY", "DECRBY", "INCRBYFLOAT"]
+
+      - name: "list_operations"
+        invariants: ["list_order_preserved"]
+        operations: ["LPUSH", "RPUSH", "LPOP", "RPOP", "LRANGE", "LINDEX"]
+
+      - name: "hash_operations"
+        invariants: ["hash_fields_unique"]
+        operations: ["HSET", "HGET", "HDEL", "HEXISTS", "HGETALL"]
+
+      - name: "set_operations"
+        invariants: []
+        operations: ["SADD", "SREM", "SMEMBERS", "SISMEMBER", "SCARD"]
+
+      - name: "sorted_set_operations"
+        invariants: ["sorted_set_ordering"]
+        operations: ["ZADD", "ZREM", "ZRANGE", "ZRANGEBYSCORE", "ZSCORE"]
+
+      - name: "expiration"
+        invariants: ["expire_removes_key", "ttl_monotonic_decrease"]
+        operations: ["SET", "EXPIRE", "TTL", "PTTL", "PERSIST"]
+
+  chaos:
+    description: "Fault injection scenarios"
+    default_seeds: 100
+    tests:
+      - name: "disk_full_recovery"
+        faults: ["disk_full"]
+        operations: ["SET", "HSET", "LPUSH", "ZADD"]
+        expect: "error_returned"
+
+      - name: "corruption_detection"
+        faults: ["corrupt_read", "corrupt_write"]
+        operations: ["SET", "GET"]
+        expect: "corruption_detected"
+
+      - name: "crash_recovery"
+        faults: ["crash_mid_write"]
+        operations: ["SET", "HSET", "LPUSH"]
+        expect: "consistent_after_restart"
+
+      - name: "slow_disk_handling"
+        faults: ["slow_write"]
+        operations: ["SET", "HSET"]
+        expect: "eventual_completion"
+
+  stress:
+    description: "Scale and performance scenarios"
+    tests:
+      - name: "high_connection_count"
+        connections: [10, 100, 1000]
+        operations_per_connection: 10000
+        measure: ["throughput", "latency_p99"]
+
+      - name: "large_key_space"
+        keys: [1000, 100000, 1000000]
+        operations: 100000
+        measure: ["throughput", "memory"]
+
+      - name: "hot_key_contention"
+        keys: 10
+        connections: 100
+        operations: 100000
+        measure: ["throughput", "latency_p99"]
+
+      - name: "large_values"
+        value_sizes: [1024, 10240, 102400]  # 1KB, 10KB, 100KB
+        operations: 10000
+        measure: ["throughput", "memory"]
+
+  soak:
+    description: "Long-running stability tests"
+    tests:
+      - name: "memory_stability"
+        duration: "1h"
+        operations_per_second: 1000
+        measure: ["rss_growth", "heap_fragmentation"]
+        alert_threshold:
+          rss_growth_percent: 10
+
+      - name: "throughput_stability"
+        duration: "1h"
+        operations_per_second: 1000
+        measure: ["throughput_variance"]
+        alert_threshold:
+          throughput_drop_percent: 20
+
+# =============================================================================
+# ORACLE COMPARISONS
+# =============================================================================
+# Commands and scenarios for Redis compatibility testing.
+
+oracle:
+  description: "Redis compatibility verification"
+  reference: "redis://localhost:6379"
+
+  command_groups:
+    strings:
+      commands: ["SET", "GET", "APPEND", "STRLEN", "INCR", "DECR", "MGET", "MSET"]
+      test_cases: 1000
+
+    lists:
+      commands: ["LPUSH", "RPUSH", "LPOP", "RPOP", "LRANGE", "LLEN", "LINDEX"]
+      test_cases: 1000
+
+    hashes:
+      commands: ["HSET", "HGET", "HDEL", "HGETALL", "HMGET", "HMSET", "HLEN"]
+      test_cases: 1000
+
+    sets:
+      commands: ["SADD", "SREM", "SMEMBERS", "SISMEMBER", "SCARD", "SPOP"]
+      test_cases: 1000
+
+    sorted_sets:
+      commands: ["ZADD", "ZREM", "ZRANGE", "ZRANGEBYSCORE", "ZSCORE", "ZRANK"]
+      test_cases: 1000
+
+    expiration:
+      commands: ["EXPIRE", "TTL", "PTTL", "PERSIST", "EXPIREAT"]
+      test_cases: 500
+
+# =============================================================================
+# SIMULATION PARAMETERS
+# =============================================================================
+# Configuration for deterministic simulation testing.
+
+simulation:
+  description: "MadSim deterministic simulation parameters"
+
+  default_config:
+    seeds: 1000
+    operations_per_seed: 10000
+    clients: 10
+    tick_ms: 1
+
+  scenarios:
+    - name: "normal_operations"
+      description: "Standard workload without faults"
+      fault_rate: 0.0
+
+    - name: "occasional_faults"
+      description: "Realistic fault frequency"
+      fault_rate: 0.001
+      faults: ["slow_write", "connection_drop"]
+
+    - name: "hostile_environment"
+      description: "High fault rate stress test"
+      fault_rate: 0.01
+      faults: ["disk_full", "crash_mid_write", "corrupt_read"]
