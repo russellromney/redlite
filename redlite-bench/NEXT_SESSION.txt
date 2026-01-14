@@ -1,0 +1,139 @@
+redlite-bench/ - Fly.io Distributed Benchmarking System
+
+GOAL: Run matrix-style benchmarks on Fly.io infrastructure with multiple deployment modes to measure real-world performance characteristics.
+
+CURRENT STATE:
+- Rust benchmark implementation exists with 45+ operations across 6 Redis data types
+- Can run locally with --scenarios, --iterations, --dataset-size, --concurrency
+- No Fly.io deployment infrastructure yet
+
+DEPLOYMENT MODES TO SUPPORT:
+
+1. Single Instance Mode
+   - Deploy one Fly.io machine running redlite server
+   - Benchmark client runs on same machine (localhost)
+   - Measures: pure database performance, no network overhead
+   - Use case: embedded mode performance baseline
+
+2. Client-Server Mode (Same Region)
+   - Deploy redlite server on one Fly machine
+   - Deploy benchmark client on separate Fly machine (same region)
+   - Measures: local network latency, realistic single-region deployment
+   - Use case: typical web app deployment
+
+3. Multi-Region Mode
+   - Deploy redlite server in one region (e.g., iad - Ashburn)
+   - Deploy benchmark clients in multiple regions (e.g., syd, fra, gru)
+   - Measures: cross-region latency impact
+   - Use case: global application performance
+
+4. Orchestrated Load Test Mode
+   - Deploy redlite server on one Fly machine
+   - Deploy orchestrator machine to coordinate
+   - Deploy N worker machines to generate concurrent load
+   - Orchestrator aggregates results from all workers
+   - Measures: horizontal scaling, concurrent load handling
+   - Use case: stress testing, finding breaking points
+
+5. Cluster Mode (Future)
+   - Deploy multiple redlite instances with walsync replication
+   - Benchmark against primary and replicas
+   - Measures: replication lag, read scaling
+   - Use case: HA deployment validation
+
+IMPLEMENTATION PLAN:
+
+Phase 1: Basic Fly.io Infrastructure (Session 25)
+- [ ] Create fly.toml for redlite server
+- [ ] Create fly.toml for benchmark client
+- [ ] Create Dockerfile for redlite-bench runner
+- [ ] Test Mode 1: Single instance benchmark
+- [ ] Test Mode 2: Client-server same region
+
+Phase 2: Orchestration Layer (Session 26)
+- [ ] Create orchestrator service (Rust or Python)
+- [ ] Implement worker coordination protocol
+- [ ] Result aggregation from multiple workers
+- [ ] Test Mode 4: Orchestrated load test with 2-3 workers
+
+Phase 3: Multi-Region & Reporting (Session 27)
+- [ ] Deploy across multiple Fly regions
+- [ ] Collect region-specific metrics (latency by region)
+- [ ] Generate comparative reports across modes
+- [ ] Test Mode 3: Multi-region benchmarks
+
+Phase 4: Automation & CI (Session 28)
+- [ ] GitHub Actions workflow to trigger Fly benchmarks
+- [ ] Automated result comparison (detect regressions)
+- [ ] Store historical results (SQLite on Fly volume?)
+- [ ] Dashboard for viewing trends over time
+
+TECHNICAL DETAILS:
+
+Fly.toml Structure:
+```toml
+# fly-server.toml - Redlite server
+app = "redlite-bench-server"
+primary_region = "iad"
+
+[build]
+  dockerfile = "Dockerfile.server"
+
+[[services]]
+  internal_port = 6379
+  protocol = "tcp"
+
+  [[services.ports]]
+    port = 6379
+
+[env]
+  REDLITE_CACHE_MB = "512"
+  REDLITE_STORAGE = "file"
+
+[[vm]]
+  cpu_kind = "performance"
+  cpus = 2
+  memory_mb = 2048
+```
+
+Orchestrator API:
+- POST /benchmark/start - Start distributed benchmark
+- GET /benchmark/status/:id - Check progress
+- GET /benchmark/results/:id - Fetch aggregated results
+- Workers poll for tasks, push results
+
+Metrics to Collect:
+- Throughput (ops/sec) per deployment mode
+- Latency percentiles (p50, p95, p99) per mode
+- Memory usage on server
+- Network transfer per mode
+- Cost per operation (Fly.io pricing)
+
+SUGGESTED STARTING POINT:
+
+Session 25 Focus: Get Mode 1 & 2 working
+1. Create Dockerfile.server and Dockerfile.client
+2. Create fly-server.toml and fly-client.toml
+3. Deploy both to Fly.io
+4. Run matrix benchmark: ./target/release/redlite-bench run-benchmarks --scenarios all
+5. Compare results: localhost vs fly-server vs fly-client-server
+6. Document findings in BENCHMARK_RESULTS.md
+
+Expected Output:
+- Quantify network overhead (localhost vs same-region client-server)
+- Baseline Fly.io performance metrics
+- Foundation for multi-region and orchestrated modes
+
+FILES TO CREATE:
+- fly-server.toml (redlite server config)
+- fly-client.toml (benchmark client config)
+- Dockerfile.server (redlite server image)
+- Dockerfile.client (benchmark runner image)
+- deploy.sh (deployment automation script)
+- BENCHMARK_RESULTS.md (results tracking)
+
+STRETCH GOALS:
+- Auto-scaling based on load
+- Cost optimization (scale down when idle)
+- Grafana dashboard for live metrics
+- Comparison against managed Redis services (Redis Cloud, AWS ElastiCache)
