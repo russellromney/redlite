@@ -696,4 +696,9 @@ impl RedisLikeClient for RedisClient {
         }
         Ok(None)
     }
+
+    async fn get_history_count(&self) -> ClientResult<Option<(i64, i64)>> {
+        // Redis doesn't support history tracking
+        Ok(None)
+    }
 }

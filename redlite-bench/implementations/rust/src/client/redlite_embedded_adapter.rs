@@ -1,5 +1,6 @@
 use async_trait::async_trait;
 use redlite::{Db, StreamId, ZMember};
+use std::path::PathBuf;
 use std::sync::Arc;
 
 use super::{ClientError, ClientResult, RedisLikeClient, StreamEntry};
@@ -9,24 +10,32 @@ use super::{ClientError, ClientResult, RedisLikeClient, StreamEntry};
 #[derive(Clone)]
 pub struct RedliteEmbeddedClient {
     db: Arc<Db>,
+    /// Path to database file (None for in-memory)
+    db_path: Option<PathBuf>,
 }
 
 impl RedliteEmbeddedClient {
     /// Create an in-memory Redlite database
     pub fn new_memory() -> ClientResult<Self> {
         let db = Db::open_memory().map_err(|e| ClientError::Connection(e.to_string()))?;
-        Ok(RedliteEmbeddedClient { db: Arc::new(db) })
+        Ok(RedliteEmbeddedClient {
+            db: Arc::new(db),
+            db_path: None,
+        })
     }
 
     /// Create a file-backed Redlite database
     pub fn new_file(path: &str) -> ClientResult<Self> {
         let db = Db::open(path).map_err(|e| ClientError::Connection(e.to_string()))?;
-        Ok(RedliteEmbeddedClient { db: Arc::new(db) })
+        Ok(RedliteEmbeddedClient {
+            db: Arc::new(db),
+            db_path: Some(PathBuf::from(path)),
+        })
     }
 
-    /// Wrap an existing Db instance
+    /// Wrap an existing Db instance (no path available for size measurement)
     pub fn from_db(db: Arc<Db>) -> Self {
-        RedliteEmbeddedClient { db }
+        RedliteEmbeddedClient { db, db_path: None }
     }
 
     fn handle_error(e: redlite::KvError) -> ClientError {
@@ -468,11 +477,41 @@ impl RedisLikeClient for RedliteEmbeddedClient {
     // ========== SIZE/MEMORY MEASUREMENT ==========
 
     async fn get_db_size_bytes(&self) -> ClientResult<Option<u64>> {
-        // For embedded clients, we can estimate memory usage by checking
-        // the SQLite page count and page size if file-backed, or return None for memory dbs
-        // For now, return None since memory DBs don't have meaningful file size
-        // File-backed DBs could be measured via std::fs::metadata
-        Ok(None)
+        // For file-backed databases, measure total disk usage (db + WAL + shm)
+        // For in-memory databases, return None
+        match &self.db_path {
+            Some(path) => {
+                let mut total_bytes: u64 = 0;
+
+                // Main database file
+                if let Ok(meta) = std::fs::metadata(path) {
+                    total_bytes += meta.len();
+                }
+
+                // WAL file (write-ahead log)
+                let wal_path = path.with_extension("db-wal");
+                if let Ok(meta) = std::fs::metadata(&wal_path) {
+                    total_bytes += meta.len();
+                }
+
+                // SHM file (shared memory)
+                let shm_path = path.with_extension("db-shm");
+                if let Ok(meta) = std::fs::metadata(&shm_path) {
+                    total_bytes += meta.len();
+                }
+
+                Ok(Some(total_bytes))
+            }
+            None => Ok(None), // In-memory DB has no file size
+        }
+    }
+
+    async fn get_history_count(&self) -> ClientResult<Option<(i64, i64)>> {
+        // Get global history stats (total_entries, storage_bytes)
+        match self.db.history_stats(None) {
+            Ok(stats) => Ok(Some((stats.total_entries, stats.storage_bytes))),
+            Err(_) => Ok(Some((0, 0))), // No history entries
+        }
     }
 }
 

@@ -238,6 +238,10 @@ pub trait RedisLikeClient: Send + Sync + Clone {
     /// Get approximate database size in bytes (if available)
     /// Returns None if not measurable for this backend
     async fn get_db_size_bytes(&self) -> ClientResult<Option<u64>>;
+
+    /// Get history entry count and total bytes (if available)
+    /// Returns Some((entry_count, total_bytes)) for Redlite, None for Redis
+    async fn get_history_count(&self) -> ClientResult<Option<(i64, i64)>>;
 }
 
 #[cfg(test)]

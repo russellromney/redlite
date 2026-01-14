@@ -29,6 +29,9 @@ pub struct BenchmarkResult {
     pub initial_size_bytes: Option<u64>,
     pub final_size_bytes: Option<u64>,
     pub memory_overhead_bytes: Option<u64>,
+    // History tracking (Redlite-specific)
+    pub history_entries_created: Option<i64>,
+    pub history_total_bytes: Option<i64>,
 }
 
 impl BenchmarkResult {
@@ -46,6 +49,8 @@ impl BenchmarkResult {
             initial_size_bytes: None,
             final_size_bytes: None,
             memory_overhead_bytes: None,
+            history_entries_created: None,
+            history_total_bytes: None,
         }
     }
 
@@ -54,6 +59,20 @@ impl BenchmarkResult {
         self.initial_size_bytes = Some(initial);
         self.final_size_bytes = Some(final_size);
         self.memory_overhead_bytes = Some(final_size.saturating_sub(initial));
+    }
+
+    /// Set history tracking metrics
+    pub fn set_history_stats(&mut self, entries: i64, bytes: i64) {
+        self.history_entries_created = Some(entries);
+        self.history_total_bytes = Some(bytes);
+    }
+
+    /// Bytes per history entry (if measured)
+    pub fn bytes_per_history_entry(&self) -> Option<f64> {
+        match (self.history_entries_created, self.history_total_bytes) {
+            (Some(entries), Some(bytes)) if entries > 0 => Some(bytes as f64 / entries as f64),
+            _ => None,
+        }
     }
 
     /// Overhead per operation (if measured)
@@ -189,6 +208,19 @@ impl BenchmarkResult {
                     overhead as f64 / 1_048_576.0,
                     self.overhead_per_op().unwrap_or(0.0)
                 );
+            }
+        }
+
+        // Print history metrics if available (Redlite-specific)
+        if let (Some(entries), Some(bytes)) = (self.history_entries_created, self.history_total_bytes) {
+            if entries > 0 {
+                println!();
+                println!("History:");
+                println!("  Entries:  {}", entries);
+                println!("  Size:     {:.2} KB", bytes as f64 / 1024.0);
+                if let Some(bytes_per_entry) = self.bytes_per_history_entry() {
+                    println!("  Per Entry: {:.0} bytes", bytes_per_entry);
+                }
             }
         }
     }
