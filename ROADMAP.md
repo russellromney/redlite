@@ -347,7 +347,22 @@ Inspired by [sled](https://sled.rs/simulation.html), [TigerBeetle VOPR](https://
 - [x] Code review cleanup: removed dead code (libsql_db.rs, distributed concepts in sim.rs, unused types)
 - [ ] `cloud` command for fly.io parallel execution (placeholder)
 - [ ] Spec-driven scenarios in `spec/scenarios.yaml`
-- [ ] JSON + Markdown report output (code exists in report.rs, needs wiring)
+- [x] JSON + Markdown report output (code exists in report.rs, needs wiring)
+
+#### Phase 5.5: Report Output Wiring (Session 27.5.5)
+**Goal**: Wire up `--format json` and `--format markdown` output for all redlite-dst commands.
+
+**Implementation Steps**:
+1. [x] Add `format` and `output` fields to `TestRunner`
+2. [x] Update `TestRunner::new()` to accept format/output params
+3. [x] Create `output_results()` method that:
+   - If format == "console": call `print_summary` (existing behavior)
+   - If format == "json": generate via `JsonReport::from_summary().to_json()`
+   - If format == "markdown": generate via `generate_markdown()`
+4. [x] Write output to file if `--output` specified, otherwise stdout
+5. [x] Track results Vec in smoke() and other commands that don't have it
+6. [x] Call `output_results(&summary, &results)` at end of each command
+7. [x] Update `main.rs` to pass `cli.format` and `cli.output` to TestRunner
 
 #### Phase 6: Soak Testing + Extras (Session 27.6)
 - [ ] `redlite-dst soak --duration 24h` — long-running stability test
@@ -378,12 +393,152 @@ Inspired by [sled](https://sled.rs/simulation.html), [TigerBeetle VOPR](https://
 - HISTORY REPLAY/DIFF for state reconstruction
 - Background expiration daemon
 
+## Planned
+
+### HyperLogLog (Probabilistic Cardinality)
+
+Approximate COUNT DISTINCT with O(1) memory per key. Useful for unique visitor counts, distinct element estimation.
+
+**Commands:**
+```bash
+PFADD key element [element ...]    # Add elements to HLL
+PFCOUNT key [key ...]              # Get cardinality estimate (0.81% error)
+PFMERGE destkey sourcekey [sourcekey ...]  # Merge HLLs
+PFDEBUG DECODE|ENCODING|GETREG key  # Debug commands (optional)
+```
+
+**Implementation:**
+- Build our own in Rust (~100 lines, algorithm is well-documented)
+- Store 16KB register array per key as BLOB
+- Use 14-bit prefix (16384 registers) like Redis
+- Compare against [sqlite_hll](https://github.com/wperron/sqlite_hll) for correctness verification
+- Reference: [hyperloglog-rs](https://github.com/LucaCappelletti94/hyperloglog-rs) (MIT) for algorithm details
+
+**Schema:**
+```sql
+CREATE TABLE IF NOT EXISTS hll (
+    id INTEGER PRIMARY KEY,
+    key_id INTEGER NOT NULL REFERENCES keys(id) ON DELETE CASCADE,
+    registers BLOB NOT NULL,  -- 16KB packed registers
+    UNIQUE(key_id)
+);
+```
+
+**Why build our own:** Avoid crate dependency for ~100 lines of code. Protects against supply chain issues. Algorithm is public domain (Flajolet et al. 2007).
+
+---
+
+### Bloom Filters (Probabilistic Set Membership)
+
+Probabilistic "is this possibly in the set?" with configurable false positive rate. O(1) memory per filter.
+
+**Commands:**
+```bash
+BF.ADD key item                    # Add item to filter
+BF.EXISTS key item                 # Check if possibly present
+BF.MADD key item [item ...]        # Batch add
+BF.MEXISTS key item [item ...]     # Batch check
+BF.RESERVE key error_rate capacity # Create with specific params
+BF.INFO key                        # Get filter info
+BF.CARD key                        # Estimated cardinality
+```
+
+**Implementation:**
+- Bit array stored as BLOB in SQLite
+- Configurable hash count (k) and size (m) based on desired error rate
+- Default: 1% false positive rate
+- ~100 lines of Rust
+
+**Schema:**
+```sql
+CREATE TABLE IF NOT EXISTS bloom_filters (
+    id INTEGER PRIMARY KEY,
+    key_id INTEGER NOT NULL REFERENCES keys(id) ON DELETE CASCADE,
+    bits BLOB NOT NULL,
+    size INTEGER NOT NULL,        -- m: bit array size
+    num_hashes INTEGER NOT NULL,  -- k: hash function count
+    items_added INTEGER DEFAULT 0,
+    UNIQUE(key_id)
+);
+```
+
+**Why implement:** Command parity with Redis Stack. Users migrating from Redis shouldn't have to rewrite deduplication logic. Even if B-tree lookups are fast, Bloom filters are the established pattern.
+
+---
+
+### Time Series
+
+High-frequency time-stamped data with aggregation and retention.
+
+**Phase 1 (Now): Sorted Set Sugar**
+
+Time series as sorted sets with timestamp scores:
+```bash
+TS.ADD key timestamp value [LABELS label value ...]
+  → ZADD key timestamp value (+ metadata in hash)
+
+TS.RANGE key fromTimestamp toTimestamp [AGGREGATION type bucketSize]
+  → ZRANGEBYSCORE key from to (+ post-processing for aggregation)
+
+TS.GET key
+  → ZRANGE key -1 -1 WITHSCORES
+
+TS.INFO key
+  → ZCARD + metadata
+```
+
+**Phase 2 (Future): Native Time Series Extension**
+
+SQLite extension optimized for append-only time series:
+- Append-only B-tree (no rebalancing on insert)
+- Automatic time-based partitioning
+- Built-in downsampling (1s → 1m → 1h → 1d)
+- Retention policies (auto-delete old data)
+- Compression (delta encoding timestamps, gorilla for values)
+- Aggregation queries: AVG, SUM, MIN, MAX, COUNT, FIRST, LAST, RANGE
+
+**Open source opportunity:** SQLite time series extension doesn't exist in a good form. Could be a standalone project.
+
+---
+
 ## Maybe
 
 - Lua scripting (EVAL/EVALSHA)
 - XAUTOCLAIM
 - ACL system
 - Nightly CI for battle tests (`.github/workflows/battle-test.yml`, 1M seeds)
+
+### Soft Delete + PURGE
+
+Mark keys as deleted without removing data. Enables recovery and audit trails.
+
+**Concept:**
+```bash
+SOFT DEL key [key ...]     # Mark as deleted (recoverable)
+UNDELETE key               # Recover soft-deleted key
+PURGE key [key ...]        # Permanently delete
+PURGE DELETED BEFORE timestamp  # Bulk purge old deletions
+```
+
+**Implementation consideration:** Similar to TTL filtering - we already filter on `expire_at`. Could add `deleted_at`:
+- NULL = not deleted
+- timestamp = soft deleted at this time
+- Index: `CREATE INDEX idx_keys_deleted ON keys(db, key, deleted_at)`
+- All reads add `WHERE deleted_at IS NULL` (or use partial index)
+
+**Open questions:**
+1. Should this require HISTORY to be enabled? Or standalone?
+2. Per-key vs global setting?
+3. Auto-purge schedules? (`SOFT DEL key PURGE_AFTER 86400`)
+4. Performance: every read pays filter cost (but indexed, so minimal)
+
+**Alternative:** Just move row to `soft_deleted` table on SOFT DEL. Cleaner separation, no filter cost on normal reads. UNDELETE moves back.
+
+**Who uses this:**
+- Audit/compliance (retain deleted data for N days)
+- Undo functionality
+- Debugging ("what happened to this key?")
+- Paranoid users who want recoverability
 
 ## Not Planned
 

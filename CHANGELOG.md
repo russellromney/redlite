@@ -1,5 +1,40 @@
 # Changelog
 
+## Session 27.5.5: Report Output Wiring
+
+### Added - JSON and Markdown Report Output
+- **`--format` flag** - Output test results in `console` (default), `json`, or `markdown` format
+- **`--output` flag** - Write report to file instead of stdout
+- **`OutputFormat` enum** - Type-safe format selection in TestRunner
+- **`output_results()` method** - Central report generation for all test commands
+
+### Changed - TestRunner API
+- **`TestRunner::new(verbose, format, output)`** - Now accepts format and output parameters
+- **Results tracking** - All commands now collect `Vec<TestResult>` for report generation
+- **Updated commands**: `smoke`, `properties`, `oracle`, `simulate`, `chaos`, `seeds_test`
+
+### Usage Examples
+```bash
+# Console output (default)
+redlite-dst smoke
+
+# JSON report to stdout
+redlite-dst smoke --format json
+
+# Markdown report to file
+redlite-dst properties --seeds 100 --format markdown --output report.md
+
+# JSON report for CI integration
+redlite-dst simulate --seeds 10 --format json --output results.json
+```
+
+### Test Results
+- ✅ 9 redlite-dst tests passing
+- ✅ All three output formats verified working
+- ✅ File output with `--output` verified
+
+---
+
 ## Session 27: DST Code Review and Cleanup
 
 ### Removed - Dead Code and Distributed System Concepts
@@ -24,13 +59,12 @@
 - License is Apache-2.0 at root level only
 
 ### Code Review Findings (for future work)
-- `report.rs` needs wiring up for `--format json/markdown` output
 - `cloud` command is placeholder (will use fly-benchmark-engine)
 - Main redlite crate has ~10 warnings (unused variables, dead methods)
 
 ### Test Results
 - ✅ 9 redlite-dst tests passing
-- ✅ Build clean (expected warnings for unwired report.rs)
+- ✅ Build clean
 
 ## Session 26: MadSim Integration for DST
 

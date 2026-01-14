@@ -183,16 +183,46 @@ Long-running stability:
 
 ## Output Formats
 
+All test commands support `--format` and `--output` flags for flexible reporting.
+
+### Console (default)
+Human-readable output with progress bars and colored status:
 ```bash
-# Console (default)
 redlite-dst smoke
-
-# JSON report
-redlite-dst smoke --format json --output report.json
-
-# Markdown report
-redlite-dst smoke --format markdown --output report.md
+redlite-dst properties --seeds 1000
 ```
+
+### JSON
+Machine-readable format for CI integration:
+```bash
+# To stdout
+redlite-dst smoke --format json
+
+# To file
+redlite-dst smoke --format json --output report.json
+```
+
+JSON output includes:
+- `metadata`: tool version, timestamp, suite name, host
+- `summary`: total, passed, failed, skipped, duration_ms, success_rate
+- `results`: array of individual test results with seeds
+- `failed_seeds`: quick reference with replay commands
+
+### Markdown
+GitHub-flavored markdown for documentation/PRs:
+```bash
+# To stdout
+redlite-dst simulate --seeds 10 --format markdown
+
+# To file
+redlite-dst full --format markdown --output test-report.md
+```
+
+Markdown output includes:
+- Summary table with pass/fail counts
+- Status badge (checkmark or X)
+- Failed tests table with replay commands
+- All results table (collapsible for >20 tests)
 
 ## CI Integration
 
@@ -212,10 +242,18 @@ jobs:
       - name: Smoke Tests
         run: cargo run -p redlite-dst -- smoke
 
-      # Full suite on main
+      # Full suite on main with JSON report
       - name: Full DST
         if: github.ref == 'refs/heads/main'
-        run: cargo run -p redlite-dst -- full --quick
+        run: cargo run -p redlite-dst -- full --quick --format json --output dst-report.json
+
+      # Upload report as artifact
+      - name: Upload Report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: dst-report
+          path: dst-report.json
 
       # Regression seeds always
       - name: Regression Seeds

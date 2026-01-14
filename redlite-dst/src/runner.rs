@@ -10,17 +10,42 @@ use std::time::{Duration, Instant};
 
 use crate::client::RedliteClient;
 use crate::properties;
+use crate::report::{generate_markdown, JsonReport};
 use crate::sim::runtime;
 use crate::types::{OracleStats, TestResult, TestSummary};
+
+/// Output format for test results
+#[derive(Debug, Clone, PartialEq)]
+pub enum OutputFormat {
+    Console,
+    Json,
+    Markdown,
+}
+
+impl From<&str> for OutputFormat {
+    fn from(s: &str) -> Self {
+        match s.to_lowercase().as_str() {
+            "json" => OutputFormat::Json,
+            "markdown" | "md" => OutputFormat::Markdown,
+            _ => OutputFormat::Console,
+        }
+    }
+}
 
 /// Main test runner
 pub struct TestRunner {
     verbose: bool,
+    format: OutputFormat,
+    output: Option<String>,
 }
 
 impl TestRunner {
-    pub fn new(verbose: bool) -> Self {
-        Self { verbose }
+    pub fn new(verbose: bool, format: &str, output: Option<String>) -> Self {
+        Self {
+            verbose,
+            format: OutputFormat::from(format),
+            output,
+        }
     }
 
     fn print_header(&self, title: &str) {
@@ -65,6 +90,32 @@ impl TestRunner {
         }
     }
 
+    /// Output results in the configured format
+    fn output_results(&self, summary: &TestSummary, results: &[TestResult]) -> Result<()> {
+        let output_content = match self.format {
+            OutputFormat::Console => {
+                self.print_summary(summary);
+                return Ok(());
+            }
+            OutputFormat::Json => {
+                let report = JsonReport::from_summary(summary, results);
+                report.to_json()
+            }
+            OutputFormat::Markdown => generate_markdown(summary, results),
+        };
+
+        // Write to file or stdout
+        if let Some(path) = &self.output {
+            let mut file = File::create(path)?;
+            file.write_all(output_content.as_bytes())?;
+            println!("{}", style(format!("Report written to: {}", path)).green());
+        } else {
+            println!("{}", output_content);
+        }
+
+        Ok(())
+    }
+
     fn progress_bar(&self, len: u64, msg: &str) -> ProgressBar {
         let pb = ProgressBar::new(len);
         pb.set_style(
@@ -93,6 +144,7 @@ impl TestRunner {
 
         let pb = self.progress_bar(tests.len() as u64, "Running smoke tests...");
         let mut summary = TestSummary::new("smoke");
+        let mut results = Vec::new();
 
         for (test_name, test_fn) in &tests {
             let start = Instant::now();
@@ -112,6 +164,7 @@ impl TestRunner {
                         self.print_result(&result);
                     }
                     summary.add_result(&result);
+                    results.push(result);
                     pb.inc(1);
                     continue;
                 }
@@ -129,11 +182,12 @@ impl TestRunner {
                 self.print_result(&result);
             }
             summary.add_result(&result);
+            results.push(result);
             pb.inc(1);
         }
 
         pb.finish_with_message("Done!");
-        self.print_summary(&summary);
+        self.output_results(&summary, &results)?;
 
         if summary.failed > 0 {
             anyhow::bail!("{} tests failed", summary.failed);
@@ -281,7 +335,7 @@ impl TestRunner {
         }
 
         pb.finish_with_message("Done!");
-        self.print_summary(&summary);
+        self.output_results(&summary, &results)?;
 
         if summary.failed > 0 {
             anyhow::bail!("{} properties failed", summary.failed);
@@ -329,6 +383,7 @@ impl TestRunner {
 
         let pb = self.progress_bar(test_groups.len() as u64, "Running oracle tests...");
         let mut summary = TestSummary::new("oracle");
+        let mut results = Vec::new();
         let mut total_divergences = 0;
         let mut total_ops = 0;
 
@@ -353,6 +408,7 @@ impl TestRunner {
                         self.print_result(&result);
                     }
                     summary.add_result(&result);
+                    results.push(result);
                     pb.inc(1);
                     continue;
                 }
@@ -372,6 +428,7 @@ impl TestRunner {
                         self.print_result(&result);
                     }
                     summary.add_result(&result);
+                    results.push(result);
                     pb.inc(1);
                     continue;
                 }
@@ -397,11 +454,12 @@ impl TestRunner {
                 self.print_result(&result);
             }
             summary.add_result(&result);
+            results.push(result);
             pb.inc(1);
         }
 
         pb.finish_with_message("Done!");
-        self.print_summary(&summary);
+        self.output_results(&summary, &results)?;
 
         println!();
         println!("{}", style("Oracle Statistics").bold());
@@ -726,6 +784,7 @@ impl TestRunner {
         let total_runs = seeds * scenarios.len() as u64;
         let pb = self.progress_bar(total_runs, "Running simulations...");
         let mut summary = TestSummary::new("simulate");
+        let mut results = Vec::new();
 
         for seed in 0..seeds {
             for scenario in &scenarios {
@@ -744,6 +803,7 @@ impl TestRunner {
                     self.print_result(&result);
                 }
                 summary.add_result(&result);
+                results.push(result.clone());
                 pb.inc(1);
 
                 // Early exit on failure if verbose to avoid flooding output
@@ -754,7 +814,7 @@ impl TestRunner {
         }
 
         pb.finish_with_message("Done!");
-        self.print_summary(&summary);
+        self.output_results(&summary, &results)?;
 
         if summary.failed > 0 {
             anyhow::bail!("{} simulations failed", summary.failed);
@@ -1268,6 +1328,7 @@ impl TestRunner {
 
         let pb = self.progress_bar(faults.len() as u64 * seeds, "Injecting faults...");
         let mut summary = TestSummary::new("chaos");
+        let mut results = Vec::new();
 
         for fault in faults {
             for seed_num in 0..seeds {
@@ -1294,12 +1355,13 @@ impl TestRunner {
                     self.print_result(&result);
                 }
                 summary.add_result(&result);
+                results.push(result);
                 pb.inc(1);
             }
         }
 
         pb.finish_with_message("Done!");
-        self.print_summary(&summary);
+        self.output_results(&summary, &results)?;
 
         if summary.failed > 0 {
             anyhow::bail!("{} chaos tests failed", summary.failed);
@@ -2693,6 +2755,7 @@ impl TestRunner {
 
         let pb = self.progress_bar(seeds_to_test.len() as u64, "Replaying seeds...");
         let mut summary = TestSummary::new("regression");
+        let mut results = Vec::new();
 
         for (seed, test_type) in seeds_to_test {
             let start = Instant::now();
@@ -2743,11 +2806,12 @@ impl TestRunner {
                 self.print_result(&result);
             }
             summary.add_result(&result);
+            results.push(result);
             pb.inc(1);
         }
 
         pb.finish_with_message("Done!");
-        self.print_summary(&summary);
+        self.output_results(&summary, &results)?;
 
         if summary.failed > 0 {
             anyhow::bail!("{} regression tests failed", summary.failed);

@@ -189,7 +189,7 @@ fn main() -> Result<()> {
 /// Async main logic (shared between tokio and madsim)
 async fn run() -> Result<()> {
     let cli = Cli::parse();
-    let runner = TestRunner::new(cli.verbose);
+    let runner = TestRunner::new(cli.verbose, &cli.format, cli.output);
 
     match cli.command {
         Commands::Smoke => {
