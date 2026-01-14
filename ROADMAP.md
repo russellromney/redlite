@@ -21,16 +21,19 @@ Currently implementing RediSearch-compatible FT.* and Redis 8-compatible V* comm
 - [x] Add FT.* command routing in server/mod.rs
 - [x] Add comprehensive unit tests (22 tests for FT.* db methods)
 
-#### Phase 2: RediSearch Search (Session 23.2) - COMPLETE
+#### Phase 2: RediSearch Search (Session 23.2-23.4) - COMPLETE
 - [x] Create `src/search.rs` query parser module
 - [x] Implement RediSearch -> FTS5 query translation (AND/OR/NOT, phrase, prefix, field-scoped)
 - [x] Implement FT.SEARCH with core options (NOCONTENT, VERBATIM, WITHSCORES, LIMIT, SORTBY, RETURN)
 - [x] Support numeric range queries (@field:[min max])
 - [x] Support tag exact match queries (@field:{tag1|tag2})
-- [x] Add 26 unit tests (14 query parser + 12 ft_search integration)
-- [ ] Add HIGHLIGHT, SUMMARIZE support (parsed but not applied)
-- [ ] Implement FT.EXPLAIN and FT.PROFILE
-- [ ] Auto-index documents into FTS5 on HSET
+- [x] Add HIGHLIGHT, SUMMARIZE support
+- [x] Implement FT.EXPLAIN and FT.PROFILE (server layer)
+- [x] Auto-index documents into FTS5 on HSET
+- [x] Auto-unindex documents on DEL
+- [x] **Use actual FTS5 MATCH queries with BM25 scoring** (Session 23.4)
+- [x] Fix NOT operator FTS5 syntax (A NOT B instead of A AND NOT B)
+- [x] Add 50 FT.* unit tests (was 26, now comprehensive)
 
 #### Phase 3: RediSearch Aggregations (Session 23.3)
 - [ ] Implement FT.AGGREGATE with LOAD, GROUPBY, REDUCE, SORTBY, APPLY, FILTER, LIMIT
@@ -330,6 +333,222 @@ Uses SQLite Geopoly for polygon contains/intersects operations. R*Tree handles M
 - Cluster mode — Use [walsync](https://github.com/russellromney/walsync) for replication
 - Sentinel
 - Redis Modules
+
+## Testing Plan: Search & Vector Features
+
+### Current Coverage (50 tests)
+Basic functionality is covered. Need comprehensive edge case and integration testing.
+
+### Phase 1: FTS5 Core Tests (Priority: HIGH)
+
+**Query Parser Tests (~25 tests)**
+- [ ] Empty query handling
+- [ ] Single term, multiple terms
+- [ ] All operators: AND (implicit), OR (`|`), NOT (`-`, `!`)
+- [ ] Operator precedence: `a | b c` vs `(a | b) c`
+- [ ] Nested parentheses: `((a | b) c) | d`
+- [ ] Phrase with special chars: `"hello, world!"`, `"test's"`
+- [ ] Escaped quotes in phrases: `"say \"hello\""`
+- [ ] Prefix with short stems: `a*`, `ab*`, `abc*`
+- [ ] Field-scoped with all operators: `@title:(a | b) -c`
+- [ ] Numeric ranges: edge cases `[0 0]`, `[-inf +inf]`, `[(0 (0]`
+- [ ] Tag queries: empty tags, special chars in tags
+- [ ] Mixed query: `@title:hello @price:[10 100] @category:{books}`
+- [ ] Unicode in queries: Japanese, Arabic, emoji
+- [ ] Very long queries (>1000 chars)
+- [ ] Malformed queries: unmatched parens, brackets, quotes
+
+**FTS5 Index Tests (~20 tests)**
+- [ ] Index creation with 0, 1, 10, 50 TEXT fields
+- [ ] Index creation with mixed field types
+- [ ] Index with overlapping prefixes: `["user:", "user:admin:"]`
+- [ ] Index with empty prefix (matches all keys)
+- [ ] Multiple indexes on same prefix (should error or handle)
+- [ ] FT.ALTER adding fields to index with existing documents
+- [ ] FT.DROPINDEX with DD flag (delete documents)
+- [ ] Index aliases: CRUD, update to non-existent index
+- [ ] FT._LIST with 0, 1, 100 indexes
+- [ ] FT.INFO accuracy after bulk inserts/deletes
+
+**FTS5 Search Tests (~30 tests)**
+- [ ] Search on empty index
+- [ ] Search with no matches
+- [ ] Search matching 1, 10, 1000, 100K documents
+- [ ] LIMIT edge cases: offset > total, num = 0, very large offset
+- [ ] NOCONTENT with WITHSCORES
+- [ ] RETURN with non-existent fields
+- [ ] RETURN with AS alias
+- [ ] SORTBY by non-existent field
+- [ ] SORTBY by non-sortable field
+- [ ] SORTBY ASC vs DESC with ties
+- [ ] HIGHLIGHT with nested tags: `<b><i>`
+- [ ] HIGHLIGHT with HTML special chars in content
+- [ ] HIGHLIGHT multiple terms in same word boundary
+- [ ] SUMMARIZE with match at start/end of document
+- [ ] SUMMARIZE with no matches (should return original?)
+- [ ] INKEYS with non-existent keys
+- [ ] INFIELDS with non-existent fields
+- [ ] VERBATIM disables stemming verification
+- [ ] NOSTOPWORDS includes stopwords
+- [ ] LANGUAGE with different stemmers (if implemented)
+- [ ] TIMEOUT behavior (mock slow query)
+- [ ] PARAMS substitution in queries
+
+**BM25 Scoring Tests (~10 tests)**
+- [ ] Score increases with term frequency
+- [ ] Score decreases with document length (normalization)
+- [ ] Score considers document frequency (rare terms score higher)
+- [ ] Multi-term query scoring combines properly
+- [ ] Phrase match vs individual terms scoring
+- [ ] Field weight affects score proportionally
+- [ ] Score consistency across identical queries
+
+### Phase 2: Auto-Indexing Tests (Priority: HIGH)
+
+**HSET Indexing (~15 tests)**
+- [ ] New document indexes immediately
+- [ ] Update existing document re-indexes
+- [ ] Partial HSET (subset of fields) updates index correctly
+- [ ] HDEL removes document from index
+- [ ] DEL removes document from index
+- [ ] EXPIRE removes document from index when expired
+- [ ] RENAME updates index (key changes, content same)
+- [ ] Bulk HSET (MSET pattern) indexes all
+- [ ] Concurrent HSET to same key
+- [ ] HSET to key not matching any index prefix (no-op)
+- [ ] HSET with empty field values
+- [ ] HSET with binary data in TEXT field
+- [ ] HSET with very large field values (>1MB)
+
+**Index Consistency (~10 tests)**
+- [ ] Crash recovery: index matches actual data after restart
+- [ ] Transaction rollback: index reverts with data
+- [ ] FTS5 rowid matches key_id after updates
+- [ ] No orphaned FTS5 entries after key deletion
+- [ ] No missing FTS5 entries after bulk insert
+
+### Phase 3: FT.AGGREGATE Tests (Priority: MEDIUM)
+
+**GROUPBY Tests (~15 tests)**
+- [ ] GROUPBY single field
+- [ ] GROUPBY multiple fields
+- [ ] GROUPBY with NULL values
+- [ ] GROUPBY field with high cardinality (10K unique values)
+
+**REDUCE Function Tests (~20 tests)**
+- [ ] COUNT, COUNT_DISTINCT on empty groups
+- [ ] SUM, AVG, MIN, MAX with integers, floats, negatives
+- [ ] SUM overflow handling
+- [ ] AVG with single value
+- [ ] STDDEV with single value (should be 0)
+- [ ] TOLIST with duplicates
+- [ ] FIRST_VALUE with SORTBY
+- [ ] QUANTILE edge cases: 0, 0.5, 1.0
+- [ ] Multiple REDUCEs in same GROUPBY
+- [ ] REDUCE on non-existent field
+
+**APPLY Tests (~10 tests)**
+- [ ] Arithmetic: `@price * 1.1`, `@a + @b`
+- [ ] String functions: `upper(@name)`, `lower(@name)`
+- [ ] Conditional: `if(@price > 100, "expensive", "cheap")` (if supported)
+- [ ] APPLY referencing previous APPLY
+- [ ] APPLY with NULL field values
+
+**FILTER Tests (~10 tests)**
+- [ ] FILTER with comparison operators: `=`, `!=`, `<`, `>`, `<=`, `>=`
+- [ ] FILTER with logical operators: AND, OR, NOT
+- [ ] FILTER on REDUCE results: `@count > 5`
+- [ ] FILTER on APPLY results
+- [ ] FILTER eliminating all results
+
+### Phase 4: Vector Search Tests (Priority: MEDIUM)
+
+**VADD Tests (~15 tests)**
+- [ ] FP32 blob input
+- [ ] VALUES input
+- [ ] Mixed dimensions (should error)
+- [ ] REDUCE dimension reduction
+- [ ] Quantization modes: NOQUANT, Q8, BIN
+- [ ] SETATTR with valid JSON
+- [ ] SETATTR with invalid JSON (should error)
+- [ ] Update existing element vector
+- [ ] Very high dimensions (1000+)
+- [ ] Empty vector (should error)
+
+**VSIM Tests (~20 tests)**
+- [ ] K-NN with ELE reference
+- [ ] K-NN with FP32 blob query
+- [ ] K-NN with VALUES query
+- [ ] COUNT limiting results
+- [ ] WITHSCORES returns distances
+- [ ] WITHATTRIBS returns attributes
+- [ ] FILTER on attributes
+- [ ] Empty vector set (returns empty)
+- [ ] Query vector dimension mismatch (should error)
+- [ ] Distance metrics: L2, Cosine, Inner Product
+
+**Vector Edge Cases (~10 tests)**
+- [ ] VREM non-existent element
+- [ ] VCARD on empty set
+- [ ] VEMB on non-existent element
+- [ ] VGETATTR on element without attributes
+- [ ] VRANDMEMBER count > set size
+
+### Phase 5: Performance & Stress Tests (Priority: MEDIUM)
+
+**Bulk Operations (~10 tests)**
+- [ ] Insert 100K documents, search latency
+- [ ] Insert 1M documents, memory usage
+- [ ] Concurrent readers during bulk insert
+- [ ] Bulk delete with re-indexing
+- [ ] Index rebuild time for 100K documents
+
+**Query Performance (~10 tests)**
+- [ ] Simple term query: <10ms for 100K docs
+- [ ] Complex query (5+ terms, mixed operators): <50ms
+- [ ] FT.AGGREGATE with 10K groups: <100ms
+- [ ] VSIM K-NN with 100K vectors: <100ms
+- [ ] Prefix query `a*` (high fan-out)
+- [ ] Wildcard `*` match-all performance
+
+### Phase 6: Integration & E2E Tests (Priority: LOW)
+
+**Server Protocol Tests (~15 tests)**
+- [ ] FT.* commands via redis-cli
+- [ ] FT.* commands via redis-py
+- [ ] Pipeline multiple FT.SEARCH commands
+- [ ] Transaction with FT.* commands (MULTI/EXEC)
+- [ ] Error response format matches RediSearch
+
+**Cross-Feature Tests (~10 tests)**
+- [ ] FT.SEARCH + EXPIRE interaction
+- [ ] FT.SEARCH + WATCH/MULTI
+- [ ] FT.AGGREGATE + WITHSCORES
+- [ ] Vector search + text search on same key
+- [ ] Index spanning multiple databases (db 0, db 1)
+
+### Test Infrastructure Needs
+
+- [ ] Benchmark harness in `redlite-bench/` for perf tests
+- [ ] Test fixtures: pre-built indexes with known data
+- [ ] Fuzzing setup for query parser
+- [ ] Property-based testing for FTS5 query equivalence
+- [ ] CI integration for all test tiers
+
+### Test Counts by Feature
+
+| Feature | Current | Target | Gap |
+|---------|---------|--------|-----|
+| Query Parser | 16 | 40 | 24 |
+| FT.SEARCH | 18 | 50 | 32 |
+| FT.AGGREGATE | 0 | 55 | 55 |
+| Auto-indexing | 2 | 25 | 23 |
+| Vector (V*) | 0 | 45 | 45 |
+| Performance | 0 | 20 | 20 |
+| Integration | 0 | 25 | 25 |
+| **Total** | **36** | **260** | **224** |
+
+---
 
 ## Feature Flags
 

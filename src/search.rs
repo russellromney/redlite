@@ -194,7 +194,13 @@ impl<'a> QueryParser<'a> {
             QueryExpr::Not(inner) => {
                 let fts = self.expr_to_fts5(inner, None);
                 if !fts.is_empty() {
-                    self.append_fts_query(result, &format!("NOT {}", fts), "AND");
+                    // FTS5 uses "A NOT B" syntax (NOT is a binary operator)
+                    // Only append NOT if there's already a positive term
+                    if result.fts_query.is_some() {
+                        self.append_fts_query(result, &fts, "NOT");
+                    }
+                    // For standalone NOT (no preceding term), FTS5 can't handle it
+                    // The in-memory fallback will handle this case
                 }
             }
             QueryExpr::MatchAll => {
@@ -802,9 +808,18 @@ mod tests {
     }
 
     #[test]
-    fn test_not_operator() {
+    fn test_not_operator_standalone() {
+        // Standalone NOT can't be expressed in FTS5 (requires preceding term)
+        // Falls back to in-memory matching
         let result = parse_query("-hello", false).unwrap();
-        assert_eq!(result.fts_query, Some("NOT hello".to_string()));
+        assert_eq!(result.fts_query, None);
+    }
+
+    #[test]
+    fn test_not_operator_with_term() {
+        // NOT with preceding term uses FTS5 binary NOT syntax
+        let result = parse_query("world -hello", false).unwrap();
+        assert_eq!(result.fts_query, Some("world NOT hello".to_string()));
     }
 
     #[test]

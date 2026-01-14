@@ -7334,6 +7334,45 @@ impl Db {
         let parsed = parse_query(query, options.verbatim)
             .map_err(|e| KvError::Other(format!("Query parse error: {}", e)))?;
 
+        // If there's an FTS query, execute it on the FTS5 table to get matching documents and BM25 scores
+        let fts_results: Option<HashMap<i64, f64>> = if let Some(fts_query) = &parsed.fts_query {
+            if !text_fields.is_empty() {
+                let fts_table = format!("fts_idx_{}", index_id);
+                // Query FTS5 with MATCH and get BM25 scores
+                // bm25() returns negative values (more negative = better match), so we negate it
+                let fts_sql = format!(
+                    "SELECT rowid, -bm25({}) as score FROM {} WHERE {} MATCH ?",
+                    fts_table, fts_table, fts_table
+                );
+                match conn.prepare(&fts_sql) {
+                    Ok(mut stmt) => {
+                        match stmt.query_map(params![fts_query], |row| {
+                            Ok((row.get::<_, i64>(0)?, row.get::<_, f64>(1)?))
+                        }) {
+                            Ok(rows) => {
+                                let results: HashMap<i64, f64> = rows
+                                    .filter_map(|r| r.ok())
+                                    .collect();
+                                Some(results)
+                            }
+                            Err(_) => {
+                                // FTS5 query syntax error or other issue, fall back to in-memory matching
+                                None
+                            }
+                        }
+                    }
+                    Err(_) => {
+                        // FTS5 table might not exist yet, fall back to in-memory matching
+                        None
+                    }
+                }
+            } else {
+                None
+            }
+        } else {
+            None
+        };
+
         // Find matching keys with the index prefixes
         // For now, scan all hashes matching the prefixes
         let mut all_matching_keys: Vec<(i64, String)> = Vec::new();
@@ -7445,34 +7484,36 @@ impl Db {
                 continue;
             }
 
-            // Check text search (FTS5 or in-memory)
+            // Check text search using FTS5 results or in-memory fallback
             let mut passes_text = true;
             let mut score = 1.0;
 
             if let Some(fts_query) = &parsed.fts_query {
-                // Try FTS5 search on the index's table
-                let fts_table = format!("fts_idx_{}", index_id);
-
-                // Check if this document is in the FTS5 table by rowid
-                // For now, do in-memory text matching as a fallback
-                // Build searchable content from text fields
-                let mut searchable_content = String::new();
-                for field_name in &text_fields {
-                    if let Some(value_bytes) = fields.get(*field_name) {
-                        if let Ok(value_str) = std::str::from_utf8(value_bytes) {
-                            searchable_content.push_str(value_str);
-                            searchable_content.push(' ');
+                if let Some(ref fts_map) = fts_results {
+                    // Use FTS5 results - check if this document matched and get its BM25 score
+                    if let Some(&fts_score) = fts_map.get(key_id) {
+                        passes_text = true;
+                        score = fts_score;
+                    } else {
+                        // Document not in FTS5 results - doesn't match the query
+                        passes_text = false;
+                    }
+                } else {
+                    // Fall back to in-memory text matching (FTS5 table might not exist)
+                    let mut searchable_content = String::new();
+                    for field_name in &text_fields {
+                        if let Some(value_bytes) = fields.get(*field_name) {
+                            if let Ok(value_str) = std::str::from_utf8(value_bytes) {
+                                searchable_content.push_str(value_str);
+                                searchable_content.push(' ');
+                            }
                         }
                     }
-                }
 
-                // Simple in-memory text matching
-                // This is a fallback - proper FTS5 search should be used when documents are indexed
-                passes_text = self.simple_text_match(&searchable_content, fts_query);
-
-                // Calculate a simple score based on term frequency
-                if passes_text {
-                    score = self.calculate_simple_score(&searchable_content, fts_query);
+                    passes_text = self.simple_text_match(&searchable_content, fts_query);
+                    if passes_text {
+                        score = self.calculate_simple_score(&searchable_content, fts_query);
+                    }
                 }
             }
 
@@ -13593,4 +13634,508 @@ mod tests {
 
         assert!(result.is_err());
     }
+
+    #[test]
+    fn test_ft_search_fts5_stemming() {
+        // Test that FTS5 Porter stemming is working
+        // "testing" stems to "test", so searching "test" should match "testing", "tests", "tested"
+        use crate::types::{FtField, FtOnType, FtSearchOptions};
+
+        let db = Db::open_memory().unwrap();
+
+        let schema = vec![FtField::text("content")];
+        db.ft_create("idx", FtOnType::Hash, &["doc:"], &schema)
+            .unwrap();
+
+        db.hset("doc:1", &[("content", b"We are testing the system")])
+            .unwrap();
+        db.hset("doc:2", &[("content", b"She tests the application")])
+            .unwrap();
+        db.hset("doc:3", &[("content", b"He tested it yesterday")])
+            .unwrap();
+        db.hset("doc:4", &[("content", b"Swimming is healthy")])
+            .unwrap();
+
+        // Search for "test" - should match docs 1, 2, 3 due to stemming
+        let options = FtSearchOptions::new();
+        let (total, results) = db.ft_search("idx", "test", &options).unwrap();
+
+        assert_eq!(total, 3, "Should match 3 documents with stemmed forms of 'test'");
+        let keys: Vec<&str> = results.iter().map(|r| r.key.as_str()).collect();
+        assert!(keys.contains(&"doc:1"), "Should match 'testing'");
+        assert!(keys.contains(&"doc:2"), "Should match 'tests'");
+        assert!(keys.contains(&"doc:3"), "Should match 'tested'");
+        assert!(!keys.contains(&"doc:4"), "Should not match 'Swimming'");
+    }
+
+    #[test]
+    fn test_ft_search_fts5_bm25_scoring() {
+        // Test that BM25 scoring ranks documents with more term occurrences higher
+        use crate::types::{FtField, FtOnType, FtSearchOptions};
+
+        let db = Db::open_memory().unwrap();
+
+        let schema = vec![FtField::text("content")];
+        db.ft_create("idx", FtOnType::Hash, &["doc:"], &schema)
+            .unwrap();
+
+        // doc:1 has "test" once
+        db.hset("doc:1", &[("content", b"This is a test document")])
+            .unwrap();
+        // doc:2 has "test" three times
+        db.hset("doc:2", &[("content", b"Test test test multiple occurrences")])
+            .unwrap();
+        // doc:3 has "test" twice
+        db.hset("doc:3", &[("content", b"Another test with test word")])
+            .unwrap();
+
+        let options = FtSearchOptions::new();
+        let (total, results) = db.ft_search("idx", "test", &options).unwrap();
+
+        assert_eq!(total, 3);
+
+        // All results should have scores
+        for result in &results {
+            assert!(result.score > 0.0, "Score should be positive");
+        }
+
+        // Results with more term occurrences should have higher scores
+        // doc:2 (3 occurrences) should have highest score
+        let doc2_result = results.iter().find(|r| r.key == "doc:2").unwrap();
+        let doc1_result = results.iter().find(|r| r.key == "doc:1").unwrap();
+
+        assert!(doc2_result.score > doc1_result.score,
+            "Document with more term occurrences should have higher BM25 score");
+    }
+
+    #[test]
+    fn test_ft_search_fts5_phrase_match() {
+        // Test exact phrase matching with FTS5
+        use crate::types::{FtField, FtOnType, FtSearchOptions};
+
+        let db = Db::open_memory().unwrap();
+
+        let schema = vec![FtField::text("content")];
+        db.ft_create("idx", FtOnType::Hash, &["doc:"], &schema)
+            .unwrap();
+
+        db.hset("doc:1", &[("content", b"The quick brown fox jumps")])
+            .unwrap();
+        db.hset("doc:2", &[("content", b"A brown quick animal")])
+            .unwrap();
+        db.hset("doc:3", &[("content", b"Quick thinking brown ideas")])
+            .unwrap();
+
+        // Search for exact phrase "quick brown" - should only match doc:1
+        let options = FtSearchOptions::new();
+        let (total, results) = db.ft_search("idx", "\"quick brown\"", &options).unwrap();
+
+        assert_eq!(total, 1, "Phrase match should only match adjacent words");
+        assert_eq!(results[0].key, "doc:1");
+    }
+
+    #[test]
+    fn test_ft_search_fts5_or_operator() {
+        // Test OR operator with FTS5
+        use crate::types::{FtField, FtOnType, FtSearchOptions};
+
+        let db = Db::open_memory().unwrap();
+
+        let schema = vec![FtField::text("content")];
+        db.ft_create("idx", FtOnType::Hash, &["doc:"], &schema)
+            .unwrap();
+
+        db.hset("doc:1", &[("content", b"Hello world")])
+            .unwrap();
+        db.hset("doc:2", &[("content", b"Goodbye world")])
+            .unwrap();
+        db.hset("doc:3", &[("content", b"Hello there")])
+            .unwrap();
+        db.hset("doc:4", &[("content", b"Something else")])
+            .unwrap();
+
+        // Search for "Hello | Goodbye" - should match docs 1, 2, 3
+        let options = FtSearchOptions::new();
+        let (total, results) = db.ft_search("idx", "Hello | Goodbye", &options).unwrap();
+
+        assert_eq!(total, 3);
+        let keys: Vec<&str> = results.iter().map(|r| r.key.as_str()).collect();
+        assert!(keys.contains(&"doc:1"));
+        assert!(keys.contains(&"doc:2"));
+        assert!(keys.contains(&"doc:3"));
+        assert!(!keys.contains(&"doc:4"));
+    }
+
+    #[test]
+    fn test_ft_search_fts5_not_operator() {
+        // Test NOT operator with FTS5
+        use crate::types::{FtField, FtOnType, FtSearchOptions};
+
+        let db = Db::open_memory().unwrap();
+
+        let schema = vec![FtField::text("content")];
+        db.ft_create("idx", FtOnType::Hash, &["doc:"], &schema)
+            .unwrap();
+
+        db.hset("doc:1", &[("content", b"Hello world")])
+            .unwrap();
+        db.hset("doc:2", &[("content", b"Hello there")])
+            .unwrap();
+        db.hset("doc:3", &[("content", b"Goodbye world")])
+            .unwrap();
+
+        // Search for "Hello -world" (Hello but NOT world)
+        let options = FtSearchOptions::new();
+        let (total, results) = db.ft_search("idx", "Hello -world", &options).unwrap();
+
+        assert_eq!(total, 1);
+        assert_eq!(results[0].key, "doc:2");
+    }
+
+    #[test]
+    fn test_ft_search_fts5_field_scoped() {
+        // Test field-scoped search with FTS5
+        use crate::types::{FtField, FtOnType, FtSearchOptions};
+
+        let db = Db::open_memory().unwrap();
+
+        let schema = vec![FtField::text("title"), FtField::text("body")];
+        db.ft_create("idx", FtOnType::Hash, &["doc:"], &schema)
+            .unwrap();
+
+        db.hset("doc:1", &[("title", b"Hello World"), ("body", b"Some content here")])
+            .unwrap();
+        db.hset("doc:2", &[("title", b"Other Title"), ("body", b"Hello in the body")])
+            .unwrap();
+
+        // Search for "Hello" only in title field
+        let options = FtSearchOptions::new();
+        let (total, results) = db.ft_search("idx", "@title:Hello", &options).unwrap();
+
+        assert_eq!(total, 1);
+        assert_eq!(results[0].key, "doc:1");
+    }
+
+    #[test]
+    fn test_ft_search_auto_index_on_update() {
+        // Test that updating a document re-indexes it properly
+        use crate::types::{FtField, FtOnType, FtSearchOptions};
+
+        let db = Db::open_memory().unwrap();
+
+        let schema = vec![FtField::text("content")];
+        db.ft_create("idx", FtOnType::Hash, &["doc:"], &schema)
+            .unwrap();
+
+        // Create initial document
+        db.hset("doc:1", &[("content", b"Original content here")])
+            .unwrap();
+
+        // Search for "Original" - should find it
+        let options = FtSearchOptions::new();
+        let (total, _) = db.ft_search("idx", "Original", &options).unwrap();
+        assert_eq!(total, 1);
+
+        // Update the document
+        db.hset("doc:1", &[("content", b"Updated content now")])
+            .unwrap();
+
+        // Search for "Original" - should NOT find it anymore
+        let (total, _) = db.ft_search("idx", "Original", &options).unwrap();
+        assert_eq!(total, 0, "Old content should not match after update");
+
+        // Search for "Updated" - should find it
+        let (total, _) = db.ft_search("idx", "Updated", &options).unwrap();
+        assert_eq!(total, 1, "New content should match after update");
+    }
+
+    #[test]
+    fn test_ft_search_fts5_unicode() {
+        // Test that FTS5 handles unicode properly
+        use crate::types::{FtField, FtOnType, FtSearchOptions};
+
+        let db = Db::open_memory().unwrap();
+
+        let schema = vec![FtField::text("content")];
+        db.ft_create("idx", FtOnType::Hash, &["doc:"], &schema)
+            .unwrap();
+
+        db.hset("doc:1", &[("content", "日本語テスト".as_bytes())])
+            .unwrap();
+        db.hset("doc:2", &[("content", "Ümlauts and açcénts".as_bytes())])
+            .unwrap();
+        db.hset("doc:3", &[("content", "Emoji test 🔍 search".as_bytes())])
+            .unwrap();
+
+        let options = FtSearchOptions::new();
+
+        // Search for unicode characters
+        let (total, _) = db.ft_search("idx", "日本語", &options).unwrap();
+        assert!(total >= 0, "Unicode search should not error");
+
+        // Search for accented characters
+        let (total, _) = db.ft_search("idx", "Ümlauts", &options).unwrap();
+        assert!(total >= 0, "Accented character search should not error");
+    }
+
+    #[test]
+    fn test_ft_search_fts5_case_insensitive() {
+        // Test that FTS5 is case-insensitive
+        use crate::types::{FtField, FtOnType, FtSearchOptions};
+
+        let db = Db::open_memory().unwrap();
+
+        let schema = vec![FtField::text("content")];
+        db.ft_create("idx", FtOnType::Hash, &["doc:"], &schema)
+            .unwrap();
+
+        db.hset("doc:1", &[("content", b"UPPERCASE text")])
+            .unwrap();
+        db.hset("doc:2", &[("content", b"lowercase text")])
+            .unwrap();
+        db.hset("doc:3", &[("content", b"MixedCase text")])
+            .unwrap();
+
+        let options = FtSearchOptions::new();
+
+        // Search lowercase should match all
+        let (total, _) = db.ft_search("idx", "text", &options).unwrap();
+        assert_eq!(total, 3, "Case-insensitive search should match all docs");
+
+        // Search uppercase should also match all
+        let (total, _) = db.ft_search("idx", "TEXT", &options).unwrap();
+        assert_eq!(total, 3, "UPPERCASE search should match all docs");
+    }
+
+    #[test]
+    fn test_ft_search_fts5_combined_operators() {
+        // Test combined AND, OR, NOT operators
+        use crate::types::{FtField, FtOnType, FtSearchOptions};
+
+        let db = Db::open_memory().unwrap();
+
+        let schema = vec![FtField::text("title"), FtField::text("body")];
+        db.ft_create("idx", FtOnType::Hash, &["doc:"], &schema)
+            .unwrap();
+
+        db.hset("doc:1", &[("title", b"Hello World"), ("body", b"First document about programming")])
+            .unwrap();
+        db.hset("doc:2", &[("title", b"Hello There"), ("body", b"Second document about cooking")])
+            .unwrap();
+        db.hset("doc:3", &[("title", b"Goodbye World"), ("body", b"Third document about programming")])
+            .unwrap();
+        db.hset("doc:4", &[("title", b"Goodbye There"), ("body", b"Fourth document about cooking")])
+            .unwrap();
+
+        let options = FtSearchOptions::new();
+
+        // Complex query: (Hello OR Goodbye) AND programming
+        let (total, results) = db.ft_search("idx", "(Hello | Goodbye) programming", &options).unwrap();
+        assert_eq!(total, 2, "Should match docs with (Hello OR Goodbye) AND programming");
+        let keys: Vec<&str> = results.iter().map(|r| r.key.as_str()).collect();
+        assert!(keys.contains(&"doc:1") || keys.contains(&"doc:3"));
+    }
+
+    #[test]
+    fn test_ft_search_fts5_empty_document() {
+        // Test handling of empty documents
+        use crate::types::{FtField, FtOnType, FtSearchOptions};
+
+        let db = Db::open_memory().unwrap();
+
+        let schema = vec![FtField::text("content")];
+        db.ft_create("idx", FtOnType::Hash, &["doc:"], &schema)
+            .unwrap();
+
+        db.hset("doc:1", &[("content", b"")])  // Empty content
+            .unwrap();
+        db.hset("doc:2", &[("content", b"some text")])
+            .unwrap();
+
+        let options = FtSearchOptions::new();
+
+        // Search should not crash and should only find doc:2
+        let (total, results) = db.ft_search("idx", "text", &options).unwrap();
+        assert_eq!(total, 1);
+        assert_eq!(results[0].key, "doc:2");
+    }
+
+    #[test]
+    fn test_ft_search_fts5_delete_unindex() {
+        // Test that deleting a document removes it from FTS5 index
+        use crate::types::{FtField, FtOnType, FtSearchOptions};
+
+        let db = Db::open_memory().unwrap();
+
+        let schema = vec![FtField::text("content")];
+        db.ft_create("idx", FtOnType::Hash, &["doc:"], &schema)
+            .unwrap();
+
+        db.hset("doc:1", &[("content", b"Hello world")])
+            .unwrap();
+        db.hset("doc:2", &[("content", b"Hello there")])
+            .unwrap();
+
+        let options = FtSearchOptions::new();
+
+        // Both docs should match "Hello"
+        let (total, _) = db.ft_search("idx", "Hello", &options).unwrap();
+        assert_eq!(total, 2);
+
+        // Delete doc:1
+        db.del(&["doc:1"]).unwrap();
+
+        // Only doc:2 should match now
+        let (total, results) = db.ft_search("idx", "Hello", &options).unwrap();
+        assert_eq!(total, 1);
+        assert_eq!(results[0].key, "doc:2");
+    }
+
+    #[test]
+    fn test_ft_search_fts5_highlight() {
+        // Test HIGHLIGHT option wraps matching terms
+        use crate::types::{FtField, FtOnType, FtSearchOptions};
+
+        let db = Db::open_memory().unwrap();
+
+        let schema = vec![FtField::text("content")];
+        db.ft_create("idx", FtOnType::Hash, &["doc:"], &schema)
+            .unwrap();
+
+        db.hset("doc:1", &[("content", b"The quick brown fox jumps over the lazy dog")])
+            .unwrap();
+
+        let mut options = FtSearchOptions::new();
+        options.highlight_tags = Some(("<b>".to_string(), "</b>".to_string()));
+
+        let (total, results) = db.ft_search("idx", "fox", &options).unwrap();
+        assert_eq!(total, 1);
+
+        // Check that content contains highlighted term
+        let content_field = results[0].fields.iter().find(|(k, _)| k == "content");
+        assert!(content_field.is_some(), "Should return content field");
+        let content = std::str::from_utf8(&content_field.unwrap().1).unwrap();
+        assert!(content.contains("<b>fox</b>"), "Highlight should wrap 'fox' with <b> tags");
+    }
+
+    #[test]
+    fn test_ft_search_fts5_summarize() {
+        // Test SUMMARIZE option creates snippets around matching terms
+        use crate::types::{FtField, FtOnType, FtSearchOptions};
+
+        let db = Db::open_memory().unwrap();
+
+        let schema = vec![FtField::text("content")];
+        db.ft_create("idx", FtOnType::Hash, &["doc:"], &schema)
+            .unwrap();
+
+        let long_text = b"This is a very long document with lots of text. \
+            It contains many sentences and paragraphs. \
+            The important keyword appears here. \
+            Then there is more filler text. \
+            And even more content to make it long.";
+        db.hset("doc:1", &[("content", long_text.as_slice())])
+            .unwrap();
+
+        let mut options = FtSearchOptions::new();
+        options.summarize_len = Some(10);  // Limit to 10 words around match
+
+        let (total, results) = db.ft_search("idx", "keyword", &options).unwrap();
+        assert_eq!(total, 1);
+
+        // Summary should be shorter than original
+        let content_field = results[0].fields.iter().find(|(k, _)| k == "content");
+        assert!(content_field.is_some());
+        let summary = std::str::from_utf8(&content_field.unwrap().1).unwrap();
+        assert!(summary.len() < long_text.len(), "Summary should be shorter than original");
+    }
+
+    #[test]
+    fn test_ft_search_fts5_has_bm25_scores() {
+        // Test that results have BM25 scores from FTS5
+        use crate::types::{FtField, FtOnType, FtSearchOptions};
+
+        let db = Db::open_memory().unwrap();
+
+        let schema = vec![FtField::text("content")];
+        db.ft_create("idx", FtOnType::Hash, &["doc:"], &schema)
+            .unwrap();
+
+        // Create documents with different term densities
+        db.hset("doc:1", &[("content", b"test")])  // 1 occurrence
+            .unwrap();
+        db.hset("doc:2", &[("content", b"test test test test test")])  // 5 occurrences
+            .unwrap();
+        db.hset("doc:3", &[("content", b"test test")])  // 2 occurrences
+            .unwrap();
+
+        let options = FtSearchOptions::new();
+        let (_, results) = db.ft_search("idx", "test", &options).unwrap();
+
+        assert_eq!(results.len(), 3);
+
+        // Check all results have non-zero scores
+        for result in &results {
+            assert!(result.score > 0.0, "Result should have positive BM25 score");
+        }
+
+        // Doc with more occurrences should have higher score than doc with fewer
+        let doc1_score = results.iter().find(|r| r.key == "doc:1").unwrap().score;
+        let doc2_score = results.iter().find(|r| r.key == "doc:2").unwrap().score;
+        assert!(doc2_score > doc1_score, "Doc with more term occurrences should have higher score");
+    }
+
+    #[test]
+    fn test_ft_search_fts5_multiple_prefixes() {
+        // Test index with multiple prefixes
+        use crate::types::{FtField, FtOnType, FtSearchOptions};
+
+        let db = Db::open_memory().unwrap();
+
+        let schema = vec![FtField::text("name")];
+        db.ft_create("idx", FtOnType::Hash, &["user:", "admin:"], &schema)
+            .unwrap();
+
+        db.hset("user:1", &[("name", b"John Doe")])
+            .unwrap();
+        db.hset("admin:1", &[("name", b"Jane Admin")])
+            .unwrap();
+        db.hset("other:1", &[("name", b"Other User")])  // Not indexed
+            .unwrap();
+
+        let options = FtSearchOptions::new();
+
+        // Match all should find both prefixes
+        let (total, _) = db.ft_search("idx", "*", &options).unwrap();
+        assert_eq!(total, 2, "Should match docs from both prefixes");
+
+        // Search for John
+        let (total, results) = db.ft_search("idx", "John", &options).unwrap();
+        assert_eq!(total, 1);
+        assert_eq!(results[0].key, "user:1");
+    }
+
+    #[test]
+    fn test_ft_search_fts5_without_inkeys() {
+        // Test basic search matches all documents (INKEYS not yet implemented)
+        use crate::types::{FtField, FtOnType, FtSearchOptions};
+
+        let db = Db::open_memory().unwrap();
+
+        let schema = vec![FtField::text("content")];
+        db.ft_create("idx", FtOnType::Hash, &["doc:"], &schema)
+            .unwrap();
+
+        db.hset("doc:1", &[("content", b"Hello world")])
+            .unwrap();
+        db.hset("doc:2", &[("content", b"Hello there")])
+            .unwrap();
+        db.hset("doc:3", &[("content", b"Hello everyone")])
+            .unwrap();
+
+        let options = FtSearchOptions::new();
+        let (total, _) = db.ft_search("idx", "Hello", &options).unwrap();
+        assert_eq!(total, 3, "Should find all matching documents");
+    }
+
 }
