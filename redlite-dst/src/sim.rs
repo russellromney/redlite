@@ -28,8 +28,6 @@ pub struct SimConfig {
     pub max_ops: usize,
     /// Whether to enable fault injection.
     pub enable_faults: bool,
-    /// Probability of network delay (0.0 - 1.0).
-    pub network_delay_prob: f64,
     /// Probability of operation failure (0.0 - 1.0).
     pub failure_prob: f64,
 }
@@ -40,7 +38,6 @@ impl Default for SimConfig {
             seed: 0,
             max_ops: 1000,
             enable_faults: false,
-            network_delay_prob: 0.0,
             failure_prob: 0.0,
         }
     }
@@ -61,11 +58,6 @@ impl SimConfig {
 
     pub fn with_faults(mut self, enable: bool) -> Self {
         self.enable_faults = enable;
-        self
-    }
-
-    pub fn with_network_delay(mut self, prob: f64) -> Self {
-        self.network_delay_prob = prob.clamp(0.0, 1.0);
         self
     }
 
@@ -151,20 +143,6 @@ impl SimContext {
         }
     }
 
-    /// Get a deterministic delay duration (for simulating network latency).
-    pub fn get_delay(&mut self) -> Option<Duration> {
-        if !self.config.enable_faults {
-            return None;
-        }
-        if self.gen_bool(self.config.network_delay_prob) {
-            // Generate delay between 1ms and 100ms
-            let ms = self.gen_range(1..100);
-            Some(Duration::from_millis(ms))
-        } else {
-            None
-        }
-    }
-
     /// Generate a deterministic random key.
     pub fn random_key(&mut self) -> String {
         format!("key_{}", self.gen_range(0u32..1000))
@@ -225,6 +203,27 @@ pub mod runtime {
     pub async fn yield_now() {
         madsim::task::yield_now().await;
     }
+
+    /// Get the current simulated time instant.
+    pub fn now() -> std::time::Instant {
+        madsim::time::Instant::now().into()
+    }
+
+    /// Get elapsed time since simulation start (simulated, not wall clock).
+    pub fn elapsed_since_start() -> Duration {
+        madsim::time::Instant::now().elapsed()
+    }
+
+    /// Advance time by the given duration instantly.
+    /// This is useful for testing timeouts and TTL without waiting.
+    pub async fn advance_time(duration: Duration) {
+        madsim::time::sleep(duration).await;
+    }
+
+    /// Check if we're running under MadSim.
+    pub const fn is_madsim() -> bool {
+        true
+    }
 }
 
 /// Standard runtime (without MadSim).
@@ -234,16 +233,28 @@ pub mod runtime {
 #[cfg(not(madsim))]
 pub mod runtime {
     use super::*;
+    use std::sync::atomic::{AtomicU64, Ordering};
+
+    // Track simulation start time for elapsed calculations
+    static SIM_START: AtomicU64 = AtomicU64::new(0);
 
     /// Run a simulation using standard tokio runtime.
     ///
     /// Note: This does not provide deterministic async scheduling.
     /// Use `--cfg madsim` for true determinism.
-    pub fn run_simulation<F, Fut>(seed: u64, f: F) -> Result<(), String>
+    pub fn run_simulation<F, Fut>(_seed: u64, f: F) -> Result<(), String>
     where
         F: FnOnce() -> Fut,
         Fut: std::future::Future<Output = Result<(), String>>,
     {
+        // Record start time
+        SIM_START.store(
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap_or_default()
+                .as_millis() as u64,
+            Ordering::SeqCst,
+        );
         let rt = tokio::runtime::Runtime::new().map_err(|e| e.to_string())?;
         rt.block_on(f())
     }
@@ -266,41 +277,31 @@ pub mod runtime {
     pub async fn yield_now() {
         tokio::task::yield_now().await;
     }
-}
 
-/// Virtual node for distributed simulation.
-///
-/// Represents a simulated node in a distributed system.
-#[derive(Debug)]
-pub struct VirtualNode {
-    pub id: u32,
-    pub is_alive: bool,
-    pub network_partition: bool,
-}
-
-impl VirtualNode {
-    pub fn new(id: u32) -> Self {
-        Self {
-            id,
-            is_alive: true,
-            network_partition: false,
-        }
+    /// Get the current time instant.
+    pub fn now() -> std::time::Instant {
+        std::time::Instant::now()
     }
 
-    pub fn kill(&mut self) {
-        self.is_alive = false;
+    /// Get elapsed time since simulation start (wall clock).
+    pub fn elapsed_since_start() -> Duration {
+        let start = SIM_START.load(Ordering::SeqCst);
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_millis() as u64;
+        Duration::from_millis(now.saturating_sub(start))
     }
 
-    pub fn revive(&mut self) {
-        self.is_alive = true;
+    /// Advance time by sleeping (real time, not simulated).
+    /// Under MadSim this would be instant; here it's actual sleep.
+    pub async fn advance_time(duration: Duration) {
+        tokio::time::sleep(duration).await;
     }
 
-    pub fn partition(&mut self) {
-        self.network_partition = true;
-    }
-
-    pub fn heal(&mut self) {
-        self.network_partition = false;
+    /// Check if we're running under MadSim.
+    pub const fn is_madsim() -> bool {
+        false
     }
 }
 

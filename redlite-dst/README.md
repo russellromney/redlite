@@ -3,12 +3,11 @@
 **Deterministic Simulation Testing for Redlite**
 
 [![Rust](https://img.shields.io/badge/rust-1.75+-orange.svg)](https://www.rust-lang.org)
-[![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 
 > Find bugs that would take months to surface in production.
 > Every failure is reproducible with a seed.
 
-Inspired by [TigerBeetle VOPR](https://github.com/tigerbeetle/tigerbeetle/blob/main/docs/internals/vopr.md), [sled simulation](https://sled.rs/simulation.html), and [MadSim](https://github.com/madsim-rs/madsim).
+Inspired by [TigerBeetle VOPR](https://github.com/tigerbeetle/tigerbeetle/blob/main/docs/internals/vopr.md), [sled simulation](https://sled.rs/simulation.html), and [MadSim](https://github.com/madsim-rs/madsim)
 
 ## Quick Start
 
@@ -298,6 +297,3 @@ This tool embodies:
 4. **Scale**: Cloud execution enables testing at production scale
 5. **Regression**: Once found, bugs stay caught with the seed bank
 
-## License
-
-MIT

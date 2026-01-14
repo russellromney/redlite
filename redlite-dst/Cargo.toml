@@ -3,7 +3,7 @@ name = "redlite-dst"
 version = "0.1.0"
 edition = "2021"
 description = "Deterministic Simulation Testing suite for Redlite"
-license = "MIT"
+license = "Apache-2.0"
 
 # Allow cfg(madsim) without warning (set via RUSTFLAGS)
 [lints.rust]

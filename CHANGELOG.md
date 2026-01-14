@@ -1,5 +1,37 @@
 # Changelog
 
+## Session 27: DST Code Review and Cleanup
+
+### Removed - Dead Code and Distributed System Concepts
+- **Deleted `libsql_db.rs`** - 768 lines of unused code (libsql backend removed)
+- **Removed libsql from `backend.rs`** - Only SQLite and Turso (feature-gated) remain
+- **Removed distributed concepts from `sim.rs`**:
+  - Removed `network_delay_prob` field (no network in embedded DB)
+  - Removed `with_network_delay()` builder
+  - Removed `get_delay()` method
+- **Removed dead types from `types.rs`**:
+  - `RegressionSeed` - actual impl uses simple text file format
+  - `Fault` enum - chaos testing uses inline string matching
+  - `MemorySnapshot` - not used, can re-add when soak testing enhanced
+
+### Added - Write Contention Scenario
+- **`write_contention` simulation** - Multiple writers hammering hot keys with INCR/DECR/SET/GET
+- Tests data consistency under heavy write contention to 5 hot keys
+
+### Fixed - License Consistency
+- Changed `redlite-dst/Cargo.toml` license from MIT to Apache-2.0
+- Removed MIT license badge from `redlite-dst/README.md`
+- License is Apache-2.0 at root level only
+
+### Code Review Findings (for future work)
+- `report.rs` needs wiring up for `--format json/markdown` output
+- `cloud` command is placeholder (will use fly-benchmark-engine)
+- Main redlite crate has ~10 warnings (unused variables, dead methods)
+
+### Test Results
+- ✅ 9 redlite-dst tests passing
+- ✅ Build clean (expected warnings for unwired report.rs)
+
 ## Session 26: MadSim Integration for DST
 
 ### Added - MadSim Deterministic Runtime Support

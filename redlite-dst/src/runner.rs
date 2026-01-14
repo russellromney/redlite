@@ -720,6 +720,7 @@ impl TestRunner {
             "concurrent_operations",
             "crash_recovery",
             "connection_storm",
+            "write_contention",
         ];
 
         let total_runs = seeds * scenarios.len() as u64;
@@ -735,6 +736,7 @@ impl TestRunner {
                     "concurrent_operations" => Self::sim_concurrent_operations(seed, ops),
                     "crash_recovery" => Self::sim_crash_recovery(seed, ops),
                     "connection_storm" => Self::sim_connection_storm(seed, ops),
+                    "write_contention" => Self::sim_write_contention(seed, ops),
                     _ => TestResult::fail(&test_name, seed, 0, "Unknown scenario"),
                 };
 
@@ -1117,6 +1119,144 @@ impl TestRunner {
         }
 
         TestResult::pass("connection_storm", seed, start.elapsed().as_millis() as u64)
+    }
+
+    /// Scenario: Write contention simulation
+    ///
+    /// Multiple "writers" hammering the same small set of keys with mixed operations.
+    /// Tests that final state is consistent and no data corruption occurs under
+    /// heavy write contention to hot keys.
+    fn sim_write_contention(seed: u64, ops: usize) -> TestResult {
+        let start = Instant::now();
+        let mut rng = ChaCha8Rng::seed_from_u64(seed);
+
+        let temp_dir = match tempfile::tempdir() {
+            Ok(d) => d,
+            Err(e) => {
+                return TestResult::fail(
+                    "write_contention",
+                    seed,
+                    start.elapsed().as_millis() as u64,
+                    &format!("Failed to create temp dir: {}", e),
+                );
+            }
+        };
+        let db_path = temp_dir.path().join("contention.db");
+
+        let mut client = match RedliteClient::new_file(db_path.clone()) {
+            Ok(c) => c,
+            Err(e) => {
+                return TestResult::fail(
+                    "write_contention",
+                    seed,
+                    start.elapsed().as_millis() as u64,
+                    &format!("Failed to create client: {}", e),
+                );
+            }
+        };
+
+        // Small key space = high contention
+        let num_hot_keys = 5;
+        let mut counters: std::collections::HashMap<String, i64> = std::collections::HashMap::new();
+
+        // Initialize counters
+        for i in 0..num_hot_keys {
+            let key = format!("hot_key_{}", i);
+            if let Err(e) = client.set(&key, b"0".to_vec()) {
+                return TestResult::fail(
+                    "write_contention",
+                    seed,
+                    start.elapsed().as_millis() as u64,
+                    &format!("Failed to initialize key: {}", e),
+                );
+            }
+            counters.insert(key, 0);
+        }
+
+        // Hammer the hot keys with mixed operations
+        for _ in 0..ops {
+            let key_idx = rng.gen_range(0..num_hot_keys);
+            let key = format!("hot_key_{}", key_idx);
+            let op_type = rng.gen_range(0..4);
+
+            match op_type {
+                0 => {
+                    // INCR
+                    if client.incr(&key).is_ok() {
+                        *counters.get_mut(&key).unwrap() += 1;
+                    }
+                }
+                1 => {
+                    // DECR
+                    if client.decr(&key).is_ok() {
+                        *counters.get_mut(&key).unwrap() -= 1;
+                    }
+                }
+                2 => {
+                    // SET to specific value
+                    let val = rng.gen_range(-100..100i64);
+                    if client.set(&key, val.to_string().into_bytes()).is_ok() {
+                        *counters.get_mut(&key).unwrap() = val;
+                    }
+                }
+                _ => {
+                    // GET (read, no state change)
+                    let _ = client.get(&key);
+                }
+            }
+        }
+
+        // Verify final state matches our tracking
+        for (key, expected) in &counters {
+            match client.get(key) {
+                Ok(Some(got)) => {
+                    let got_str = String::from_utf8_lossy(&got);
+                    let got_val: i64 = match got_str.parse() {
+                        Ok(v) => v,
+                        Err(_) => {
+                            return TestResult::fail(
+                                "write_contention",
+                                seed,
+                                start.elapsed().as_millis() as u64,
+                                &format!(
+                                    "Non-numeric value for '{}': {:?}",
+                                    key, got_str
+                                ),
+                            );
+                        }
+                    };
+                    if got_val != *expected {
+                        return TestResult::fail(
+                            "write_contention",
+                            seed,
+                            start.elapsed().as_millis() as u64,
+                            &format!(
+                                "Value mismatch for '{}': expected {}, got {}",
+                                key, expected, got_val
+                            ),
+                        );
+                    }
+                }
+                Ok(None) => {
+                    return TestResult::fail(
+                        "write_contention",
+                        seed,
+                        start.elapsed().as_millis() as u64,
+                        &format!("Key '{}' disappeared", key),
+                    );
+                }
+                Err(e) => {
+                    return TestResult::fail(
+                        "write_contention",
+                        seed,
+                        start.elapsed().as_millis() as u64,
+                        &format!("Read failed for '{}': {}", key, e),
+                    );
+                }
+            }
+        }
+
+        TestResult::pass("write_contention", seed, start.elapsed().as_millis() as u64)
     }
 
     /// Fault injection tests

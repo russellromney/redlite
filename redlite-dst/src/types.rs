@@ -75,50 +75,6 @@ impl TestSummary {
     }
 }
 
-/// A regression seed to always test
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct RegressionSeed {
-    pub seed: u64,
-    pub test_type: String,
-    pub description: String,
-    pub added: DateTime<Utc>,
-    pub issue_url: Option<String>,
-}
-
-/// Fault types for chaos testing
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-pub enum Fault {
-    DiskFull,
-    CorruptRead,
-    CorruptWrite,
-    SlowWrite,
-    ConnectionDrop,
-    CrashMidWrite,
-}
-
-impl Fault {
-    pub fn from_str(s: &str) -> Option<Self> {
-        match s.to_lowercase().as_str() {
-            "disk_full" => Some(Fault::DiskFull),
-            "corrupt_read" => Some(Fault::CorruptRead),
-            "corrupt_write" => Some(Fault::CorruptWrite),
-            "slow_write" => Some(Fault::SlowWrite),
-            "connection_drop" => Some(Fault::ConnectionDrop),
-            "crash_mid_write" => Some(Fault::CrashMidWrite),
-            _ => None,
-        }
-    }
-}
-
-/// Memory snapshot for soak testing
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct MemorySnapshot {
-    pub timestamp: DateTime<Utc>,
-    pub rss_bytes: u64,
-    pub heap_bytes: Option<u64>,
-    pub open_fds: Option<u32>,
-}
-
 /// Oracle test statistics
 #[derive(Debug, Clone, Default)]
 pub struct OracleStats {

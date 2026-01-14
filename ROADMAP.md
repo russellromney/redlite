@@ -337,16 +337,17 @@ Inspired by [sled](https://sled.rs/simulation.html), [TigerBeetle VOPR](https://
 - [x] All property tests working with real Redlite (70/70 passed)
 - [x] CLI commands: `oracle`, `simulate`, `chaos`, `stress`, `fuzz`, `soak`
   - **ORACLE**: Redis comparison testing (5 data types: strings, lists, hashes, sets, sorted_sets)
-  - **SIMULATE**: Deterministic simulation (concurrent_operations, crash_recovery, connection_storm)
+  - **SIMULATE**: Deterministic simulation (concurrent_operations, crash_recovery, connection_storm, write_contention)
   - **CHAOS**: Fault injection (crash_mid_write, corrupt_read, disk_full, slow_write)
   - **STRESS**: Concurrent load testing with throughput/latency metrics
   - **FUZZ**: In-process fuzzing (resp_parser, query_parser, command_handler targets)
   - **SOAK**: Long-running stability testing with memory leak detection
 - [x] All using real tokio with actual Redlite library (no mocks)
 - [x] Seed-based reproducibility with ChaCha8Rng
+- [x] Code review cleanup: removed dead code (libsql_db.rs, distributed concepts in sim.rs, unused types)
 - [ ] `cloud` command for fly.io parallel execution (placeholder)
 - [ ] Spec-driven scenarios in `spec/scenarios.yaml`
-- [ ] JSON + Markdown report output
+- [ ] JSON + Markdown report output (code exists in report.rs, needs wiring)
 
 #### Phase 6: Soak Testing + Extras (Session 27.6)
 - [ ] `redlite-dst soak --duration 24h` — long-running stability test
