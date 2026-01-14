@@ -25,6 +25,10 @@ pub struct BenchmarkResult {
     pub failed_ops: usize,
     pub latencies_us: Vec<f64>,
     pub duration_secs: f64,
+    // Size and memory tracking (optional, 0 means not measured)
+    pub initial_size_bytes: Option<u64>,
+    pub final_size_bytes: Option<u64>,
+    pub memory_overhead_bytes: Option<u64>,
 }
 
 impl BenchmarkResult {
@@ -39,7 +43,28 @@ impl BenchmarkResult {
             failed_ops: 0,
             latencies_us: Vec::new(),
             duration_secs: 0.0,
+            initial_size_bytes: None,
+            final_size_bytes: None,
+            memory_overhead_bytes: None,
         }
+    }
+
+    /// Set initial and final sizes, calculating overhead
+    pub fn set_sizes(&mut self, initial: u64, final_size: u64) {
+        self.initial_size_bytes = Some(initial);
+        self.final_size_bytes = Some(final_size);
+        self.memory_overhead_bytes = Some(final_size.saturating_sub(initial));
+    }
+
+    /// Overhead per operation (if measured)
+    pub fn overhead_per_op(&self) -> Option<f64> {
+        self.memory_overhead_bytes.map(|bytes| {
+            if self.successful_ops > 0 {
+                bytes as f64 / self.successful_ops as f64
+            } else {
+                0.0
+            }
+        })
     }
 
     /// Minimum latency in microseconds
@@ -151,6 +176,21 @@ impl BenchmarkResult {
         println!("  P50:    {:.2}", self.p50_latency_us());
         println!("  P95:    {:.2}", self.p95_latency_us());
         println!("  P99:    {:.2}", self.p99_latency_us());
+
+        // Print size metrics if available
+        if let (Some(initial), Some(final_sz)) = (self.initial_size_bytes, self.final_size_bytes) {
+            println!();
+            println!("Storage:");
+            println!("  Initial:  {:.2} MB", initial as f64 / 1_048_576.0);
+            println!("  Final:    {:.2} MB", final_sz as f64 / 1_048_576.0);
+            if let Some(overhead) = self.memory_overhead_bytes {
+                println!(
+                    "  Overhead: {:.2} MB ({:.0} bytes/op)",
+                    overhead as f64 / 1_048_576.0,
+                    self.overhead_per_op().unwrap_or(0.0)
+                );
+            }
+        }
     }
 }
 

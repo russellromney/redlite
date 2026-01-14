@@ -1064,6 +1064,8 @@ dependencies = [
  "clap",
  "rmp-serde",
  "rusqlite",
+ "serde",
+ "serde_json",
  "thiserror",
  "tokio",
  "tracing",

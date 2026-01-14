@@ -401,13 +401,55 @@ impl RedisLikeClient for RedliteEmbeddedClient {
             .map_err(Self::handle_error)
     }
 
+    async fn history_getat(&self, key: &str, timestamp: i64) -> ClientResult<i64> {
+        self.db
+            .history_get_at(key, timestamp)
+            .map(|val| if val.is_some() { 1i64 } else { 0i64 })
+            .map_err(Self::handle_error)
+    }
+
+    async fn history_stats(&self, key: &str) -> ClientResult<i64> {
+        self.db
+            .history_stats(Some(key))
+            .map(|_stats| {
+                // Return a count representing available statistics fields
+                4i64 // total_entries, oldest_timestamp, newest_timestamp, storage_bytes
+            })
+            .map_err(Self::handle_error)
+    }
+
+    async fn history_disable(&self, key: &str) -> ClientResult<()> {
+        self.db
+            .history_disable_key(key)
+            .map_err(Self::handle_error)
+    }
+
+    async fn history_clear(&self, key: &str) -> ClientResult<i64> {
+        self.db
+            .history_clear_key(key, None)
+            .map_err(Self::handle_error)
+    }
+
+    async fn history_prune(&self, timestamp: i64) -> ClientResult<i64> {
+        self.db
+            .history_prune(timestamp)
+            .map_err(Self::handle_error)
+    }
+
+    async fn history_list(&self) -> ClientResult<i64> {
+        self.db
+            .history_list_keys(None)
+            .map(|keys| keys.len() as i64)
+            .map_err(Self::handle_error)
+    }
+
     async fn keyinfo(&self, key: &str) -> ClientResult<i64> {
         self.db
             .keyinfo(key)
             .map(|info| {
                 // Return a count representing available metadata fields
                 if info.is_some() {
-                    5i64 // key_type, size, encoding, last_accessed, created
+                    4i64 // type, ttl, created_at, updated_at
                 } else {
                     0i64
                 }
@@ -415,8 +457,22 @@ impl RedisLikeClient for RedliteEmbeddedClient {
             .map_err(Self::handle_error)
     }
 
+    async fn autovacuum(&self) -> ClientResult<i64> {
+        Ok(if self.db.autovacuum_enabled() { 1i64 } else { 0i64 })
+    }
+
     async fn vacuum(&self) -> ClientResult<i64> {
         self.db.vacuum().map_err(Self::handle_error)
+    }
+
+    // ========== SIZE/MEMORY MEASUREMENT ==========
+
+    async fn get_db_size_bytes(&self) -> ClientResult<Option<u64>> {
+        // For embedded clients, we can estimate memory usage by checking
+        // the SQLite page count and page size if file-backed, or return None for memory dbs
+        // For now, return None since memory DBs don't have meaningful file size
+        // File-backed DBs could be measured via std::fs::metadata
+        Ok(None)
     }
 }
 

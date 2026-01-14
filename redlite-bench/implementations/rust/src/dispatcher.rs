@@ -11,7 +11,7 @@ use crate::error::{Result, BenchError};
 
 /// Execute a single operation by name and return latency in microseconds
 ///
-/// Supports all 52 operations: 48 standard Redis operations + 4 Redlite-specific
+/// Supports all 59 operations: 48 standard Redis operations + 11 Redlite-specific
 pub async fn execute_operation<C: RedisLikeClient>(
     client: &C,
     operation: &str,
@@ -255,8 +255,31 @@ pub async fn execute_operation<C: RedisLikeClient>(
         "HISTORY GET" => {
             let _ = client.history_get(&key).await;
         }
+        "HISTORY GETAT" => {
+            let timestamp = chrono::Local::now().timestamp_millis() - rng.gen_range(0..60000);
+            let _ = client.history_getat(&key, timestamp).await;
+        }
+        "HISTORY STATS" => {
+            let _ = client.history_stats(&key).await;
+        }
+        "HISTORY DISABLE" => {
+            let _ = client.history_disable(&key).await;
+        }
+        "HISTORY CLEAR" => {
+            let _ = client.history_clear(&key).await;
+        }
+        "HISTORY PRUNE" => {
+            let timestamp = chrono::Local::now().timestamp_millis() - (24 * 3600 * 1000); // 1 day ago
+            let _ = client.history_prune(timestamp).await;
+        }
+        "HISTORY LIST" => {
+            let _ = client.history_list().await;
+        }
         "KEYINFO" => {
             let _ = client.keyinfo(&key).await;
+        }
+        "AUTOVACUUM" => {
+            let _ = client.autovacuum().await;
         }
         "VACUUM" => {
             client.vacuum().await?;

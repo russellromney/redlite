@@ -187,7 +187,7 @@ pub trait RedisLikeClient: Send + Sync + Clone {
     /// PING - Test connection
     async fn ping(&self) -> ClientResult<()>;
 
-    // ========== REDLITE-SPECIFIC OPERATIONS (4) ==========
+    // ========== REDLITE-SPECIFIC OPERATIONS (11) ==========
 
     /// HISTORY ENABLE key - Enable history tracking for a key
     /// Returns Ok(()) on success, or error if not supported (e.g., Redis)
@@ -197,13 +197,47 @@ pub trait RedisLikeClient: Send + Sync + Clone {
     /// Returns a count of entries, or error if not supported
     async fn history_get(&self, key: &str) -> ClientResult<i64>;
 
+    /// HISTORY GETAT key timestamp - Time-travel query to get value at specific time
+    /// Returns 1 if found, 0 if not, or error if not supported
+    async fn history_getat(&self, key: &str, timestamp: i64) -> ClientResult<i64>;
+
+    /// HISTORY STATS key - Get statistics about history for a key
+    /// Returns a count of stats entries, or error if not supported
+    async fn history_stats(&self, key: &str) -> ClientResult<i64>;
+
+    /// HISTORY DISABLE key - Disable history tracking for a key
+    /// Returns Ok(()) on success, or error if not supported
+    async fn history_disable(&self, key: &str) -> ClientResult<()>;
+
+    /// HISTORY CLEAR key - Clear all history entries for a key
+    /// Returns count of entries cleared, or error if not supported
+    async fn history_clear(&self, key: &str) -> ClientResult<i64>;
+
+    /// HISTORY PRUNE timestamp - Delete all history before timestamp across all keys
+    /// Returns count of entries pruned, or error if not supported
+    async fn history_prune(&self, timestamp: i64) -> ClientResult<i64>;
+
+    /// HISTORY LIST - List all keys with history tracking enabled
+    /// Returns count of keys with history, or error if not supported
+    async fn history_list(&self) -> ClientResult<i64>;
+
     /// KEYINFO key - Get metadata about a key
     /// Returns a count of metadata fields, or error if not supported
     async fn keyinfo(&self, key: &str) -> ClientResult<i64>;
 
+    /// AUTOVACUUM - Check or configure autovacuum status
+    /// Returns 1 if enabled, 0 if disabled, or error if not supported
+    async fn autovacuum(&self) -> ClientResult<i64>;
+
     /// VACUUM - Run storage optimization/cleanup
     /// Returns count of deleted entries, or error if not supported
     async fn vacuum(&self) -> ClientResult<i64>;
+
+    // ========== SIZE/MEMORY MEASUREMENT (optional) ==========
+
+    /// Get approximate database size in bytes (if available)
+    /// Returns None if not measurable for this backend
+    async fn get_db_size_bytes(&self) -> ClientResult<Option<u64>>;
 }
 
 #[cfg(test)]

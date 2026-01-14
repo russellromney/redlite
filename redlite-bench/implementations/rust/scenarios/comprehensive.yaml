@@ -402,6 +402,70 @@ workloads:
       - type: "KEYINFO"
         weight: 30.0
 
+  - name: "time_travel_queries"
+    description: "Redlite time-travel - simulate debugging state changes (history pre-enabled)"
+    setup:
+      strings: { count: 1000, value_size: 100 }
+    operations:
+      - type: "SET"
+        weight: 20.0
+      - type: "HISTORY ENABLE"
+        weight: 20.0
+      - type: "HISTORY GETAT"
+        weight: 40.0
+      - type: "HISTORY GET"
+        weight: 10.0
+      - type: "GET"
+        weight: 10.0
+
+  - name: "history_management"
+    description: "Redlite history management - enable, query stats, cleanup"
+    setup:
+      strings: { count: 1000, value_size: 100 }
+    operations:
+      - type: "SET"
+        weight: 25.0
+      - type: "HISTORY ENABLE"
+        weight: 25.0
+      - type: "HISTORY STATS"
+        weight: 20.0
+      - type: "HISTORY CLEAR"
+        weight: 15.0
+      - type: "HISTORY LIST"
+        weight: 10.0
+      - type: "HISTORY PRUNE"
+        weight: 5.0
+
+  - name: "autovacuum_pattern"
+    description: "Redlite autovacuum - status checks and periodic cleanup with writes"
+    setup:
+      strings: { count: 2000, value_size: 100 }
+    operations:
+      - type: "SET"
+        weight: 40.0
+      - type: "GET"
+        weight: 30.0
+      - type: "AUTOVACUUM"
+        weight: 20.0
+      - type: "VACUUM"
+        weight: 10.0
+
+  - name: "global_history_writes"
+    description: "Write-heavy workload with global history enabled (measures history overhead)"
+    setup:
+      strings: { count: 500, value_size: 100 }
+    operations:
+      - type: "HISTORY ENABLE"
+        weight: 1.0
+      - type: "SET"
+        weight: 50.0
+      - type: "LPUSH"
+        weight: 25.0
+      - type: "HSET"
+        weight: 15.0
+      - type: "SADD"
+        weight: 9.0
+
   # ========== SIMPLE BASELINES ==========
 
   - name: "get_only"

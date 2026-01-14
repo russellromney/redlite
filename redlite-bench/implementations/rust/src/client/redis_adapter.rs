@@ -622,9 +622,51 @@ impl RedisLikeClient for RedisClient {
         ))
     }
 
+    async fn history_getat(&self, _key: &str, _timestamp: i64) -> ClientResult<i64> {
+        Err(ClientError::Operation(
+            "HISTORY GETAT command not supported on Redis".to_string(),
+        ))
+    }
+
+    async fn history_stats(&self, _key: &str) -> ClientResult<i64> {
+        Err(ClientError::Operation(
+            "HISTORY STATS command not supported on Redis".to_string(),
+        ))
+    }
+
+    async fn history_disable(&self, _key: &str) -> ClientResult<()> {
+        Err(ClientError::Operation(
+            "HISTORY DISABLE command not supported on Redis".to_string(),
+        ))
+    }
+
+    async fn history_clear(&self, _key: &str) -> ClientResult<i64> {
+        Err(ClientError::Operation(
+            "HISTORY CLEAR command not supported on Redis".to_string(),
+        ))
+    }
+
+    async fn history_prune(&self, _timestamp: i64) -> ClientResult<i64> {
+        Err(ClientError::Operation(
+            "HISTORY PRUNE command not supported on Redis".to_string(),
+        ))
+    }
+
+    async fn history_list(&self) -> ClientResult<i64> {
+        Err(ClientError::Operation(
+            "HISTORY LIST command not supported on Redis".to_string(),
+        ))
+    }
+
     async fn keyinfo(&self, _key: &str) -> ClientResult<i64> {
         Err(ClientError::Operation(
             "KEYINFO command not supported on Redis".to_string(),
+        ))
+    }
+
+    async fn autovacuum(&self) -> ClientResult<i64> {
+        Err(ClientError::Operation(
+            "AUTOVACUUM command not supported on Redis".to_string(),
         ))
     }
 
@@ -632,5 +674,26 @@ impl RedisLikeClient for RedisClient {
         Err(ClientError::Operation(
             "VACUUM command not supported on Redis".to_string(),
         ))
+    }
+
+    // ========== SIZE/MEMORY MEASUREMENT ==========
+
+    async fn get_db_size_bytes(&self) -> ClientResult<Option<u64>> {
+        let mut conn = self.get_connection().await?;
+        let info: String = redis::cmd("INFO")
+            .arg("memory")
+            .query_async(&mut conn)
+            .await
+            .map_err(Self::handle_redis_error)?;
+
+        // Parse "used_memory:" from INFO output
+        for line in info.lines() {
+            if line.starts_with("used_memory:") {
+                if let Ok(bytes) = line.split(':').nth(1).unwrap_or("0").parse::<u64>() {
+                    return Ok(Some(bytes));
+                }
+            }
+        }
+        Ok(None)
     }
 }
