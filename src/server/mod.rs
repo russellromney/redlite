@@ -498,6 +498,8 @@ async fn execute_command(
         "FT.SUGGET" => cmd_ft_sugget(db, cmd_args),
         "FT.SUGDEL" => cmd_ft_sugdel(db, cmd_args),
         "FT.SUGLEN" => cmd_ft_suglen(db, cmd_args),
+        "FT.EXPLAIN" => cmd_ft_explain(db, cmd_args),
+        "FT.PROFILE" => cmd_ft_profile(db, cmd_args),
         // Vector commands (Session 24.2)
         "VECTOR" => cmd_vector(db, cmd_args),
         "VADD" => cmd_vadd(db, cmd_args),
@@ -3965,6 +3967,115 @@ fn cmd_ft_search(db: &Db, args: &[Vec<u8>]) -> RespValue {
                     continue;
                 }
             }
+            "HIGHLIGHT" => {
+                // HIGHLIGHT [FIELDS count field...] [TAGS open close]
+                i += 1;
+                // Default tags if none specified
+                options.highlight_tags = Some(("<b>".to_string(), "</b>".to_string()));
+                while i < args.len() {
+                    let sub_opt = std::str::from_utf8(&args[i])
+                        .unwrap_or("")
+                        .to_uppercase();
+                    match sub_opt.as_str() {
+                        "FIELDS" => {
+                            if i + 1 < args.len() {
+                                let count: usize = std::str::from_utf8(&args[i + 1])
+                                    .ok()
+                                    .and_then(|s| s.parse().ok())
+                                    .unwrap_or(0);
+                                i += 2;
+                                for _ in 0..count {
+                                    if i < args.len() {
+                                        if let Ok(f) = std::str::from_utf8(&args[i]) {
+                                            options.highlight_fields.push(f.to_string());
+                                        }
+                                        i += 1;
+                                    }
+                                }
+                            }
+                        }
+                        "TAGS" => {
+                            if i + 2 < args.len() {
+                                let open = std::str::from_utf8(&args[i + 1])
+                                    .unwrap_or("<b>")
+                                    .to_string();
+                                let close = std::str::from_utf8(&args[i + 2])
+                                    .unwrap_or("</b>")
+                                    .to_string();
+                                options.highlight_tags = Some((open, close));
+                                i += 3;
+                            } else {
+                                i += 1;
+                            }
+                        }
+                        _ => break, // Unknown sub-option, stop HIGHLIGHT parsing
+                    }
+                }
+                continue;
+            }
+            "SUMMARIZE" => {
+                // SUMMARIZE [FIELDS count field...] [LEN fragsize] [FRAGS numfrags] [SEPARATOR separator]
+                i += 1;
+                // Set defaults
+                options.summarize_len = Some(20);
+                options.summarize_frags = Some(3);
+                options.summarize_separator = Some("...".to_string());
+                while i < args.len() {
+                    let sub_opt = std::str::from_utf8(&args[i])
+                        .unwrap_or("")
+                        .to_uppercase();
+                    match sub_opt.as_str() {
+                        "FIELDS" => {
+                            if i + 1 < args.len() {
+                                let count: usize = std::str::from_utf8(&args[i + 1])
+                                    .ok()
+                                    .and_then(|s| s.parse().ok())
+                                    .unwrap_or(0);
+                                i += 2;
+                                for _ in 0..count {
+                                    if i < args.len() {
+                                        if let Ok(f) = std::str::from_utf8(&args[i]) {
+                                            options.summarize_fields.push(f.to_string());
+                                        }
+                                        i += 1;
+                                    }
+                                }
+                            }
+                        }
+                        "LEN" => {
+                            if i + 1 < args.len() {
+                                options.summarize_len = std::str::from_utf8(&args[i + 1])
+                                    .ok()
+                                    .and_then(|s| s.parse().ok());
+                                i += 2;
+                            } else {
+                                i += 1;
+                            }
+                        }
+                        "FRAGS" => {
+                            if i + 1 < args.len() {
+                                options.summarize_frags = std::str::from_utf8(&args[i + 1])
+                                    .ok()
+                                    .and_then(|s| s.parse().ok());
+                                i += 2;
+                            } else {
+                                i += 1;
+                            }
+                        }
+                        "SEPARATOR" => {
+                            if i + 1 < args.len() {
+                                options.summarize_separator =
+                                    std::str::from_utf8(&args[i + 1]).ok().map(|s| s.to_string());
+                                i += 2;
+                            } else {
+                                i += 1;
+                            }
+                        }
+                        _ => break, // Unknown sub-option, stop SUMMARIZE parsing
+                    }
+                }
+                continue;
+            }
             _ => {}
         }
         i += 1;
@@ -4002,17 +4113,279 @@ fn cmd_ft_search(db: &Db, args: &[Vec<u8>]) -> RespValue {
     }
 }
 
-/// FT.AGGREGATE index query [options]
+/// FT.AGGREGATE index query [LOAD count field...] [GROUPBY n field... [REDUCE func n arg... [AS alias]]]
+///                         [SORTBY n field [ASC|DESC]... [MAX num]] [APPLY expr [AS alias]] [FILTER expr] [LIMIT offset count]
 fn cmd_ft_aggregate(db: &Db, args: &[Vec<u8>]) -> RespValue {
+    use crate::types::{FtAggregateOptions, FtGroupBy, FtReducer, FtReduceFunction, FtApply};
+
     if args.len() < 2 {
         return RespValue::error("wrong number of arguments for 'FT.AGGREGATE' command");
     }
 
-    // FT.AGGREGATE is a placeholder until search.rs is implemented
-    // For now, return an empty result set
-    RespValue::Array(Some(vec![
-        RespValue::Integer(0), // Total count
-    ]))
+    let index_name = match std::str::from_utf8(&args[0]) {
+        Ok(n) => n,
+        Err(_) => return RespValue::error("invalid index name"),
+    };
+
+    let query = match std::str::from_utf8(&args[1]) {
+        Ok(q) => q,
+        Err(_) => return RespValue::error("invalid query"),
+    };
+
+    // Parse options
+    let mut options = FtAggregateOptions::new();
+    let mut i = 2;
+
+    while i < args.len() {
+        let opt = match std::str::from_utf8(&args[i]) {
+            Ok(s) => s.to_uppercase(),
+            Err(_) => {
+                i += 1;
+                continue;
+            }
+        };
+
+        match opt.as_str() {
+            "LOAD" => {
+                // LOAD count field...
+                if i + 1 < args.len() {
+                    let count: usize = std::str::from_utf8(&args[i + 1])
+                        .ok()
+                        .and_then(|s| s.parse().ok())
+                        .unwrap_or(0);
+                    i += 2;
+                    for _ in 0..count {
+                        if i < args.len() {
+                            if let Ok(f) = std::str::from_utf8(&args[i]) {
+                                // Remove @ prefix if present
+                                let field = f.strip_prefix('@').unwrap_or(f);
+                                options.load_fields.push(field.to_string());
+                            }
+                            i += 1;
+                        }
+                    }
+                    continue;
+                }
+            }
+            "GROUPBY" => {
+                // GROUPBY n field... [REDUCE func n arg... [AS alias]]...
+                if i + 1 < args.len() {
+                    let count: usize = std::str::from_utf8(&args[i + 1])
+                        .ok()
+                        .and_then(|s| s.parse().ok())
+                        .unwrap_or(0);
+                    i += 2;
+
+                    let mut fields = Vec::new();
+                    for _ in 0..count {
+                        if i < args.len() {
+                            if let Ok(f) = std::str::from_utf8(&args[i]) {
+                                let field = f.strip_prefix('@').unwrap_or(f);
+                                fields.push(field.to_string());
+                            }
+                            i += 1;
+                        }
+                    }
+
+                    let mut reducers = Vec::new();
+                    // Parse REDUCE clauses
+                    while i < args.len() {
+                        let sub_opt = std::str::from_utf8(&args[i]).unwrap_or("").to_uppercase();
+                        if sub_opt != "REDUCE" {
+                            break;
+                        }
+                        i += 1; // consume REDUCE
+
+                        if i >= args.len() {
+                            break;
+                        }
+
+                        let func_name = std::str::from_utf8(&args[i]).unwrap_or("").to_uppercase();
+                        i += 1;
+
+                        // Parse arg count
+                        let arg_count: usize = if i < args.len() {
+                            std::str::from_utf8(&args[i])
+                                .ok()
+                                .and_then(|s| s.parse().ok())
+                                .unwrap_or(0)
+                        } else {
+                            0
+                        };
+                        i += 1;
+
+                        // Collect args
+                        let mut func_args = Vec::new();
+                        for _ in 0..arg_count {
+                            if i < args.len() {
+                                if let Ok(a) = std::str::from_utf8(&args[i]) {
+                                    let arg = a.strip_prefix('@').unwrap_or(a);
+                                    func_args.push(arg.to_string());
+                                }
+                                i += 1;
+                            }
+                        }
+
+                        // Parse optional AS alias
+                        let alias = if i + 1 < args.len() {
+                            let next = std::str::from_utf8(&args[i]).unwrap_or("").to_uppercase();
+                            if next == "AS" {
+                                i += 1;
+                                let a = std::str::from_utf8(&args[i]).ok().map(|s| s.to_string());
+                                i += 1;
+                                a
+                            } else {
+                                None
+                            }
+                        } else {
+                            None
+                        };
+
+                        // Build reduce function
+                        let function = match func_name.as_str() {
+                            "COUNT" => FtReduceFunction::Count,
+                            "COUNT_DISTINCT" => {
+                                FtReduceFunction::CountDistinct(func_args.first().cloned().unwrap_or_default())
+                            }
+                            "COUNT_DISTINCTISH" => {
+                                FtReduceFunction::CountDistinctIsh(func_args.first().cloned().unwrap_or_default())
+                            }
+                            "SUM" => FtReduceFunction::Sum(func_args.first().cloned().unwrap_or_default()),
+                            "MIN" => FtReduceFunction::Min(func_args.first().cloned().unwrap_or_default()),
+                            "MAX" => FtReduceFunction::Max(func_args.first().cloned().unwrap_or_default()),
+                            "AVG" => FtReduceFunction::Avg(func_args.first().cloned().unwrap_or_default()),
+                            "STDDEV" => FtReduceFunction::StdDev(func_args.first().cloned().unwrap_or_default()),
+                            "TOLIST" => FtReduceFunction::ToList(func_args.first().cloned().unwrap_or_default()),
+                            "FIRST_VALUE" => {
+                                FtReduceFunction::FirstValue(func_args.first().cloned().unwrap_or_default())
+                            }
+                            _ => FtReduceFunction::Count, // Default to COUNT for unknown
+                        };
+
+                        reducers.push(FtReducer { function, alias });
+                    }
+
+                    options.group_by = Some(FtGroupBy { fields, reducers });
+                    continue;
+                }
+            }
+            "SORTBY" => {
+                // SORTBY n field [ASC|DESC]... [MAX num]
+                if i + 1 < args.len() {
+                    let count: usize = std::str::from_utf8(&args[i + 1])
+                        .ok()
+                        .and_then(|s| s.parse().ok())
+                        .unwrap_or(0);
+                    i += 2;
+
+                    let mut j = 0;
+                    while j < count && i < args.len() {
+                        if let Ok(f) = std::str::from_utf8(&args[i]) {
+                            let field = f.strip_prefix('@').unwrap_or(f).to_string();
+                            i += 1;
+
+                            // Check for ASC/DESC
+                            let ascending = if i < args.len() {
+                                let dir = std::str::from_utf8(&args[i]).unwrap_or("").to_uppercase();
+                                if dir == "ASC" || dir == "DESC" {
+                                    i += 1;
+                                    j += 1; // ASC/DESC counts as part of the SORTBY args
+                                    dir != "DESC"
+                                } else {
+                                    true
+                                }
+                            } else {
+                                true
+                            };
+
+                            options.sort_by.push((field, ascending));
+                        }
+                        j += 1;
+                    }
+
+                    // Check for MAX
+                    if i < args.len() {
+                        let next = std::str::from_utf8(&args[i]).unwrap_or("").to_uppercase();
+                        if next == "MAX" && i + 1 < args.len() {
+                            options.sort_max = std::str::from_utf8(&args[i + 1])
+                                .ok()
+                                .and_then(|s| s.parse().ok());
+                            i += 2;
+                        }
+                    }
+                    continue;
+                }
+            }
+            "APPLY" => {
+                // APPLY expr [AS alias]
+                if i + 1 < args.len() {
+                    let expr = std::str::from_utf8(&args[i + 1]).unwrap_or("").to_string();
+                    i += 2;
+
+                    let alias = if i + 1 < args.len() {
+                        let next = std::str::from_utf8(&args[i]).unwrap_or("").to_uppercase();
+                        if next == "AS" {
+                            i += 1;
+                            let a = std::str::from_utf8(&args[i]).unwrap_or("").to_string();
+                            i += 1;
+                            a
+                        } else {
+                            format!("apply_{}", options.applies.len())
+                        }
+                    } else {
+                        format!("apply_{}", options.applies.len())
+                    };
+
+                    options.applies.push(FtApply { expression: expr, alias });
+                    continue;
+                }
+            }
+            "FILTER" => {
+                // FILTER expr
+                if i + 1 < args.len() {
+                    options.filter = std::str::from_utf8(&args[i + 1]).ok().map(|s| s.to_string());
+                    i += 2;
+                    continue;
+                }
+            }
+            "LIMIT" => {
+                if i + 2 < args.len() {
+                    options.limit_offset = std::str::from_utf8(&args[i + 1])
+                        .ok()
+                        .and_then(|s| s.parse().ok())
+                        .unwrap_or(0);
+                    options.limit_num = std::str::from_utf8(&args[i + 2])
+                        .ok()
+                        .and_then(|s| s.parse().ok())
+                        .unwrap_or(10);
+                    i += 3;
+                    continue;
+                }
+            }
+            _ => {}
+        }
+        i += 1;
+    }
+
+    // Execute the aggregation
+    match db.ft_aggregate(index_name, query, &options) {
+        Ok(rows) => {
+            let mut response = Vec::new();
+            response.push(RespValue::Integer(rows.len() as i64));
+
+            for row in rows {
+                let mut row_values: Vec<RespValue> = Vec::new();
+                for (field, value) in row {
+                    row_values.push(RespValue::from_string(field));
+                    row_values.push(RespValue::from_string(value));
+                }
+                response.push(RespValue::Array(Some(row_values)));
+            }
+
+            RespValue::Array(Some(response))
+        }
+        Err(e) => RespValue::error(&e.to_string()),
+    }
 }
 
 /// FT.ALIASADD alias index
@@ -4293,6 +4666,165 @@ fn cmd_ft_suglen(db: &Db, args: &[Vec<u8>]) -> RespValue {
     match db.ft_suglen(key) {
         Ok(count) => RespValue::Integer(count),
         Err(e) => RespValue::error(e.to_string()),
+    }
+}
+
+/// FT.EXPLAIN index query
+/// Returns the query execution plan as a nested array
+fn cmd_ft_explain(_db: &Db, args: &[Vec<u8>]) -> RespValue {
+    if args.len() < 2 {
+        return RespValue::error("wrong number of arguments for 'FT.EXPLAIN' command");
+    }
+
+    let _index_name = match std::str::from_utf8(&args[0]) {
+        Ok(n) => n,
+        Err(_) => return RespValue::error("invalid index name"),
+    };
+
+    let query = match std::str::from_utf8(&args[1]) {
+        Ok(q) => q,
+        Err(_) => return RespValue::error("invalid query"),
+    };
+
+    match crate::search::explain_query(query, false) {
+        Ok(nodes) => explain_nodes_to_resp(&nodes),
+        Err(e) => RespValue::error(format!("Query parse error: {}", e)),
+    }
+}
+
+/// Convert ExplainNode tree to RESP value
+fn explain_nodes_to_resp(nodes: &[crate::search::ExplainNode]) -> RespValue {
+    let mut result = Vec::new();
+    for node in nodes {
+        result.push(explain_node_to_resp(node));
+    }
+    if result.len() == 1 {
+        result.remove(0)
+    } else {
+        RespValue::Array(Some(result))
+    }
+}
+
+fn explain_node_to_resp(node: &crate::search::ExplainNode) -> RespValue {
+    use crate::search::ExplainNode;
+
+    match node {
+        ExplainNode::Text(s) => RespValue::from_string(s.clone()),
+        ExplainNode::Array(nodes) => {
+            let inner: Vec<RespValue> = nodes.iter().map(explain_node_to_resp).collect();
+            RespValue::Array(Some(inner))
+        }
+    }
+}
+
+/// FT.PROFILE index SEARCH|AGGREGATE query [options]
+/// Returns the search results along with timing information
+fn cmd_ft_profile(db: &Db, args: &[Vec<u8>]) -> RespValue {
+    if args.len() < 3 {
+        return RespValue::error("wrong number of arguments for 'FT.PROFILE' command");
+    }
+
+    let index_name = match std::str::from_utf8(&args[0]) {
+        Ok(n) => n,
+        Err(_) => return RespValue::error("invalid index name"),
+    };
+
+    let profile_type = match std::str::from_utf8(&args[1]) {
+        Ok(t) => t.to_uppercase(),
+        Err(_) => return RespValue::error("invalid profile type"),
+    };
+
+    let query = match std::str::from_utf8(&args[2]) {
+        Ok(q) => q,
+        Err(_) => return RespValue::error("invalid query"),
+    };
+
+    // Only SEARCH is supported for now
+    if profile_type != "SEARCH" {
+        return RespValue::error("FT.PROFILE only supports SEARCH currently");
+    }
+
+    // Parse remaining options (same as FT.SEARCH)
+    let mut options = FtSearchOptions::new();
+    let mut i = 3;
+    while i < args.len() {
+        let opt = match std::str::from_utf8(&args[i]) {
+            Ok(s) => s.to_uppercase(),
+            Err(_) => {
+                i += 1;
+                continue;
+            }
+        };
+        match opt.as_str() {
+            "NOCONTENT" => options.nocontent = true,
+            "VERBATIM" => options.verbatim = true,
+            "NOSTOPWORDS" => options.nostopwords = true,
+            "WITHSCORES" => options.withscores = true,
+            "LIMIT" => {
+                if i + 2 < args.len() {
+                    options.limit_offset = std::str::from_utf8(&args[i + 1])
+                        .ok()
+                        .and_then(|s| s.parse().ok())
+                        .unwrap_or(0);
+                    options.limit_num = std::str::from_utf8(&args[i + 2])
+                        .ok()
+                        .and_then(|s| s.parse().ok())
+                        .unwrap_or(10);
+                    i += 2;
+                }
+            }
+            _ => {}
+        }
+        i += 1;
+    }
+
+    // Time the search
+    let start = std::time::Instant::now();
+    let result = db.ft_search(index_name, query, &options);
+    let elapsed = start.elapsed();
+
+    match result {
+        Ok((total, results)) => {
+            // Build results array (same format as FT.SEARCH)
+            let mut results_array = Vec::new();
+            results_array.push(RespValue::Integer(total));
+
+            for r in results {
+                results_array.push(RespValue::from_string(r.key.clone()));
+                if options.withscores {
+                    results_array.push(RespValue::from_string(r.score.to_string()));
+                }
+                if !options.nocontent {
+                    let mut field_values: Vec<RespValue> = Vec::new();
+                    for (field_name, field_value) in &r.fields {
+                        field_values.push(RespValue::from_string(field_name.clone()));
+                        field_values.push(RespValue::BulkString(Some(field_value.clone())));
+                    }
+                    results_array.push(RespValue::Array(Some(field_values)));
+                }
+            }
+
+            // Build profile information
+            let profile = vec![
+                RespValue::from_string("Total profile time".to_string()),
+                RespValue::from_string(format!("{:.3} ms", elapsed.as_secs_f64() * 1000.0)),
+                RespValue::from_string("Parsing time".to_string()),
+                RespValue::from_string("0.001 ms".to_string()), // Placeholder
+                RespValue::from_string("Pipeline creation time".to_string()),
+                RespValue::from_string("0.001 ms".to_string()), // Placeholder
+                RespValue::from_string("Iterators created".to_string()),
+                RespValue::Integer(1),
+                RespValue::from_string("Results count".to_string()),
+                RespValue::Integer(total),
+            ];
+
+            // Return [results, profile]
+            RespValue::Array(Some(vec![
+                RespValue::Array(Some(results_array)),
+                RespValue::Array(Some(profile)),
+            ]))
+        }
+        Err(e) => RespValue::error(&e.to_string()),
     }
 }
 
@@ -6281,6 +6813,8 @@ async fn execute_command_in_transaction(db: &mut Db, args: &[Vec<u8>]) -> RespVa
         "FT.SUGGET" => cmd_ft_sugget(db, cmd_args),
         "FT.SUGDEL" => cmd_ft_sugdel(db, cmd_args),
         "FT.SUGLEN" => cmd_ft_suglen(db, cmd_args),
+        "FT.EXPLAIN" => cmd_ft_explain(db, cmd_args),
+        "FT.PROFILE" => cmd_ft_profile(db, cmd_args),
         // Vector commands (Session 24.2)
         "VECTOR" => cmd_vector(db, cmd_args),
         "VADD" => cmd_vadd(db, cmd_args),

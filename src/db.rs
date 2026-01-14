@@ -503,34 +503,69 @@ impl Db {
 
         let conn = self.core.conn.lock().unwrap_or_else(|e| e.into_inner());
         let db = self.selected_db;
+        let now = Self::now_ms();
 
+        // Get key IDs and types before deleting (for unindexing hash keys)
         let placeholders: String = (0..keys.len())
             .map(|i| format!("?{}", i + 2))
             .collect::<Vec<_>>()
             .join(",");
-        let sql = format!(
-            "DELETE FROM keys WHERE db = ?1 AND key IN ({})",
-            placeholders
+
+        let select_sql = format!(
+            "SELECT id, key, type FROM keys WHERE db = ?1 AND key IN ({}) AND (expire_at IS NULL OR expire_at > ?{})",
+            placeholders,
+            keys.len() + 2
         );
 
-        let mut stmt = conn.prepare(&sql)?;
-
-        // Build params: [db, key1, key2, ...]
+        let mut select_stmt = conn.prepare(&select_sql)?;
         let mut params_vec: Vec<&dyn rusqlite::ToSql> = vec![&db];
         for key in keys {
             params_vec.push(key);
         }
+        params_vec.push(&now);
 
-        let count = stmt.execute(params_vec.as_slice())?;
+        let key_info: Vec<(i64, String, i32)> = select_stmt
+            .query_map(params_vec.as_slice(), |row| {
+                Ok((row.get::<_, i64>(0)?, row.get::<_, String>(1)?, row.get::<_, i32>(2)?))
+            })?
+            .filter_map(|r| r.ok())
+            .collect();
+        drop(select_stmt);
+
+        // Now delete the keys
+        let delete_sql = format!(
+            "DELETE FROM keys WHERE db = ?1 AND key IN ({})",
+            (0..keys.len())
+                .map(|i| format!("?{}", i + 2))
+                .collect::<Vec<_>>()
+                .join(",")
+        );
+
+        let mut delete_stmt = conn.prepare(&delete_sql)?;
+
+        let mut delete_params: Vec<&dyn rusqlite::ToSql> = vec![&db];
+        for key in keys {
+            delete_params.push(key);
+        }
+
+        let count = delete_stmt.execute(delete_params.as_slice())?;
 
         // Release statement and connection before recording history
-        drop(stmt);
+        drop(delete_stmt);
         drop(conn);
 
-        // Record history and deindex FTS for each deleted key
+        // Record history and deindex for each deleted key
         for key in keys {
             let _ = self.record_history(db, key, "DEL", None);
             let _ = self.fts_deindex(key);
+        }
+
+        // Unindex from RediSearch FTS5 tables for hash keys
+        for (key_id, key, key_type) in &key_info {
+            if *key_type == 2 {
+                // Type 2 = Hash
+                let _ = self.ft_unindex_document(key, *key_id);
+            }
         }
 
         Ok(count as i64)
@@ -1270,8 +1305,11 @@ impl Db {
             params![now, key_id],
         )?;
 
-        // Release connection before recording history
+        // Release connection before auto-indexing and history recording
         drop(conn);
+
+        // Auto-index into FTS5 tables for any matching indexes
+        let _ = self.ft_index_document(key, key_id);
 
         // Record history for HSET operation
         let _ = self.record_history(self.selected_db, key, "HSET", None);
@@ -6629,6 +6667,143 @@ impl Db {
         Ok(())
     }
 
+    /// Index a hash document into all matching FTS5 indexes
+    /// Called automatically after HSET updates a hash
+    pub fn ft_index_document(&self, key: &str, key_id: i64) -> Result<()> {
+        let conn = self.core.conn.lock().unwrap_or_else(|e| e.into_inner());
+
+        // Find all indexes that match this key's prefix
+        let mut stmt = conn.prepare(
+            "SELECT id, prefixes, schema FROM ft_indexes WHERE on_type = 'HASH'"
+        )?;
+
+        let matching_indexes: Vec<(i64, Vec<String>, Vec<serde_json::Value>)> = stmt
+            .query_map([], |row| {
+                let id: i64 = row.get(0)?;
+                let prefixes_json: String = row.get(1)?;
+                let schema_json: String = row.get(2)?;
+                Ok((id, prefixes_json, schema_json))
+            })?
+            .filter_map(|r| r.ok())
+            .filter_map(|(id, prefixes_json, schema_json)| {
+                let prefixes: Vec<String> = serde_json::from_str(&prefixes_json).ok()?;
+                let schema: Vec<serde_json::Value> = serde_json::from_str(&schema_json).ok()?;
+                // Check if key matches any prefix
+                if prefixes.iter().any(|p| key.starts_with(p)) {
+                    Some((id, prefixes, schema))
+                } else {
+                    None
+                }
+            })
+            .collect();
+
+        if matching_indexes.is_empty() {
+            return Ok(());
+        }
+
+        // Get all hash fields for this key
+        let mut fields_stmt = conn.prepare("SELECT field, value FROM hashes WHERE key_id = ?")?;
+        let fields: HashMap<String, Vec<u8>> = fields_stmt
+            .query_map(params![key_id], |row| {
+                Ok((row.get::<_, String>(0)?, row.get::<_, Vec<u8>>(1)?))
+            })?
+            .filter_map(|r| r.ok())
+            .collect();
+
+        // Index into each matching FTS5 table
+        for (index_id, _prefixes, schema_values) in matching_indexes {
+            // Parse schema to get TEXT field names
+            let text_fields: Vec<String> = schema_values
+                .iter()
+                .filter_map(|v| {
+                    let name = v.get("name")?.as_str()?;
+                    let type_str = v.get("type")?.as_str()?;
+                    if type_str == "TEXT" {
+                        Some(name.to_string())
+                    } else {
+                        None
+                    }
+                })
+                .collect();
+
+            if text_fields.is_empty() {
+                continue;
+            }
+
+            // Build column values for FTS5 insert
+            let mut values: Vec<String> = Vec::new();
+            for field_name in &text_fields {
+                let value = fields
+                    .get(field_name)
+                    .and_then(|v| std::str::from_utf8(v).ok())
+                    .unwrap_or("");
+                values.push(value.to_string());
+            }
+
+            // Use key_id as rowid for deterministic updates
+            // First try to delete existing entry, then insert
+            let delete_sql = format!("DELETE FROM fts_idx_{} WHERE rowid = ?", index_id);
+            let _ = conn.execute(&delete_sql, params![key_id]);
+
+            let columns: Vec<String> = text_fields.iter().map(|f| format!("\"{}\"", f)).collect();
+            let placeholders: Vec<&str> = text_fields.iter().map(|_| "?").collect();
+            let insert_sql = format!(
+                "INSERT INTO fts_idx_{}(rowid, {}) VALUES (?, {})",
+                index_id,
+                columns.join(", "),
+                placeholders.join(", ")
+            );
+
+            // Build params: rowid, then field values
+            let mut params_vec: Vec<Box<dyn rusqlite::ToSql>> = Vec::new();
+            params_vec.push(Box::new(key_id));
+            for v in &values {
+                params_vec.push(Box::new(v.clone()));
+            }
+
+            let params_refs: Vec<&dyn rusqlite::ToSql> = params_vec.iter().map(|b| b.as_ref()).collect();
+            conn.execute(&insert_sql, params_refs.as_slice())?;
+        }
+
+        Ok(())
+    }
+
+    /// Remove a document from all matching FTS5 indexes
+    /// Called when a hash key is deleted
+    pub fn ft_unindex_document(&self, key: &str, key_id: i64) -> Result<()> {
+        let conn = self.core.conn.lock().unwrap_or_else(|e| e.into_inner());
+
+        // Find all indexes that match this key's prefix
+        let mut stmt = conn.prepare(
+            "SELECT id, prefixes FROM ft_indexes WHERE on_type = 'HASH'"
+        )?;
+
+        let matching_index_ids: Vec<i64> = stmt
+            .query_map([], |row| {
+                let id: i64 = row.get(0)?;
+                let prefixes_json: String = row.get(1)?;
+                Ok((id, prefixes_json))
+            })?
+            .filter_map(|r| r.ok())
+            .filter_map(|(id, prefixes_json)| {
+                let prefixes: Vec<String> = serde_json::from_str(&prefixes_json).ok()?;
+                if prefixes.iter().any(|p| key.starts_with(p)) {
+                    Some(id)
+                } else {
+                    None
+                }
+            })
+            .collect();
+
+        // Delete from each matching FTS5 table
+        for index_id in matching_index_ids {
+            let delete_sql = format!("DELETE FROM fts_idx_{} WHERE rowid = ?", index_id);
+            let _ = conn.execute(&delete_sql, params![key_id]);
+        }
+
+        Ok(())
+    }
+
     /// Drop a RediSearch index
     /// FT.DROPINDEX index [DD]
     pub fn ft_dropindex(&self, name: &str, delete_docs: bool) -> Result<bool> {
@@ -7320,9 +7495,58 @@ impl Db {
                         .collect()
                 };
 
+                // Extract search terms for highlighting/summarization
+                let search_terms: Vec<String> = if options.highlight_tags.is_some()
+                    || options.summarize_len.is_some()
+                {
+                    parsed
+                        .fts_query
+                        .as_ref()
+                        .map(|q| self.extract_search_terms(q))
+                        .unwrap_or_default()
+                } else {
+                    Vec::new()
+                };
+
                 for field_name in fields_to_return {
                     if let Some(value) = fields.get(field_name) {
-                        result.fields.push((field_name.clone(), value.clone()));
+                        let mut processed_value = value.clone();
+
+                        // Try to convert to string for text processing
+                        if let Ok(text) = std::str::from_utf8(value) {
+                            let mut processed_text = text.to_string();
+
+                            // Apply summarization if requested for this field
+                            let should_summarize = options.summarize_len.is_some()
+                                && (options.summarize_fields.is_empty()
+                                    || options.summarize_fields.contains(field_name));
+
+                            if should_summarize {
+                                processed_text = self.apply_summarize(
+                                    &processed_text,
+                                    &search_terms,
+                                    options.summarize_len.unwrap_or(20),
+                                    options.summarize_frags.unwrap_or(3),
+                                    options.summarize_separator.as_deref().unwrap_or("..."),
+                                );
+                            }
+
+                            // Apply highlighting if requested for this field
+                            let should_highlight = options.highlight_tags.is_some()
+                                && (options.highlight_fields.is_empty()
+                                    || options.highlight_fields.contains(field_name));
+
+                            if should_highlight {
+                                if let Some((open, close)) = &options.highlight_tags {
+                                    processed_text =
+                                        self.apply_highlight(&processed_text, &search_terms, open, close);
+                                }
+                            }
+
+                            processed_value = processed_text.into_bytes();
+                        }
+
+                        result.fields.push((field_name.clone(), processed_value));
                     }
                 }
             }
@@ -7388,6 +7612,320 @@ impl Db {
         let paginated: Vec<FtSearchResult> = results.into_iter().skip(offset).take(limit).collect();
 
         Ok((total_count, paginated))
+    }
+
+    /// Aggregate search results with GROUPBY, REDUCE, SORTBY, APPLY, FILTER
+    /// FT.AGGREGATE index query [options]
+    pub fn ft_aggregate(
+        &self,
+        index_name: &str,
+        query: &str,
+        options: &crate::types::FtAggregateOptions,
+    ) -> Result<Vec<crate::types::FtAggregateRow>> {
+        use crate::search::parse_query;
+        use crate::types::{FtReduceFunction, FtAggregateRow};
+        use std::collections::HashSet;
+
+        let conn = self.core.conn.lock().unwrap_or_else(|e| e.into_inner());
+
+        // Resolve index name (could be an alias)
+        let index_id: Option<i64> = conn
+            .query_row(
+                "SELECT id FROM ft_indexes WHERE name = ? LIMIT 1",
+                params![index_name],
+                |row| row.get(0),
+            )
+            .optional()?;
+
+        let index_id = match index_id {
+            Some(id) => id,
+            None => {
+                let alias_index_id: Option<i64> = conn
+                    .query_row(
+                        "SELECT index_id FROM ft_aliases WHERE alias = ? LIMIT 1",
+                        params![index_name],
+                        |row| row.get(0),
+                    )
+                    .optional()?;
+                match alias_index_id {
+                    Some(id) => id,
+                    None => return Err(KvError::Other(format!("Unknown index: {}", index_name))),
+                }
+            }
+        };
+
+        // Get index definition
+        let (on_type_str, prefixes_json, schema_json): (String, String, String) = conn.query_row(
+            "SELECT on_type, prefixes, schema FROM ft_indexes WHERE id = ?",
+            params![index_id],
+            |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+        )?;
+
+        let prefixes: Vec<String> = serde_json::from_str(&prefixes_json).unwrap_or_default();
+
+        // Parse query and find matching documents (same as ft_search)
+        let parsed = parse_query(query, false)
+            .map_err(|e| KvError::Other(format!("Query parse error: {}", e)))?;
+
+        // Find matching keys
+        let db = self.selected_db;
+        let now = Self::now_ms();
+        let mut all_matching_keys: Vec<(i64, String)> = Vec::new();
+
+        for prefix in &prefixes {
+            let like_pattern = format!("{}%", prefix.replace('%', "\\%").replace('_', "\\_"));
+            let mut stmt = conn.prepare(
+                "SELECT id, key FROM keys WHERE db = ? AND key LIKE ? ESCAPE '\\' AND type = 2
+                 AND (expire_at IS NULL OR expire_at > ?)",
+            )?;
+            let rows = stmt.query_map(params![db, like_pattern, now], |row| {
+                Ok((row.get::<_, i64>(0)?, row.get::<_, String>(1)?))
+            })?;
+            for row in rows {
+                if let Ok((key_id, key_name)) = row {
+                    all_matching_keys.push((key_id, key_name));
+                }
+            }
+        }
+
+        if all_matching_keys.is_empty() {
+            return Ok(Vec::new());
+        }
+
+        // Collect all documents that match the query with their fields
+        let mut matching_docs: Vec<FtAggregateRow> = Vec::new();
+
+        for (key_id, key_name) in &all_matching_keys {
+            // Get all fields for this hash
+            let mut stmt = conn.prepare("SELECT field, value FROM hashes WHERE key_id = ?")?;
+            let field_rows = stmt.query_map(params![key_id], |row| {
+                Ok((row.get::<_, String>(0)?, row.get::<_, Vec<u8>>(1)?))
+            })?;
+
+            let mut fields: HashMap<String, String> = HashMap::new();
+            fields.insert("__key".to_string(), key_name.clone());
+
+            for row in field_rows {
+                if let Ok((field, value)) = row {
+                    if let Ok(value_str) = std::str::from_utf8(&value) {
+                        fields.insert(field, value_str.to_string());
+                    }
+                }
+            }
+
+            // Check if doc matches query (simplified - just check text matching)
+            let matches = if parsed.fts_query.is_some() {
+                let text_content: String = fields.values().cloned().collect::<Vec<_>>().join(" ");
+                self.simple_text_match(&text_content, parsed.fts_query.as_ref().unwrap())
+            } else {
+                true // No text query = match all
+            };
+
+            if matches {
+                matching_docs.push(fields);
+            }
+        }
+
+        // Apply GROUPBY if specified
+        let mut result_rows: Vec<FtAggregateRow> = if let Some(group_by) = &options.group_by {
+            // Group documents by the specified fields
+            let mut groups: HashMap<Vec<String>, Vec<FtAggregateRow>> = HashMap::new();
+
+            for doc in &matching_docs {
+                let key: Vec<String> = group_by
+                    .fields
+                    .iter()
+                    .map(|f| doc.get(f).cloned().unwrap_or_default())
+                    .collect();
+
+                groups.entry(key).or_default().push(doc.clone());
+            }
+
+            // Apply reducers to each group
+            let mut rows = Vec::new();
+            for (group_key, group_docs) in groups {
+                let mut row = FtAggregateRow::new();
+
+                // Add group fields
+                for (i, field) in group_by.fields.iter().enumerate() {
+                    row.insert(field.clone(), group_key.get(i).cloned().unwrap_or_default());
+                }
+
+                // Apply reducers
+                for reducer in &group_by.reducers {
+                    let result_name = reducer
+                        .alias
+                        .clone()
+                        .unwrap_or_else(|| reducer.function.name().to_lowercase());
+
+                    let value = match &reducer.function {
+                        FtReduceFunction::Count => group_docs.len().to_string(),
+                        FtReduceFunction::CountDistinct(field) => {
+                            let distinct: HashSet<String> = group_docs
+                                .iter()
+                                .filter_map(|d| d.get(field).cloned())
+                                .collect();
+                            distinct.len().to_string()
+                        }
+                        FtReduceFunction::CountDistinctIsh(field) => {
+                            // Same as COUNT_DISTINCT for simplicity
+                            let distinct: HashSet<String> = group_docs
+                                .iter()
+                                .filter_map(|d| d.get(field).cloned())
+                                .collect();
+                            distinct.len().to_string()
+                        }
+                        FtReduceFunction::Sum(field) => {
+                            let sum: f64 = group_docs
+                                .iter()
+                                .filter_map(|d| d.get(field).and_then(|v| v.parse::<f64>().ok()))
+                                .sum();
+                            sum.to_string()
+                        }
+                        FtReduceFunction::Min(field) => {
+                            let min = group_docs
+                                .iter()
+                                .filter_map(|d| d.get(field).and_then(|v| v.parse::<f64>().ok()))
+                                .fold(f64::INFINITY, f64::min);
+                            if min.is_finite() {
+                                min.to_string()
+                            } else {
+                                "".to_string()
+                            }
+                        }
+                        FtReduceFunction::Max(field) => {
+                            let max = group_docs
+                                .iter()
+                                .filter_map(|d| d.get(field).and_then(|v| v.parse::<f64>().ok()))
+                                .fold(f64::NEG_INFINITY, f64::max);
+                            if max.is_finite() {
+                                max.to_string()
+                            } else {
+                                "".to_string()
+                            }
+                        }
+                        FtReduceFunction::Avg(field) => {
+                            let values: Vec<f64> = group_docs
+                                .iter()
+                                .filter_map(|d| d.get(field).and_then(|v| v.parse::<f64>().ok()))
+                                .collect();
+                            if values.is_empty() {
+                                "0".to_string()
+                            } else {
+                                (values.iter().sum::<f64>() / values.len() as f64).to_string()
+                            }
+                        }
+                        FtReduceFunction::StdDev(field) => {
+                            let values: Vec<f64> = group_docs
+                                .iter()
+                                .filter_map(|d| d.get(field).and_then(|v| v.parse::<f64>().ok()))
+                                .collect();
+                            if values.len() < 2 {
+                                "0".to_string()
+                            } else {
+                                let mean = values.iter().sum::<f64>() / values.len() as f64;
+                                let variance = values
+                                    .iter()
+                                    .map(|v| (v - mean).powi(2))
+                                    .sum::<f64>()
+                                    / (values.len() - 1) as f64;
+                                variance.sqrt().to_string()
+                            }
+                        }
+                        FtReduceFunction::ToList(field) => {
+                            let list: Vec<String> = group_docs
+                                .iter()
+                                .filter_map(|d| d.get(field).cloned())
+                                .collect();
+                            format!("[{}]", list.join(","))
+                        }
+                        FtReduceFunction::FirstValue(field) => {
+                            group_docs
+                                .first()
+                                .and_then(|d| d.get(field).cloned())
+                                .unwrap_or_default()
+                        }
+                        FtReduceFunction::RandomSample(field, count) => {
+                            let values: Vec<String> = group_docs
+                                .iter()
+                                .filter_map(|d| d.get(field).cloned())
+                                .take(*count as usize)
+                                .collect();
+                            format!("[{}]", values.join(","))
+                        }
+                        FtReduceFunction::Quantile(field, _q) => {
+                            // Simplified: just return median
+                            let mut values: Vec<f64> = group_docs
+                                .iter()
+                                .filter_map(|d| d.get(field).and_then(|v| v.parse::<f64>().ok()))
+                                .collect();
+                            values.sort_by(|a, b| a.partial_cmp(b).unwrap());
+                            if values.is_empty() {
+                                "0".to_string()
+                            } else {
+                                values[values.len() / 2].to_string()
+                            }
+                        }
+                    };
+
+                    row.insert(result_name, value);
+                }
+
+                rows.push(row);
+            }
+            rows
+        } else {
+            // No GROUPBY, just return individual documents
+            matching_docs
+        };
+
+        // Apply SORTBY
+        if !options.sort_by.is_empty() {
+            result_rows.sort_by(|a, b| {
+                for (field, ascending) in &options.sort_by {
+                    let a_val = a.get(field);
+                    let b_val = b.get(field);
+
+                    let cmp = match (a_val, b_val) {
+                        (Some(av), Some(bv)) => {
+                            let a_num = av.parse::<f64>().ok();
+                            let b_num = bv.parse::<f64>().ok();
+                            match (a_num, b_num) {
+                                (Some(an), Some(bn)) => {
+                                    an.partial_cmp(&bn).unwrap_or(std::cmp::Ordering::Equal)
+                                }
+                                _ => av.cmp(bv),
+                            }
+                        }
+                        (Some(_), None) => std::cmp::Ordering::Less,
+                        (None, Some(_)) => std::cmp::Ordering::Greater,
+                        (None, None) => std::cmp::Ordering::Equal,
+                    };
+
+                    let ordered_cmp = if *ascending { cmp } else { cmp.reverse() };
+                    if ordered_cmp != std::cmp::Ordering::Equal {
+                        return ordered_cmp;
+                    }
+                }
+                std::cmp::Ordering::Equal
+            });
+
+            // Apply MAX limit for sorting
+            if let Some(max) = options.sort_max {
+                result_rows.truncate(max as usize);
+            }
+        }
+
+        // Apply LIMIT
+        let offset = options.limit_offset as usize;
+        let limit = options.limit_num as usize;
+        let paginated: Vec<FtAggregateRow> = result_rows
+            .into_iter()
+            .skip(offset)
+            .take(limit)
+            .collect();
+
+        Ok(paginated)
     }
 
     /// Simple in-memory text matching for FTS5 queries
@@ -7518,6 +8056,179 @@ impl Db {
 
         // Simple TF score
         total_freq / word_count
+    }
+
+    /// Extract search terms from a query string for highlighting/summarizing
+    fn extract_search_terms(&self, query: &str) -> Vec<String> {
+        let query_clean = query
+            .replace('(', " ")
+            .replace(')', " ")
+            .replace("\"", "")
+            .to_lowercase();
+
+        query_clean
+            .split_whitespace()
+            .filter(|t| {
+                let upper = t.to_uppercase();
+                upper != "AND" && upper != "OR" && upper != "NOT"
+            })
+            .map(|t| {
+                // Handle field:term syntax
+                if let Some(idx) = t.find(':') {
+                    t[idx + 1..].trim_end_matches('*').to_string()
+                } else {
+                    t.trim_end_matches('*').to_string()
+                }
+            })
+            .filter(|t| !t.is_empty())
+            .collect()
+    }
+
+    /// Apply highlighting to text by wrapping matching terms in tags
+    fn apply_highlight(&self, text: &str, terms: &[String], open_tag: &str, close_tag: &str) -> String {
+        if terms.is_empty() {
+            return text.to_string();
+        }
+
+        let mut result = String::with_capacity(text.len() * 2);
+        let text_lower = text.to_lowercase();
+
+        // Build a list of (start, end) positions to highlight
+        let mut highlights: Vec<(usize, usize)> = Vec::new();
+
+        for term in terms {
+            let term_lower = term.to_lowercase();
+            let mut start = 0;
+            while let Some(pos) = text_lower[start..].find(&term_lower) {
+                let abs_pos = start + pos;
+                let end_pos = abs_pos + term.len();
+
+                // Check word boundaries (simple check)
+                let is_word_start = abs_pos == 0
+                    || !text_lower.as_bytes().get(abs_pos.saturating_sub(1))
+                        .map(|c| c.is_ascii_alphanumeric())
+                        .unwrap_or(false);
+                let is_word_end = end_pos >= text.len()
+                    || !text_lower.as_bytes().get(end_pos)
+                        .map(|c| c.is_ascii_alphanumeric())
+                        .unwrap_or(false);
+
+                if is_word_start && is_word_end {
+                    highlights.push((abs_pos, end_pos));
+                }
+                start = abs_pos + 1;
+                if start >= text_lower.len() {
+                    break;
+                }
+            }
+        }
+
+        // Sort and merge overlapping highlights
+        highlights.sort_by_key(|h| h.0);
+        let merged = Self::merge_ranges(&highlights);
+
+        // Apply highlights
+        let mut last_end = 0;
+        for (start, end) in merged {
+            result.push_str(&text[last_end..start]);
+            result.push_str(open_tag);
+            result.push_str(&text[start..end]);
+            result.push_str(close_tag);
+            last_end = end;
+        }
+        result.push_str(&text[last_end..]);
+
+        result
+    }
+
+    /// Merge overlapping ranges
+    fn merge_ranges(ranges: &[(usize, usize)]) -> Vec<(usize, usize)> {
+        if ranges.is_empty() {
+            return Vec::new();
+        }
+
+        let mut merged = Vec::new();
+        let mut current = ranges[0];
+
+        for &(start, end) in &ranges[1..] {
+            if start <= current.1 {
+                // Overlapping, extend current
+                current.1 = current.1.max(end);
+            } else {
+                merged.push(current);
+                current = (start, end);
+            }
+        }
+        merged.push(current);
+        merged
+    }
+
+    /// Create summary snippets around matching terms
+    fn apply_summarize(
+        &self,
+        text: &str,
+        terms: &[String],
+        frag_len: usize,
+        num_frags: usize,
+        separator: &str,
+    ) -> String {
+        if terms.is_empty() || text.is_empty() {
+            // Return first frag_len words if no terms
+            let words: Vec<&str> = text.split_whitespace().take(frag_len).collect();
+            return words.join(" ");
+        }
+
+        let text_lower = text.to_lowercase();
+        let words: Vec<&str> = text.split_whitespace().collect();
+        let words_lower: Vec<String> = words.iter().map(|w| w.to_lowercase()).collect();
+
+        // Find positions of matching terms
+        let mut match_positions: Vec<usize> = Vec::new();
+        for (i, word) in words_lower.iter().enumerate() {
+            for term in terms {
+                if word.contains(&term.to_lowercase()) {
+                    match_positions.push(i);
+                    break;
+                }
+            }
+        }
+
+        if match_positions.is_empty() {
+            // No matches, return first frag_len words
+            let words: Vec<&str> = text.split_whitespace().take(frag_len).collect();
+            return words.join(" ");
+        }
+
+        // Build fragments around match positions
+        let mut fragments: Vec<String> = Vec::new();
+        let mut used_positions: std::collections::HashSet<usize> = std::collections::HashSet::new();
+
+        for &pos in &match_positions {
+            if fragments.len() >= num_frags {
+                break;
+            }
+
+            // Check if this position overlaps with already used
+            let start = pos.saturating_sub(frag_len / 2);
+            let end = (start + frag_len).min(words.len());
+
+            // Check for overlap
+            let overlaps = (start..end).any(|p| used_positions.contains(&p));
+            if overlaps {
+                continue;
+            }
+
+            // Mark positions as used
+            for p in start..end {
+                used_positions.insert(p);
+            }
+
+            // Build fragment
+            let frag: String = words[start..end].join(" ");
+            fragments.push(frag);
+        }
+
+        fragments.join(separator)
     }
 
     // ============================================================================

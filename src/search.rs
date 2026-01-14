@@ -688,6 +688,97 @@ pub fn parse_query(query: &str, verbatim: bool) -> Result<ParsedQuery, String> {
     parser.parse()
 }
 
+/// Parse a query and return a nested array representation for FT.EXPLAIN
+pub fn explain_query(query: &str, verbatim: bool) -> Result<Vec<ExplainNode>, String> {
+    let mut parser = QueryParser::new(query, verbatim);
+    let expr = parser.parse_expr()?;
+    Ok(vec![expr_to_explain(&expr)])
+}
+
+/// A node in the explain tree
+#[derive(Debug, Clone)]
+pub enum ExplainNode {
+    Text(String),
+    Array(Vec<ExplainNode>),
+}
+
+impl ExplainNode {
+    pub fn text(s: &str) -> Self {
+        ExplainNode::Text(s.to_string())
+    }
+
+    pub fn array(nodes: Vec<ExplainNode>) -> Self {
+        ExplainNode::Array(nodes)
+    }
+}
+
+/// Convert a QueryExpr to an ExplainNode tree
+fn expr_to_explain(expr: &QueryExpr) -> ExplainNode {
+    match expr {
+        QueryExpr::Term(t) => ExplainNode::array(vec![
+            ExplainNode::text("TERM"),
+            ExplainNode::text(t),
+        ]),
+        QueryExpr::Prefix(p) => ExplainNode::array(vec![
+            ExplainNode::text("PREFIX"),
+            ExplainNode::text(&format!("{}*", p)),
+        ]),
+        QueryExpr::Phrase(p) => ExplainNode::array(vec![
+            ExplainNode::text("PHRASE"),
+            ExplainNode::text(&format!("\"{}\"", p)),
+        ]),
+        QueryExpr::FieldText { field, expr } => ExplainNode::array(vec![
+            ExplainNode::text("FIELD"),
+            ExplainNode::text(field),
+            expr_to_explain(expr),
+        ]),
+        QueryExpr::NumericRange { field, min, max } => {
+            let min_str = match min {
+                NumericBound::Inclusive(v) => format!("[{}", v),
+                NumericBound::Exclusive(v) => format!("({}", v),
+                NumericBound::Unbounded => "[-inf".to_string(),
+            };
+            let max_str = match max {
+                NumericBound::Inclusive(v) => format!("{}]", v),
+                NumericBound::Exclusive(v) => format!("{})", v),
+                NumericBound::Unbounded => "+inf]".to_string(),
+            };
+            ExplainNode::array(vec![
+                ExplainNode::text("NUMERIC"),
+                ExplainNode::text(field),
+                ExplainNode::text(&format!("{} {}", min_str, max_str)),
+            ])
+        }
+        QueryExpr::TagMatch { field, tags } => ExplainNode::array(vec![
+            ExplainNode::text("TAG"),
+            ExplainNode::text(field),
+            ExplainNode::text(&format!("{{{}}}", tags.join("|"))),
+        ]),
+        QueryExpr::And(exprs) => {
+            let mut nodes = vec![ExplainNode::text("INTERSECT")];
+            for e in exprs {
+                nodes.push(expr_to_explain(e));
+            }
+            ExplainNode::array(nodes)
+        }
+        QueryExpr::Or(exprs) => {
+            let mut nodes = vec![ExplainNode::text("UNION")];
+            for e in exprs {
+                nodes.push(expr_to_explain(e));
+            }
+            ExplainNode::array(nodes)
+        }
+        QueryExpr::Not(inner) => ExplainNode::array(vec![
+            ExplainNode::text("NOT"),
+            expr_to_explain(inner),
+        ]),
+        QueryExpr::MatchAll => ExplainNode::array(vec![
+            ExplainNode::text("WILDCARD"),
+            ExplainNode::text("*"),
+        ]),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
