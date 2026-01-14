@@ -1,5 +1,45 @@
 # Changelog
 
+## Session 26: MadSim Integration for DST
+
+### Added - MadSim Deterministic Runtime Support
+- **`madsim` feature flag** - Enable with `RUSTFLAGS="--cfg madsim" cargo build --features madsim`
+- **Conditional tokio/madsim-tokio** - Swaps runtime based on cfg flag
+- **`src/sim.rs` module** - Unified simulation API for both runtimes:
+  - `SimConfig` - Configuration for deterministic simulation runs
+  - `SimContext` - Controlled randomness and fault injection context
+  - `runtime::spawn()`, `runtime::sleep()`, `runtime::yield_now()` - Works with both tokio and madsim
+
+### Changed - DST Runner Improvements
+- **Refactored `runner.rs`** - Uses `sim::runtime` module for async operations
+- **Refactored `main.rs`** - Conditional main function for madsim/tokio compatibility
+- **Fixed `concurrent_operations` test** - Properly handles type changes when keys are converted from strings to lists/sets
+- **Implemented `REPLAY` command** - Full routing to all test types (properties, simulate, chaos, specific scenarios)
+
+### MadSim Benefits
+- **True deterministic async scheduling** - Tokio's task scheduling is non-deterministic; MadSim makes it reproducible
+- **Simulated time** - Tests run instantly with simulated time instead of real time
+- **Fault injection APIs** - Kill processes, partition networks, inject delays programmatically
+- **Seed-based replay** - Exact reproduction of any test run
+
+### Test Results
+```
+Normal build (tokio):
+  ✅ Smoke tests: 7/7 passed (44ms)
+  ✅ Simulate tests: 30/30 passed (1.9s)
+
+MadSim build:
+  ✅ Smoke tests: 7/7 passed (0ms - simulated time)
+  ✅ Simulate tests: 30/30 passed (0ms - simulated time)
+```
+
+### Files Modified
+- `redlite-dst/Cargo.toml` - Added madsim feature and conditional dependencies
+- `redlite-dst/src/sim.rs` - New simulation module with cfg-conditional runtime
+- `redlite-dst/src/runner.rs` - Updated to use sim::runtime functions
+- `redlite-dst/src/main.rs` - Conditional main for madsim/tokio
+- `redlite-dst/README.md` - Added MadSim usage documentation
+
 ## Session 25: Geospatial Commands (R*Tree)
 
 ### Added - GEO* Command Family

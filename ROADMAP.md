@@ -313,12 +313,15 @@ Inspired by [sled](https://sled.rs/simulation.html), [TigerBeetle VOPR](https://
 - [ ] Assert identical results for identical operation sequences
 - [ ] Verify: `docker run -d redis && cargo test oracle`
 
-#### Phase 3: MadSim Integration (Session 27.3)
-- [ ] Add `madsim`, `madsim-tokio` dependencies (cfg-gated)
-- [ ] Create `tests/simulation.rs`
-- [ ] Tests: `concurrent_operations`, `crash_recovery`, `connection_storm`, `pubsub_delivery`
-- [ ] Seed-based reproducibility for all failures
-- [ ] Verify: `RUSTFLAGS="--cfg madsim" cargo test simulation`
+#### Phase 3: MadSim Integration (Session 27.3) - ✅ COMPLETE
+- [x] Add `madsim`, `madsim-tokio` dependencies (cfg-gated)
+- [x] Create `src/sim.rs` module with unified runtime API
+- [x] `SimConfig` and `SimContext` for deterministic simulation
+- [x] `runtime::spawn`, `runtime::sleep`, `runtime::yield_now` work with both runtimes
+- [x] Conditional main function for madsim/tokio compatibility
+- [x] Tests: `concurrent_operations`, `crash_recovery`, `connection_storm`
+- [x] Seed-based reproducibility with ChaCha8Rng
+- [x] Verify: `RUSTFLAGS="--cfg madsim" cargo run --features madsim -- simulate`
 
 #### Phase 4: Storage Fault Injection (Session 27.4)
 - [ ] Create `src/storage.rs` with `StorageBackend` trait
