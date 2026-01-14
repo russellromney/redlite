@@ -2,6 +2,13 @@
 
 ## Sessions 1-23.2 (Complete)
 
+### Benchmark Suite Enhancements
+- File-backed database size measurement (db + WAL + shm files)
+- History entry count and storage bytes tracking
+- `get_history_count()` trait method for global history stats
+- `bytes_per_history_entry` calculation in BenchmarkResult
+- Enhanced `print_summary()` with history metrics output
+
 ### Session 23.2: FT.SEARCH Implementation
 - `src/search.rs` query parser module for RediSearch syntax
 - Query translation: AND/OR/NOT, phrases, prefix, field-scoped

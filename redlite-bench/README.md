@@ -177,6 +177,16 @@ Pre-defined realistic workloads:
 - ops_per_sec
 - mb_per_sec (data transfer)
 
+### Storage (Redlite file-backed)
+- initial_size_bytes, final_size_bytes
+- memory_overhead_bytes (per operation)
+- Total disk usage (db + WAL + shm files)
+
+### History Tracking (Redlite-specific)
+- history_entries_created
+- history_total_bytes
+- bytes_per_history_entry
+
 ### Resources (if available)
 - memory_bytes
 - cpu_percent
