@@ -5,9 +5,13 @@ mod client;
 mod properties;
 mod report;
 mod runner;
+pub mod sim;
 mod types;
 
 use runner::TestRunner;
+
+// Re-export simulation types for external use
+pub use sim::{SimConfig, SimContext, SimResult};
 
 #[derive(Parser)]
 #[command(name = "redlite-dst")]
@@ -168,8 +172,22 @@ enum SeedsAction {
     Test,
 }
 
+/// Main entry point - uses tokio runtime normally, madsim runtime when --cfg madsim is set
+#[cfg(not(madsim))]
 #[tokio::main]
 async fn main() -> Result<()> {
+    run().await
+}
+
+/// Main entry point for MadSim builds
+#[cfg(madsim)]
+fn main() -> Result<()> {
+    let rt = sim::runtime::create_runtime(0);
+    rt.block_on(run())
+}
+
+/// Async main logic (shared between tokio and madsim)
+async fn run() -> Result<()> {
     let cli = Cli::parse();
     let runner = TestRunner::new(cli.verbose);
 

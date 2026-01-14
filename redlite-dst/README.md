@@ -258,6 +258,34 @@ scenarios:
         iterations: 1000
 ```
 
+## MadSim Integration
+
+For true deterministic async scheduling, redlite-dst integrates with [MadSim](https://github.com/madsim-rs/madsim):
+
+```bash
+# Build with MadSim deterministic runtime
+RUSTFLAGS="--cfg madsim" cargo build --features madsim
+
+# Run tests with MadSim
+RUSTFLAGS="--cfg madsim" cargo run --features madsim -- simulate --seeds 100
+```
+
+### What MadSim Provides
+
+- **Deterministic async scheduling**: Tokio's task scheduling is non-deterministic; MadSim makes it reproducible
+- **Simulated time**: Tests run instantly with simulated time instead of real time
+- **Fault injection APIs**: Kill processes, partition networks, inject delays programmatically
+- **Seed-based replay**: Exact reproduction of any test run
+
+### When to Use MadSim
+
+| Build Type | Use Case |
+|------------|----------|
+| Normal (tokio) | Quick iteration, CI smoke tests |
+| MadSim | Finding concurrency bugs, reproducing race conditions |
+
+The same test code works with both runtimes - MadSim is just enabled via compile flag.
+
 ## Philosophy
 
 > "If you're not running deterministic simulation tests, you're not testing." — Tyler Neely (sled)
