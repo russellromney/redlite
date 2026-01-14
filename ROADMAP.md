@@ -2,6 +2,18 @@
 
 See [CHANGELOG.md](./CHANGELOG.md) for completed features.
 
+## Recently Completed
+
+### Session 28: Keyset Pagination (Performance)
+- [x] Refactor SCAN to use `WHERE key > last_seen` instead of OFFSET
+- [x] Refactor HSCAN to use `WHERE field > last_seen`
+- [x] Refactor SSCAN to use `WHERE member > last_seen`
+- [x] Refactor ZSCAN to use compound `(score, member)` keyset
+- [x] Update server handlers for string cursor format
+- [x] All 16 scan-related unit tests passing
+
+---
+
 ## In Progress
 
 ### Sessions 23-24: Search & Vectors Implementation
@@ -545,9 +557,47 @@ PURGE DELETED BEFORE timestamp  # Bulk purge old deletions
 
 ## Not Planned
 
+- **Pub/Sub (PUBLISH, SUBSCRIBE, PSUBSCRIBE)** — Doesn't make sense with SQLite file as communication layer. Use Streams instead (XADD/XREAD/XREADGROUP). See docs: "Pub/Sub Migration Guide"
 - Cluster mode — Use [walsync](https://github.com/russellromney/walsync) for replication
 - Sentinel
 - Redis Modules
+
+---
+
+## Documentation Planned
+
+### Performance Guide: "How to Make Redlite Fast"
+
+Key insight: SQLite with large page cache = memory-speed reads with disk durability.
+
+**Topics to cover:**
+
+1. **Cache sizing** — `cache_mb` parameter, sweet spot is "as much RAM as you can spare"
+   ```python
+   # 50GB cache, terabytes on disk
+   db = Redlite("/data/cache.db", cache_mb=50000)
+   ```
+
+2. **Separate databases for separate workloads** — Different files = different locks = parallel writes
+   ```python
+   cache = Redlite("/fast-nvme/hot-cache.db", cache_mb=50000)
+   jobs = Redlite("/data/jobs.db", cache_mb=1000)
+   events = Redlite("/data/events.db", cache_mb=2000)
+   ```
+
+3. **WAL mode** — Concurrent readers, single writer (enabled by default)
+
+4. **NVMe vs SSD vs HDD** — Disk speed matters for cold reads and writes
+
+5. **When to use `:memory:`** — Tests only. File mode with large cache is the sweet spot.
+
+### Pub/Sub Migration Guide
+
+Document how to use Streams for pub/sub patterns:
+- Broadcast → XREAD (no consumer group)
+- Work queue → XREADGROUP with consumer groups
+- Cache invalidation → XADD with MAXLEN
+- Live updates → XREAD BLOCK with $ (latest only)
 
 ## Testing Plan: Search & Vector Features
 

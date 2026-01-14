@@ -1,5 +1,27 @@
 # Changelog
 
+## Session 28: Keyset Pagination for SCAN Commands
+
+### Performance Optimization
+- **Refactored all SCAN commands** (SCAN, HSCAN, SSCAN, ZSCAN) from OFFSET-based to keyset pagination
+- **Complexity improvement**: O(n) per call -> O(log n + k) per call for large datasets
+- **Cursor format**: Base64-encoded last-seen value instead of integer offset
+  - SCAN: `base64(last_key)`
+  - HSCAN: `base64(last_field)`
+  - SSCAN: `base64(last_member)`
+  - ZSCAN: `base64(JSON{"s":score,"m":"base64(member)"})` for compound ordering
+
+### Implementation Details
+- `db.rs`: Updated `scan()`, `hscan()`, `sscan()`, `zscan()` methods
+- `server/mod.rs`: Updated `cmd_scan`, `cmd_hscan`, `cmd_sscan`, `cmd_zscan` handlers
+- SQL queries now use `WHERE key > ?` instead of `OFFSET ?`
+- All 16 scan-related unit tests pass
+
+### Why Keyset Pagination
+With OFFSET, SQLite must scan and skip N rows for each page. With keyset pagination using `WHERE key > last_seen`, SQLite uses the index to jump directly to the next page. This matters significantly for datasets with 100K+ keys.
+
+---
+
 ## Session 27.2: Redis Oracle Testing
 
 ### Added - Oracle Integration Tests
