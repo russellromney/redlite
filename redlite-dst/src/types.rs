@@ -118,3 +118,16 @@ pub struct MemorySnapshot {
     pub heap_bytes: Option<u64>,
     pub open_fds: Option<u32>,
 }
+
+/// Oracle test statistics
+#[derive(Debug, Clone, Default)]
+pub struct OracleStats {
+    pub operations: usize,
+    pub divergences: usize,
+}
+
+impl OracleStats {
+    pub fn new() -> Self {
+        Self::default()
+    }
+}

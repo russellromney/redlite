@@ -39,6 +39,81 @@ cargo run -- full
 | `replay` | Reproduce failure | `redlite-dst replay --seed 12345 --test simulate` |
 | `full` | Run everything | `redlite-dst full` |
 
+### Command Details
+
+#### ORACLE - Redis Compatibility Testing
+Compare Redlite behavior against a real Redis instance:
+```bash
+# Start Redis first
+docker run -d -p 6379:6379 redis
+
+# Run oracle tests
+redlite-dst oracle --redis localhost:6379 --ops 100
+
+# Tests 5 data types: strings, lists, hashes, sets, sorted_sets
+# Reports divergence count and compatibility percentage
+```
+
+#### SIMULATE - Deterministic Simulation
+Seed-reproducible scenarios for finding concurrency bugs:
+```bash
+# Run 100 seeds with 1000 ops each
+redlite-dst simulate --seeds 100 --ops 1000
+
+# Scenarios tested per seed:
+# - concurrent_operations: Virtual connections with deterministic interleaving
+# - crash_recovery: Write data, simulate crash, verify recovery
+# - connection_storm: Rapid open/close cycles
+```
+
+#### CHAOS - Fault Injection
+Test resilience under failure conditions:
+```bash
+# Run all fault types
+redlite-dst chaos --faults crash_mid_write,corrupt_read,disk_full,slow_write
+
+# Run specific faults with more seeds
+redlite-dst chaos --faults crash_mid_write --seeds 50
+```
+
+#### STRESS - Load Testing
+Measure performance under concurrent load:
+```bash
+# 100 concurrent connections, 100K key space
+redlite-dst stress --connections 100 --keys 100000
+
+# Reports:
+# - Throughput (ops/sec)
+# - Latency percentiles (p50, p99)
+# - Memory usage
+```
+
+#### FUZZ - In-Process Fuzzing
+Random input testing to find panics:
+```bash
+# Fuzz RESP protocol parser for 60 seconds
+redlite-dst fuzz --target resp_parser --duration 60
+
+# Fuzz query parser (FT.SEARCH syntax)
+redlite-dst fuzz --target query_parser --duration 60
+
+# Fuzz command handler with random operations
+redlite-dst fuzz --target command_handler --duration 60
+
+# Reports base seed for crash reproduction
+```
+
+#### SOAK - Stability Testing
+Long-running tests for memory leaks:
+```bash
+# Run for 1 hour with 10-second check intervals
+redlite-dst soak --duration 1h --interval 10
+
+# Monitors:
+# - Memory growth (warns if >50% increase)
+# - Throughput stability (warns if CV >30%)
+```
+
 ## Seed-Based Reproducibility
 
 Every test failure comes with a seed for exact reproduction:

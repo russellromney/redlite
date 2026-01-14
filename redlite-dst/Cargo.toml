@@ -44,5 +44,21 @@ chrono = { version = "0.4", features = ["serde"] }
 # Temporary directories for testing
 tempfile = "3"
 
+# Redis client for oracle testing
+redis = "0.27"
+
+# System monitoring
+sysinfo = "0.32"
+
+# Synchronization primitives
+parking_lot = "0.12"
+
+# Fuzzing (using proptest in-process fuzzing)
 [dev-dependencies]
 proptest = "1.4"
+
+# Note: MadSim integration would require:
+# [target.'cfg(madsim)'.dependencies]
+# tokio = { version = "0.2", package = "madsim-tokio" }
+# madsim = "0.2"
+# For now, we use deterministic simulation without MadSim runtime.
