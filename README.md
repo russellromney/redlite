@@ -1,8 +1,10 @@
 # redlite
 
-SQLite-backed Redis-compatible embedded key-value store.
+Embedded Redis on SQLite in Rust.
 
 **Docs:** [redlite.dev](https://redlite.dev)
+
+> Early alpha. Don't use in production yet. 
 
 ## Quick Start
 
@@ -14,6 +16,7 @@ let db = Db::open("mydata.db")?;
 db.set("user:1", b"alice", None)?;
 let name = db.get("user:1")?;
 ```
+
 
 **Server:**
 ```bash
@@ -30,11 +33,35 @@ redis-cli SET foo bar
 | Memory-constrained | Disk-backed | RAM-bound |
 | Persistence required | Always durable | Needs config |
 | Multi-app sharing | Server mode | Native |
-| Clusters | Use [walsync](https://github.com/russellromney/walsync) | Native |
+| Clusters | Use [Litestream](https://github.com/benbjohnson/litestream) | Native |
+
+## Embedded vs Server Mode
+
+**Embedded mode** = Direct library calls, no network. Microsecond latency.
+
+**Server mode** = Redis protocol over TCP. Works with any Redis client.
+
+| Scenario | Use |
+|----------|-----|
+| Single process | Embedded `:memory:` or file |
+| Multiple processes, same machine | Embedded file (SQLite WAL handles concurrency) |
+| Multiple servers over network | Server mode |
+| Hybrid | Primary app uses embedded (fast), other services hit redlite server (shared SQLite .db) |
+
+```python
+# All processes on same machine can share a file
+db = Redlite("/shared/cache.db", cache_mb=50000)  # Everyone gets microsecond reads
+
+# Hybrid: primary goes brr, secondaries use server
+primary = Redlite("/data/cache.db")               # Direct FFI
+secondary = Redlite("redis://localhost:6379")     # Via server
+```
+
+**Sweet spot**: Embedded file mode with large cache. 50GB hot cache, terabytes on disk. Multiple processes, one file. Litestream to S3. No server, no Docker, no ops.
 
 ## Why Redlite
 
-- **Embedded-first** — No separate server needed
+- **Embedded-first** — No separate server/process needed
 - **Disk-backed** — No RAM constraints
 - **SQLite foundation** — ACID, durable, zero config
 - **Redis compatible** — Standard clients work

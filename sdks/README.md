@@ -9,7 +9,8 @@ sdks/
 ├── COMMANDS.md       # Auto-generated list of supported commands
 ├── TEMPLATE.md       # README template for all SDKs
 ├── python/           # Python SDK (redlite-py)
-├── go/               # Go SDK (redlite-go) - planned
+├── go/               # Go SDK (redlite-go)
+├── typescript/       # TypeScript SDK
 └── wasm/             # WASM bindings - experimental
 ```
 
@@ -19,8 +20,8 @@ Each SDK follows this pattern:
 
 1. **Wrap existing Redis client** - Don't reimplement the protocol
    - Python: wraps `redis-py`
-   - Go: wraps `go-redis`
-   - Node: wraps `ioredis` (removed - spawn issues)
+   - Go: wraps `go-redis/v9`
+   - TypeScript: wraps `ioredis`
 
 2. **Two modes:**
    - **Server mode**: Connect to existing redlite/Redis server
@@ -77,9 +78,9 @@ Each SDK should have:
 
 | SDK | Status | Package | Server Mode | Embedded Mode |
 |-----|--------|---------|-------------|---------------|
-| Python | ✅ Complete | `redlite` on PyPI | ✅ | ✅ |
-| Go | 📋 Planned | - | - | - |
-| Node | ❌ Removed | - | - | Spawn issues |
+| Python | ✅ Complete | `redlite` | ✅ | ✅ |
+| Go | ✅ Complete | `github.com/redlite-db/redlite-go` | ✅ | ✅ |
+| TypeScript | ✅ Complete | `redlite` | ✅ | ✅ |
 | WASM | 🧪 Experimental | - | - | - |
 
 ## Philosophy

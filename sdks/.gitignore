@@ -1,0 +1,31 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+.venv/
+*.egg-info/
+dist/
+build/
+.pytest_cache/
+
+# Go
+redlite-go/vendor/
+
+# TypeScript/Node
+node_modules/
+*.tsbuildinfo
+dist/
+
+# WASM
+wasm/pkg/
+wasm/target/
+
+# IDE
+.idea/
+.vscode/
+*.swp
+
+# Native libraries (built separately)
+*.so
+*.dylib
+*.dll
