@@ -35,20 +35,8 @@ Currently implementing RediSearch-compatible FT.* and Redis 8-compatible V* comm
 - [x] Fix NOT operator FTS5 syntax (A NOT B instead of A AND NOT B)
 - [x] Add 50 FT.* unit tests (was 26, now comprehensive)
 
-#### Phase 3: RediSearch Aggregations (Session 23.3)
+#### Phase 3: RediSearch Aggregations (Next)
 - [ ] Implement FT.AGGREGATE with LOAD, GROUPBY, REDUCE, SORTBY, APPLY, FILTER, LIMIT
-
-#### Phase 4: Redis 8 Vectors with sqlite-vec (Session 24) - COMPLETE
-- [x] Replace schema_vectors.sql with Redis 8-compatible vector_sets schema
-- [x] Remove old redlite-native vector code (migrated to vector_sets table)
-- [x] Add sqlite-vec extension loading via auto_extension
-- [x] Implement VADD (add vector elements with embeddings)
-- [x] Implement VSIM (K-NN similarity search using sqlite-vec)
-- [x] Implement VSIMBATCH (batch similarity search across sets)
-- [x] Implement VREM, VCARD, VEXISTS, VDIM
-- [x] Implement VGET, VGETALL, VGETATTRIBUTES
-- [x] Implement VSETATTRIBUTES, VDELATTRIBUTES
-- [x] All 491 tests passing (487 unit + 4 doctests)
 
 ---
 
