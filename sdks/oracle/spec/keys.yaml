@@ -1,0 +1,192 @@
+# Oracle Test Specification: Key Commands
+
+name: Key Commands
+version: "1.0"
+
+tests:
+  # ==========================================================================
+  # DEL / EXISTS
+  # ==========================================================================
+
+  - name: DEL removes key
+    setup:
+      - { cmd: SET, args: ["key", "value"] }
+    operations:
+      - { cmd: DEL, args: [["key"]], expect: 1 }
+      - { cmd: GET, args: ["key"], expect: null }
+
+  - name: DEL multiple keys
+    setup:
+      - { cmd: SET, args: ["k1", "v1"] }
+      - { cmd: SET, args: ["k2", "v2"] }
+    operations:
+      - { cmd: DEL, args: [["k1", "k2", "k3"]], expect: 2 }
+
+  - name: DEL nonexistent key
+    operations:
+      - { cmd: DEL, args: [["nonexistent"]], expect: 0 }
+
+  - name: EXISTS single key
+    setup:
+      - { cmd: SET, args: ["key", "value"] }
+    operations:
+      - { cmd: EXISTS, args: [["key"]], expect: 1 }
+
+  - name: EXISTS multiple keys
+    setup:
+      - { cmd: SET, args: ["k1", "v1"] }
+      - { cmd: SET, args: ["k2", "v2"] }
+    operations:
+      - { cmd: EXISTS, args: [["k1", "k2", "k3"]], expect: 2 }
+
+  - name: EXISTS nonexistent
+    operations:
+      - { cmd: EXISTS, args: [["nonexistent"]], expect: 0 }
+
+  # ==========================================================================
+  # TYPE
+  # ==========================================================================
+
+  - name: TYPE string
+    setup:
+      - { cmd: SET, args: ["key", "value"] }
+    operations:
+      - { cmd: TYPE, args: ["key"], expect: "string" }
+
+  - name: TYPE hash
+    setup:
+      - { cmd: HSET, args: ["hash", "field", "value"] }
+    operations:
+      - { cmd: TYPE, args: ["hash"], expect: "hash" }
+
+  - name: TYPE list
+    setup:
+      - { cmd: LPUSH, args: ["list", ["value"]] }
+    operations:
+      - { cmd: TYPE, args: ["list"], expect: "list" }
+
+  - name: TYPE set
+    setup:
+      - { cmd: SADD, args: ["set", ["member"]] }
+    operations:
+      - { cmd: TYPE, args: ["set"], expect: "set" }
+
+  - name: TYPE zset
+    setup:
+      - { cmd: ZADD, args: ["zset", [[1.0, "member"]]] }
+    operations:
+      - { cmd: TYPE, args: ["zset"], expect: "zset" }
+
+  - name: TYPE nonexistent
+    operations:
+      - { cmd: TYPE, args: ["nonexistent"], expect: "none" }
+
+  # ==========================================================================
+  # TTL / EXPIRE / PERSIST
+  # ==========================================================================
+
+  - name: TTL no expiration returns -1
+    setup:
+      - { cmd: SET, args: ["key", "value"] }
+    operations:
+      - { cmd: TTL, args: ["key"], expect: -1 }
+
+  - name: TTL nonexistent returns -2
+    operations:
+      - { cmd: TTL, args: ["nonexistent"], expect: -2 }
+
+  - name: EXPIRE sets TTL
+    setup:
+      - { cmd: SET, args: ["key", "value"] }
+    operations:
+      - { cmd: EXPIRE, args: ["key", 60], expect: true }
+      - { cmd: TTL, args: ["key"], expect: { range: [58, 60] } }
+
+  - name: EXPIRE nonexistent key
+    operations:
+      - { cmd: EXPIRE, args: ["nonexistent", 60], expect: false }
+
+  - name: PEXPIRE sets millisecond TTL
+    setup:
+      - { cmd: SET, args: ["key", "value"] }
+    operations:
+      - { cmd: PEXPIRE, args: ["key", 60000], expect: true }
+      - { cmd: PTTL, args: ["key"], expect: { range: [58000, 60000] } }
+
+  - name: PERSIST removes TTL
+    setup:
+      - { cmd: SET, args: ["key", "value"] }
+      - { cmd: EXPIRE, args: ["key", 60] }
+    operations:
+      - { cmd: PERSIST, args: ["key"], expect: true }
+      - { cmd: TTL, args: ["key"], expect: -1 }
+
+  - name: PERSIST key without TTL
+    # Note: Redlite returns True here (key exists), Redis returns False (no TTL removed)
+    # This is a known behavioral difference
+    setup:
+      - { cmd: SET, args: ["key", "value"] }
+    operations:
+      - { cmd: PERSIST, args: ["key"], expect: true }
+
+  # ==========================================================================
+  # RENAME
+  # ==========================================================================
+
+  - name: RENAME basic
+    setup:
+      - { cmd: SET, args: ["old", "value"] }
+    operations:
+      - { cmd: RENAME, args: ["old", "new"], expect: true }
+      - { cmd: GET, args: ["old"], expect: null }
+      - { cmd: GET, args: ["new"], expect: "value" }
+
+  - name: RENAMENX succeeds when target missing
+    setup:
+      - { cmd: SET, args: ["old", "value"] }
+    operations:
+      - { cmd: RENAMENX, args: ["old", "new"], expect: true }
+      - { cmd: GET, args: ["new"], expect: "value" }
+
+  - name: RENAMENX fails when target exists
+    setup:
+      - { cmd: SET, args: ["old", "value1"] }
+      - { cmd: SET, args: ["new", "value2"] }
+    operations:
+      - { cmd: RENAMENX, args: ["old", "new"], expect: false }
+      - { cmd: GET, args: ["new"], expect: "value2" }
+
+  # ==========================================================================
+  # KEYS / DBSIZE / FLUSHDB
+  # ==========================================================================
+
+  - name: KEYS with pattern
+    setup:
+      - { cmd: SET, args: ["user:1", "a"] }
+      - { cmd: SET, args: ["user:2", "b"] }
+      - { cmd: SET, args: ["post:1", "c"] }
+    operations:
+      - { cmd: KEYS, args: ["user:*"], expect: { set: ["user:1", "user:2"] } }
+
+  - name: KEYS all
+    setup:
+      - { cmd: SET, args: ["a", "1"] }
+      - { cmd: SET, args: ["b", "2"] }
+    operations:
+      - { cmd: KEYS, args: ["*"], expect: { set: ["a", "b"] } }
+
+  - name: DBSIZE counts keys
+    setup:
+      - { cmd: SET, args: ["k1", "v1"] }
+      - { cmd: SET, args: ["k2", "v2"] }
+      - { cmd: SET, args: ["k3", "v3"] }
+    operations:
+      - { cmd: DBSIZE, args: [], expect: 3 }
+
+  - name: FLUSHDB removes all keys
+    setup:
+      - { cmd: SET, args: ["k1", "v1"] }
+      - { cmd: SET, args: ["k2", "v2"] }
+    operations:
+      - { cmd: FLUSHDB, args: [], expect: true }
+      - { cmd: DBSIZE, args: [], expect: 0 }

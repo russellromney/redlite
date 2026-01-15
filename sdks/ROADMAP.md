@@ -441,7 +441,7 @@ interface Db {
 
 ## Task 3: Cross-SDK Oracle Testing
 
-**Status**: PLANNED
+**Status**: IN PROGRESS (Phase 3.1 + 3.2 complete)
 **Priority**: HIGH
 **Location**: `sdks/oracle/`
 
@@ -579,28 +579,42 @@ make test-oracle          # Run all SDKs, compare results
 make test-oracle-compare --seed 12345
 ```
 
-### Phase 3.1: Create Spec Format & Parser
+### Phase 3.1: Create Spec Format & Parser - ✅ COMPLETE (2026-01-14)
 
-- [ ] Design YAML spec format
-- [ ] Implement spec parser (Python, can be reused)
-- [ ] Create initial specs from existing tests (~50 tests)
+- [x] Design YAML spec format (see `oracle/spec/*.yaml`)
+- [x] Implement spec parser (Python runner)
+- [x] Create initial specs: 73 tests across 3 spec files
+  - `strings.yaml` - 29 tests (GET, SET, MGET, MSET, INCR, etc.)
+  - `hashes.yaml` - 18 tests (HSET, HGET, HGETALL, HMGET, etc.)
+  - `keys.yaml` - 26 tests (DEL, EXISTS, TYPE, TTL, EXPIRE, etc.)
 
-### Phase 3.2: Implement Runners
+### Phase 3.2: Implement Runners - ✅ COMPLETE (2026-01-15)
 
-- [ ] Python runner with pytest integration
-- [ ] TypeScript runner with vitest integration
-- [ ] Rust runner (baseline reference)
+- [x] Python runner (`runners/python_runner.py`)
+- [x] TypeScript runner (`runners/ts_runner.js`)
+- [ ] Rust runner (baseline reference) - optional for future
 
-### Phase 3.3: Integrate with CI
+### Phase 3.3: Add Data Structure Specs - ✅ COMPLETE (2026-01-15)
 
-- [ ] Add `make test-oracle` to Makefile
+- [x] `lists.yaml` - 22 tests (LPUSH, RPUSH, LPOP, RPOP, LLEN, LRANGE, LINDEX)
+- [x] `sets.yaml` - 16 tests (SADD, SREM, SMEMBERS, SISMEMBER, SCARD)
+- [x] `zsets.yaml` - 26 tests (ZADD, ZREM, ZSCORE, ZCARD, ZCOUNT, ZINCRBY, ZRANGE, ZREVRANGE)
+- [x] Runners normalized to match Redis behavior (LPOP/RPOP single value vs array)
+
+**Total**: 137 tests passing for both Python and TypeScript SDKs
+
+### Phase 3.4: CI Integration
+
+- [x] Add `make test-oracle-python` to oracle/Makefile
+- [x] Add `make test-ts` for TypeScript SDK
+- [x] Add `make test` to run all SDK oracle tests
 - [ ] Run on all PRs that touch SDK code
 - [ ] Generate comparison report
 
-### Phase 3.4: Migrate Tests
+### Phase 3.5: Future Specs
 
-- [ ] Identify SDK-specific tests to keep (type coercion, error handling)
-- [ ] Migrate shared tests to oracle specs
+- [ ] `scan.yaml` - SCAN, HSCAN, SSCAN, ZSCAN cursor iteration
+- [ ] Migrate SDK-specific tests to oracle specs
 - [ ] Remove duplicate test code from SDKs
 
 ### Benefits

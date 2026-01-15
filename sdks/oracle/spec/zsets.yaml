@@ -1,0 +1,178 @@
+# Oracle Test Specification: Sorted Set Commands
+
+name: Sorted Set Commands
+version: "1.0"
+
+tests:
+  # ==========================================================================
+  # ZADD basics
+  # ==========================================================================
+
+  - name: ZADD single member
+    operations:
+      - { cmd: ZADD, args: ["zset", [[1.0, "a"]]], expect: 1 }
+      - { cmd: ZSCORE, args: ["zset", "a"], expect: 1.0 }
+
+  - name: ZADD multiple members
+    operations:
+      - { cmd: ZADD, args: ["zset", [[1.0, "a"], [2.0, "b"], [3.0, "c"]]], expect: 3 }
+      - { cmd: ZCARD, args: ["zset"], expect: 3 }
+
+  - name: ZADD updates existing member score
+    operations:
+      - { cmd: ZADD, args: ["zset", [[1.0, "a"]]], expect: 1 }
+      - { cmd: ZADD, args: ["zset", [[5.0, "a"]]], expect: 0 }  # 0 = update, not new
+      - { cmd: ZSCORE, args: ["zset", "a"], expect: 5.0 }
+
+  - name: ZADD with negative scores
+    operations:
+      - { cmd: ZADD, args: ["zset", [[-10.5, "neg"]]], expect: 1 }
+      - { cmd: ZSCORE, args: ["zset", "neg"], expect: -10.5 }
+
+  - name: ZADD with float scores
+    operations:
+      - { cmd: ZADD, args: ["zset", [[3.14159, "pi"]]], expect: 1 }
+      - { cmd: ZSCORE, args: ["zset", "pi"], expect: { approx: 3.14159, tol: 0.0001 } }
+
+  # ==========================================================================
+  # ZREM
+  # ==========================================================================
+
+  - name: ZREM single member
+    setup:
+      - { cmd: ZADD, args: ["zset", [[1.0, "a"], [2.0, "b"], [3.0, "c"]]] }
+    operations:
+      - { cmd: ZREM, args: ["zset", ["b"]], expect: 1 }
+      - { cmd: ZCARD, args: ["zset"], expect: 2 }
+
+  - name: ZREM multiple members
+    setup:
+      - { cmd: ZADD, args: ["zset", [[1.0, "a"], [2.0, "b"], [3.0, "c"], [4.0, "d"]]] }
+    operations:
+      - { cmd: ZREM, args: ["zset", ["a", "c"]], expect: 2 }
+      - { cmd: ZCARD, args: ["zset"], expect: 2 }
+
+  - name: ZREM nonexistent members
+    setup:
+      - { cmd: ZADD, args: ["zset", [[1.0, "a"]]] }
+    operations:
+      - { cmd: ZREM, args: ["zset", ["x", "y"]], expect: 0 }
+
+  # ==========================================================================
+  # ZSCORE
+  # ==========================================================================
+
+  - name: ZSCORE existing member
+    setup:
+      - { cmd: ZADD, args: ["zset", [[42.5, "member"]]] }
+    operations:
+      - { cmd: ZSCORE, args: ["zset", "member"], expect: 42.5 }
+
+  - name: ZSCORE nonexistent member
+    setup:
+      - { cmd: ZADD, args: ["zset", [[1.0, "a"]]] }
+    operations:
+      - { cmd: ZSCORE, args: ["zset", "nonexistent"], expect: null }
+
+  - name: ZSCORE nonexistent set
+    operations:
+      - { cmd: ZSCORE, args: ["nonexistent", "member"], expect: null }
+
+  # ==========================================================================
+  # ZCARD
+  # ==========================================================================
+
+  - name: ZCARD counts members
+    setup:
+      - { cmd: ZADD, args: ["zset", [[1.0, "a"], [2.0, "b"], [3.0, "c"]]] }
+    operations:
+      - { cmd: ZCARD, args: ["zset"], expect: 3 }
+
+  - name: ZCARD nonexistent set
+    operations:
+      - { cmd: ZCARD, args: ["nonexistent"], expect: 0 }
+
+  # ==========================================================================
+  # ZCOUNT
+  # ==========================================================================
+
+  - name: ZCOUNT full range
+    setup:
+      - { cmd: ZADD, args: ["zset", [[1.0, "a"], [2.0, "b"], [3.0, "c"], [4.0, "d"]]] }
+    operations:
+      - { cmd: ZCOUNT, args: ["zset", 1.0, 4.0], expect: 4 }
+
+  - name: ZCOUNT partial range
+    setup:
+      - { cmd: ZADD, args: ["zset", [[1.0, "a"], [2.0, "b"], [3.0, "c"], [4.0, "d"]]] }
+    operations:
+      - { cmd: ZCOUNT, args: ["zset", 2.0, 3.0], expect: 2 }
+
+  - name: ZCOUNT empty range
+    setup:
+      - { cmd: ZADD, args: ["zset", [[1.0, "a"], [2.0, "b"]]] }
+    operations:
+      - { cmd: ZCOUNT, args: ["zset", 10.0, 20.0], expect: 0 }
+
+  - name: ZCOUNT nonexistent set
+    operations:
+      - { cmd: ZCOUNT, args: ["nonexistent", 0.0, 100.0], expect: 0 }
+
+  # ==========================================================================
+  # ZINCRBY
+  # ==========================================================================
+
+  - name: ZINCRBY existing member
+    setup:
+      - { cmd: ZADD, args: ["zset", [[10.0, "counter"]]] }
+    operations:
+      - { cmd: ZINCRBY, args: ["zset", 5.0, "counter"], expect: 15.0 }
+
+  - name: ZINCRBY creates member if not exists
+    operations:
+      - { cmd: ZINCRBY, args: ["zset", 3.5, "new"], expect: 3.5 }
+      - { cmd: ZSCORE, args: ["zset", "new"], expect: 3.5 }
+
+  - name: ZINCRBY negative increment
+    setup:
+      - { cmd: ZADD, args: ["zset", [[100.0, "value"]]] }
+    operations:
+      - { cmd: ZINCRBY, args: ["zset", -30.0, "value"], expect: 70.0 }
+
+  # ==========================================================================
+  # ZRANGE / ZREVRANGE
+  # ==========================================================================
+
+  - name: ZRANGE ascending order
+    setup:
+      - { cmd: ZADD, args: ["zset", [[3.0, "c"], [1.0, "a"], [2.0, "b"]]] }
+    operations:
+      - { cmd: ZRANGE, args: ["zset", 0, -1], expect: ["a", "b", "c"] }
+
+  - name: ZRANGE partial range
+    setup:
+      - { cmd: ZADD, args: ["zset", [[1.0, "a"], [2.0, "b"], [3.0, "c"], [4.0, "d"]]] }
+    operations:
+      - { cmd: ZRANGE, args: ["zset", 1, 2], expect: ["b", "c"] }
+
+  - name: ZREVRANGE descending order
+    setup:
+      - { cmd: ZADD, args: ["zset", [[1.0, "a"], [2.0, "b"], [3.0, "c"]]] }
+    operations:
+      - { cmd: ZREVRANGE, args: ["zset", 0, -1], expect: ["c", "b", "a"] }
+
+  - name: ZREVRANGE partial range
+    setup:
+      - { cmd: ZADD, args: ["zset", [[1.0, "a"], [2.0, "b"], [3.0, "c"], [4.0, "d"]]] }
+    operations:
+      - { cmd: ZREVRANGE, args: ["zset", 0, 1], expect: ["d", "c"] }
+
+  - name: ZRANGE nonexistent set
+    operations:
+      - { cmd: ZRANGE, args: ["nonexistent", 0, -1], expect: [] }
+
+  - name: ZRANGE with negative indices
+    setup:
+      - { cmd: ZADD, args: ["zset", [[1.0, "a"], [2.0, "b"], [3.0, "c"], [4.0, "d"]]] }
+    operations:
+      - { cmd: ZRANGE, args: ["zset", -2, -1], expect: ["c", "d"] }

@@ -1,0 +1,205 @@
+# Oracle Test Specification: String Commands
+# These tests verify consistent behavior across all Redlite SDKs.
+#
+# Expectation types:
+#   expect: "value"              - Exact string match
+#   expect: 42                   - Exact integer match
+#   expect: true/false           - Boolean match
+#   expect: null                 - None/nil/null
+#   expect: ["a", "b"]           - Ordered list match
+#   expect: { set: ["a", "b"] }  - Unordered set match
+#   expect: { range: [59, 60] }  - Numeric range (inclusive)
+#   expect: { approx: 3.14, tol: 0.01 }  - Float with tolerance
+#   expect: { type: "bytes" }    - Type check only
+
+name: String Commands
+version: "1.0"
+
+tests:
+  # ==========================================================================
+  # GET / SET basics
+  # ==========================================================================
+
+  - name: SET and GET roundtrip
+    operations:
+      - { cmd: SET, args: ["key", "value"], expect: true }
+      - { cmd: GET, args: ["key"], expect: "value" }
+
+  - name: GET nonexistent key returns null
+    operations:
+      - { cmd: GET, args: ["nonexistent"], expect: null }
+
+  - name: SET overwrites existing value
+    operations:
+      - { cmd: SET, args: ["key", "first"], expect: true }
+      - { cmd: SET, args: ["key", "second"], expect: true }
+      - { cmd: GET, args: ["key"], expect: "second" }
+
+  - name: SET empty string
+    operations:
+      - { cmd: SET, args: ["key", ""], expect: true }
+      - { cmd: GET, args: ["key"], expect: "" }
+
+  - name: SET binary data
+    operations:
+      - { cmd: SET, args: ["key", { bytes: [0, 1, 255, 128] }], expect: true }
+      - { cmd: GET, args: ["key"], expect: { bytes: [0, 1, 255, 128] } }
+
+  # ==========================================================================
+  # MGET / MSET
+  # ==========================================================================
+
+  - name: MSET multiple keys
+    operations:
+      - { cmd: MSET, args: [["k1", "v1"], ["k2", "v2"], ["k3", "v3"]], expect: true }
+      - { cmd: GET, args: ["k1"], expect: "v1" }
+      - { cmd: GET, args: ["k2"], expect: "v2" }
+      - { cmd: GET, args: ["k3"], expect: "v3" }
+
+  - name: MGET multiple keys
+    setup:
+      - { cmd: SET, args: ["k1", "v1"] }
+      - { cmd: SET, args: ["k2", "v2"] }
+    operations:
+      - { cmd: MGET, args: [["k1", "k2", "k3"]], expect: ["v1", "v2", null] }
+
+  - name: MGET all nonexistent
+    operations:
+      - { cmd: MGET, args: [["a", "b", "c"]], expect: [null, null, null] }
+
+  # ==========================================================================
+  # INCR / DECR
+  # ==========================================================================
+
+  - name: INCR creates key with value 1
+    operations:
+      - { cmd: INCR, args: ["counter"], expect: 1 }
+      - { cmd: GET, args: ["counter"], expect: "1" }
+
+  - name: INCR increments existing value
+    setup:
+      - { cmd: SET, args: ["counter", "10"] }
+    operations:
+      - { cmd: INCR, args: ["counter"], expect: 11 }
+      - { cmd: INCR, args: ["counter"], expect: 12 }
+
+  - name: DECR creates key with value -1
+    operations:
+      - { cmd: DECR, args: ["counter"], expect: -1 }
+      - { cmd: GET, args: ["counter"], expect: "-1" }
+
+  - name: INCRBY with positive increment
+    operations:
+      - { cmd: INCRBY, args: ["counter", 5], expect: 5 }
+      - { cmd: INCRBY, args: ["counter", 10], expect: 15 }
+
+  - name: INCRBY with negative increment
+    setup:
+      - { cmd: SET, args: ["counter", "100"] }
+    operations:
+      - { cmd: INCRBY, args: ["counter", -30], expect: 70 }
+
+  - name: DECRBY basic
+    setup:
+      - { cmd: SET, args: ["counter", "100"] }
+    operations:
+      - { cmd: DECRBY, args: ["counter", 25], expect: 75 }
+
+  - name: INCRBYFLOAT basic
+    operations:
+      - { cmd: INCRBYFLOAT, args: ["counter", 1.5], expect: { approx: 1.5, tol: 0.001 } }
+      - { cmd: INCRBYFLOAT, args: ["counter", 2.5], expect: { approx: 4.0, tol: 0.001 } }
+
+  - name: INCRBYFLOAT negative
+    setup:
+      - { cmd: SET, args: ["counter", "10.5"] }
+    operations:
+      - { cmd: INCRBYFLOAT, args: ["counter", -3.3], expect: { approx: 7.2, tol: 0.001 } }
+
+  # ==========================================================================
+  # APPEND / STRLEN
+  # ==========================================================================
+
+  - name: APPEND to existing key
+    setup:
+      - { cmd: SET, args: ["key", "Hello"] }
+    operations:
+      - { cmd: APPEND, args: ["key", " World"], expect: 11 }
+      - { cmd: GET, args: ["key"], expect: "Hello World" }
+
+  - name: APPEND creates key if not exists
+    operations:
+      - { cmd: APPEND, args: ["key", "value"], expect: 5 }
+      - { cmd: GET, args: ["key"], expect: "value" }
+
+  - name: STRLEN existing key
+    setup:
+      - { cmd: SET, args: ["key", "Hello"] }
+    operations:
+      - { cmd: STRLEN, args: ["key"], expect: 5 }
+
+  - name: STRLEN nonexistent key
+    operations:
+      - { cmd: STRLEN, args: ["nonexistent"], expect: 0 }
+
+  # ==========================================================================
+  # GETRANGE / SETRANGE
+  # ==========================================================================
+
+  - name: GETRANGE basic substring
+    setup:
+      - { cmd: SET, args: ["key", "Hello World"] }
+    operations:
+      - { cmd: GETRANGE, args: ["key", 0, 4], expect: "Hello" }
+      - { cmd: GETRANGE, args: ["key", 6, 10], expect: "World" }
+
+  - name: GETRANGE negative indices
+    setup:
+      - { cmd: SET, args: ["key", "Hello World"] }
+    operations:
+      - { cmd: GETRANGE, args: ["key", -5, -1], expect: "World" }
+
+  - name: GETRANGE nonexistent key
+    operations:
+      - { cmd: GETRANGE, args: ["nonexistent", 0, 10], expect: "" }
+
+  - name: SETRANGE replaces substring
+    setup:
+      - { cmd: SET, args: ["key", "Hello World"] }
+    operations:
+      - { cmd: SETRANGE, args: ["key", 6, "Redis"], expect: 11 }
+      - { cmd: GET, args: ["key"], expect: "Hello Redis" }
+
+  - name: SETRANGE extends string with padding
+    setup:
+      - { cmd: SET, args: ["key", "Hi"] }
+    operations:
+      - { cmd: SETRANGE, args: ["key", 5, "!"], expect: 6 }
+      # Bytes 2-4 should be null bytes (padding)
+
+  # ==========================================================================
+  # SETEX / PSETEX / GETDEL
+  # ==========================================================================
+
+  - name: SETEX sets value with TTL
+    operations:
+      - { cmd: SETEX, args: ["key", 60, "value"], expect: true }
+      - { cmd: GET, args: ["key"], expect: "value" }
+      - { cmd: TTL, args: ["key"], expect: { range: [58, 60] } }
+
+  - name: PSETEX sets value with millisecond TTL
+    operations:
+      - { cmd: PSETEX, args: ["key", 60000, "value"], expect: true }
+      - { cmd: GET, args: ["key"], expect: "value" }
+      - { cmd: PTTL, args: ["key"], expect: { range: [58000, 60000] } }
+
+  - name: GETDEL returns and removes key
+    setup:
+      - { cmd: SET, args: ["key", "value"] }
+    operations:
+      - { cmd: GETDEL, args: ["key"], expect: "value" }
+      - { cmd: GET, args: ["key"], expect: null }
+
+  - name: GETDEL nonexistent key
+    operations:
+      - { cmd: GETDEL, args: ["nonexistent"], expect: null }

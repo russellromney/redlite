@@ -1,0 +1,134 @@
+# Oracle Test Specification: Hash Commands
+
+name: Hash Commands
+version: "1.0"
+
+tests:
+  # ==========================================================================
+  # HSET / HGET basics
+  # ==========================================================================
+
+  - name: HSET and HGET roundtrip
+    operations:
+      - { cmd: HSET, args: ["hash", "field", "value"], expect: 1 }
+      - { cmd: HGET, args: ["hash", "field"], expect: "value" }
+
+  - name: HGET nonexistent field
+    setup:
+      - { cmd: HSET, args: ["hash", "field1", "value1"] }
+    operations:
+      - { cmd: HGET, args: ["hash", "nonexistent"], expect: null }
+
+  - name: HGET nonexistent hash
+    operations:
+      - { cmd: HGET, args: ["nonexistent", "field"], expect: null }
+
+  - name: HSET overwrites existing field
+    operations:
+      - { cmd: HSET, args: ["hash", "field", "first"], expect: 1 }
+      - { cmd: HSET, args: ["hash", "field", "second"], expect: 0 }
+      - { cmd: HGET, args: ["hash", "field"], expect: "second" }
+
+  # ==========================================================================
+  # HMGET / HGETALL
+  # ==========================================================================
+
+  - name: HMGET multiple fields
+    setup:
+      - { cmd: HSET, args: ["hash", "f1", "v1"] }
+      - { cmd: HSET, args: ["hash", "f2", "v2"] }
+    operations:
+      - { cmd: HMGET, args: ["hash", ["f1", "f2", "f3"]], expect: ["v1", "v2", null] }
+
+  - name: HGETALL returns all fields
+    setup:
+      - { cmd: HSET, args: ["hash", "name", "Alice"] }
+      - { cmd: HSET, args: ["hash", "age", "30"] }
+    operations:
+      - { cmd: HGETALL, args: ["hash"], expect: { dict: { "name": "Alice", "age": "30" } } }
+
+  - name: HGETALL empty hash
+    operations:
+      - { cmd: HGETALL, args: ["nonexistent"], expect: { dict: {} } }
+
+  # ==========================================================================
+  # HDEL / HEXISTS
+  # ==========================================================================
+
+  - name: HDEL removes field
+    setup:
+      - { cmd: HSET, args: ["hash", "field", "value"] }
+    operations:
+      - { cmd: HDEL, args: ["hash", ["field"]], expect: 1 }
+      - { cmd: HGET, args: ["hash", "field"], expect: null }
+
+  - name: HDEL multiple fields
+    setup:
+      - { cmd: HSET, args: ["hash", "f1", "v1"] }
+      - { cmd: HSET, args: ["hash", "f2", "v2"] }
+      - { cmd: HSET, args: ["hash", "f3", "v3"] }
+    operations:
+      - { cmd: HDEL, args: ["hash", ["f1", "f2", "nonexistent"]], expect: 2 }
+
+  - name: HEXISTS existing field
+    setup:
+      - { cmd: HSET, args: ["hash", "field", "value"] }
+    operations:
+      - { cmd: HEXISTS, args: ["hash", "field"], expect: true }
+
+  - name: HEXISTS nonexistent field
+    setup:
+      - { cmd: HSET, args: ["hash", "field", "value"] }
+    operations:
+      - { cmd: HEXISTS, args: ["hash", "other"], expect: false }
+
+  # ==========================================================================
+  # HLEN / HKEYS / HVALS
+  # ==========================================================================
+
+  - name: HLEN counts fields
+    setup:
+      - { cmd: HSET, args: ["hash", "f1", "v1"] }
+      - { cmd: HSET, args: ["hash", "f2", "v2"] }
+      - { cmd: HSET, args: ["hash", "f3", "v3"] }
+    operations:
+      - { cmd: HLEN, args: ["hash"], expect: 3 }
+
+  - name: HLEN nonexistent hash
+    operations:
+      - { cmd: HLEN, args: ["nonexistent"], expect: 0 }
+
+  - name: HKEYS returns all field names
+    setup:
+      - { cmd: HSET, args: ["hash", "name", "Alice"] }
+      - { cmd: HSET, args: ["hash", "age", "30"] }
+    operations:
+      - { cmd: HKEYS, args: ["hash"], expect: { set: ["name", "age"] } }
+
+  - name: HVALS returns all values
+    setup:
+      - { cmd: HSET, args: ["hash", "a", "1"] }
+      - { cmd: HSET, args: ["hash", "b", "2"] }
+    operations:
+      - { cmd: HVALS, args: ["hash"], expect: { set: ["1", "2"] } }
+
+  # ==========================================================================
+  # HINCRBY
+  # ==========================================================================
+
+  - name: HINCRBY creates field
+    operations:
+      - { cmd: HINCRBY, args: ["hash", "counter", 5], expect: 5 }
+      - { cmd: HGET, args: ["hash", "counter"], expect: "5" }
+
+  - name: HINCRBY increments existing
+    setup:
+      - { cmd: HSET, args: ["hash", "counter", "10"] }
+    operations:
+      - { cmd: HINCRBY, args: ["hash", "counter", 5], expect: 15 }
+
+  - name: HINCRBY negative increment
+    setup:
+      - { cmd: HSET, args: ["hash", "counter", "100"] }
+    operations:
+      - { cmd: HINCRBY, args: ["hash", "counter", -30], expect: 70 }

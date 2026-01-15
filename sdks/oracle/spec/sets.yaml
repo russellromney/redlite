@@ -1,0 +1,117 @@
+# Oracle Test Specification: Set Commands
+
+name: Set Commands
+version: "1.0"
+
+tests:
+  # ==========================================================================
+  # SADD basics
+  # ==========================================================================
+
+  - name: SADD single member
+    operations:
+      - { cmd: SADD, args: ["set", ["a"]], expect: 1 }
+      - { cmd: SMEMBERS, args: ["set"], expect: { set: ["a"] } }
+
+  - name: SADD multiple members
+    operations:
+      - { cmd: SADD, args: ["set", ["a", "b", "c"]], expect: 3 }
+      - { cmd: SMEMBERS, args: ["set"], expect: { set: ["a", "b", "c"] } }
+
+  - name: SADD duplicate members
+    operations:
+      - { cmd: SADD, args: ["set", ["a", "b"]], expect: 2 }
+      - { cmd: SADD, args: ["set", ["b", "c"]], expect: 1 }  # only c is new
+      - { cmd: SMEMBERS, args: ["set"], expect: { set: ["a", "b", "c"] } }
+
+  - name: SADD all duplicates
+    setup:
+      - { cmd: SADD, args: ["set", ["a", "b"]] }
+    operations:
+      - { cmd: SADD, args: ["set", ["a", "b"]], expect: 0 }
+
+  # ==========================================================================
+  # SREM
+  # ==========================================================================
+
+  - name: SREM single member
+    setup:
+      - { cmd: SADD, args: ["set", ["a", "b", "c"]] }
+    operations:
+      - { cmd: SREM, args: ["set", ["b"]], expect: 1 }
+      - { cmd: SMEMBERS, args: ["set"], expect: { set: ["a", "c"] } }
+
+  - name: SREM multiple members
+    setup:
+      - { cmd: SADD, args: ["set", ["a", "b", "c", "d"]] }
+    operations:
+      - { cmd: SREM, args: ["set", ["a", "c"]], expect: 2 }
+      - { cmd: SMEMBERS, args: ["set"], expect: { set: ["b", "d"] } }
+
+  - name: SREM nonexistent members
+    setup:
+      - { cmd: SADD, args: ["set", ["a", "b"]] }
+    operations:
+      - { cmd: SREM, args: ["set", ["x", "y"]], expect: 0 }
+      - { cmd: SMEMBERS, args: ["set"], expect: { set: ["a", "b"] } }
+
+  - name: SREM mixed existing and nonexistent
+    setup:
+      - { cmd: SADD, args: ["set", ["a", "b", "c"]] }
+    operations:
+      - { cmd: SREM, args: ["set", ["b", "x"]], expect: 1 }
+
+  # ==========================================================================
+  # SISMEMBER
+  # ==========================================================================
+
+  - name: SISMEMBER existing member
+    setup:
+      - { cmd: SADD, args: ["set", ["a", "b", "c"]] }
+    operations:
+      - { cmd: SISMEMBER, args: ["set", "b"], expect: true }
+
+  - name: SISMEMBER nonexistent member
+    setup:
+      - { cmd: SADD, args: ["set", ["a", "b", "c"]] }
+    operations:
+      - { cmd: SISMEMBER, args: ["set", "x"], expect: false }
+
+  - name: SISMEMBER nonexistent set
+    operations:
+      - { cmd: SISMEMBER, args: ["nonexistent", "a"], expect: false }
+
+  # ==========================================================================
+  # SCARD
+  # ==========================================================================
+
+  - name: SCARD counts members
+    setup:
+      - { cmd: SADD, args: ["set", ["a", "b", "c"]] }
+    operations:
+      - { cmd: SCARD, args: ["set"], expect: 3 }
+
+  - name: SCARD nonexistent set
+    operations:
+      - { cmd: SCARD, args: ["nonexistent"], expect: 0 }
+
+  - name: SCARD after removals
+    setup:
+      - { cmd: SADD, args: ["set", ["a", "b", "c", "d"]] }
+      - { cmd: SREM, args: ["set", ["a", "b"]] }
+    operations:
+      - { cmd: SCARD, args: ["set"], expect: 2 }
+
+  # ==========================================================================
+  # SMEMBERS
+  # ==========================================================================
+
+  - name: SMEMBERS returns all members
+    setup:
+      - { cmd: SADD, args: ["set", ["x", "y", "z"]] }
+    operations:
+      - { cmd: SMEMBERS, args: ["set"], expect: { set: ["x", "y", "z"] } }
+
+  - name: SMEMBERS empty/nonexistent set
+    operations:
+      - { cmd: SMEMBERS, args: ["nonexistent"], expect: { set: [] } }

@@ -1,5 +1,169 @@
 # Changelog
 
+## Session 41: Oracle Specs for Lists, Sets, Sorted Sets
+
+### Added - Data Structure Spec Files
+
+**New Spec Files**:
+- `oracle/spec/lists.yaml` - 22 tests (LPUSH, RPUSH, LPOP, RPOP, LLEN, LRANGE, LINDEX)
+- `oracle/spec/sets.yaml` - 16 tests (SADD, SREM, SMEMBERS, SISMEMBER, SCARD)
+- `oracle/spec/zsets.yaml` - 26 tests (ZADD, ZREM, ZSCORE, ZCARD, ZCOUNT, ZINCRBY, ZRANGE, ZREVRANGE)
+
+**Test Results**:
+- **137/137 oracle tests passing** for Python SDK (up from 73)
+- **137/137 oracle tests passing** for TypeScript SDK (up from 73)
+
+### Updated - Runner Behavior Normalization
+
+Runners now match Redis behavior for LPOP/RPOP:
+- No count argument: returns single value or null
+- With count argument: returns array
+
+**Files Changed**:
+- `oracle/runners/python_runner.py` - Passes through to SDK (Redis behavior)
+- `oracle/runners/ts_runner.js` - Normalizes array result to single value when no count
+- `oracle/README.md` - Updated coverage table
+- `sdks/ROADMAP.md` - Phase 3.3 marked complete
+
+---
+
+## Session 40: TypeScript SDK Parity + Oracle Runner
+
+### Added - TypeScript SDK Commands (6 new commands)
+
+**Multi-key String Operations**:
+- `mget(keys: string[])` - Get values of multiple keys
+- `mset(pairs: Buffer[][])` - Set multiple key-value pairs atomically
+
+**Hash Commands**:
+- `hgetall(key)` - Get all fields and values in a hash
+- `hmget(key, fields[])` - Get values of multiple hash fields
+
+**Sorted Set Commands**:
+- `zrange(key, start, stop, withScores?)` - Get range by index
+- `zrevrange(key, start, stop, withScores?)` - Get range in reverse order
+
+### Added - TypeScript Oracle Runner
+
+**Files Created**:
+- `oracle/runners/ts_runner.js` - TypeScript SDK test runner (~400 lines)
+- `oracle/package.json` - Node dependencies (yaml)
+
+**Test Results**:
+- **73/73 oracle tests passing** for TypeScript SDK
+- **73/73 oracle tests passing** for Python SDK
+- Both SDKs produce identical results for all tested commands
+
+### Updated
+
+**Makefile Commands**:
+```bash
+make test           # Run both Python + TypeScript oracle tests
+make test-ts        # Run TypeScript SDK tests only
+make test-ts-verbose # Verbose TypeScript output
+```
+
+**Files Changed**:
+- `redlite-ts/src/lib.rs` - Added 6 new commands
+- `oracle/Makefile` - Added TypeScript runner targets
+- `sdks/ROADMAP.md` - Phase 3.2 marked complete
+
+---
+
+## Session 39: SDK Oracle Testing Framework
+
+### Added - Cross-SDK Oracle Testing (`sdks/oracle/`)
+
+**Goal**: Single source of truth for SDK behavior across Python, TypeScript, and future SDKs.
+
+#### Files Created
+- `oracle/spec/strings.yaml` - 29 string command tests (GET, SET, MGET, MSET, INCR, etc.)
+- `oracle/spec/hashes.yaml` - 18 hash command tests (HSET, HGET, HGETALL, HMGET, etc.)
+- `oracle/spec/keys.yaml` - 26 key command tests (DEL, EXISTS, TYPE, TTL, EXPIRE, etc.)
+- `oracle/runners/python_runner.py` - Python SDK test runner (~400 lines)
+- `oracle/Makefile` - Build commands for running oracle tests
+- `oracle/README.md` - Documentation for the oracle testing framework
+
+#### Test Specification Format
+```yaml
+tests:
+  - name: SET and GET roundtrip
+    operations:
+      - { cmd: SET, args: ["key", "value"], expect: true }
+      - { cmd: GET, args: ["key"], expect: "value" }
+```
+
+#### Expectation Types Supported
+- Exact match: `expect: "value"`, `expect: 42`, `expect: true`
+- Null check: `expect: null`
+- Unordered set: `expect: { set: ["a", "b"] }`
+- Dictionary: `expect: { dict: { "k": "v" } }`
+- Numeric range: `expect: { range: [58, 60] }` (for TTL tests)
+- Float tolerance: `expect: { approx: 3.14, tol: 0.01 }`
+- Binary data: `expect: { bytes: [0, 1, 255] }`
+
+#### Test Results
+- **73 oracle tests** - all passing
+- Covers string, hash, and key commands
+
+#### Usage
+```bash
+cd sdks/oracle
+make test-python        # Run all oracle tests
+make test-python-verbose # Verbose output
+make test-spec SPEC=strings.yaml  # Single spec file
+```
+
+#### Known Behavioral Differences (documented in specs)
+- `PERSIST` returns True for keys without TTL (Redis returns False)
+
+### Updated
+- `sdks/ROADMAP.md` - Task 3 Phase 3.1 marked complete
+
+---
+
+## Session 38: Performance Benchmarking (6 benchmarks)
+
+### Added - Criterion Benchmarks for FT.AGGREGATE
+
+**Benchmark Suite**: `benches/ft_aggregate.rs` with 6 comprehensive performance benchmarks.
+
+#### Benchmarks Implemented
+- `bench_ft_aggregate_1k_simple` - Single GROUPBY + COUNT on 1K documents
+- `bench_ft_aggregate_10k_complex` - Complex pipeline with 5 REDUCE functions (COUNT, AVG, SUM, MAX, STDDEV), FILTER, and SORTBY
+- `bench_ft_aggregate_100k_scale` - Simple and complex pipelines at 100K document scale
+- `bench_ft_search_bm25` - BM25 ranking with single-term and multi-term queries on 10K documents
+- `bench_scaling_comparison` - Scaling analysis across 1K/5K/10K/25K documents
+- `bench_memory_pressure` - Sustained 10K write operations followed by aggregation
+
+#### Initial Benchmark Results (Apple M1)
+- **1K simple GROUPBY+COUNT**: ~4.8ms per query (~208K elements/sec throughput)
+- **10K complex pipeline**: Baseline established for 5-REDUCE function pipelines
+- **100K scale**: Memory pressure and throughput profiling captured
+
+#### Files Changed
+- `crates/redlite/benches/ft_aggregate.rs` - New benchmark suite (~360 lines)
+- `crates/redlite/Cargo.toml` - Enabled `[[bench]]` configuration for criterion
+
+### Usage
+```bash
+# Run all benchmarks
+cargo bench --bench ft_aggregate
+
+# Test mode (quick verification)
+cargo bench --bench ft_aggregate -- --test
+
+# Run specific benchmark group
+cargo bench --bench ft_aggregate -- "ft_aggregate_1k"
+```
+
+### Test Results
+- **668 total tests** (664 unit + 4 doc) - all passing
+- **6 benchmarks** - all passing in test mode
+- **Zero regressions**
+
+---
+
 ## Session 37: Python SDK - Add Missing Commands & Test Fixes
 
 ### Added - Python SDK Commands (10 new commands)

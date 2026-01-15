@@ -1,0 +1,16 @@
+{
+  "name": "oracle",
+  "version": "1.0.0",
+  "description": "Cross-SDK consistency testing framework. Ensures all Redlite SDKs produce identical results for the same operations.",
+  "main": "index.js",
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "type": "commonjs",
+  "dependencies": {
+    "yaml": "^2.8.2"
+  }
+}
