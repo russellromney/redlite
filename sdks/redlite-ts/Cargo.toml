@@ -1,0 +1,22 @@
+[package]
+name = "redlite-node"
+version = "0.1.0"
+edition = "2021"
+license = "MIT"
+description = "Node.js native bindings for Redlite"
+
+[lib]
+crate-type = ["cdylib"]
+
+[dependencies]
+napi = { version = "2", features = ["napi8"] }
+napi-derive = "2"
+# Reference the main redlite crate
+redlite = { path = "../../crates/redlite" }
+
+[build-dependencies]
+napi-build = "2"
+
+[profile.release]
+lto = true
+strip = "symbols"
