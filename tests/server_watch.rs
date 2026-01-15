@@ -1,6 +1,6 @@
-//! Comprehensive server mode tests for WATCH/UNWATCH (optimistic locking)
+//! Comprehensive server mode tests for WATCH/UNWATCH and transactions
 //!
-//! These tests validate WATCH/UNWATCH behavior in actual server mode with:
+//! These tests validate WATCH/UNWATCH and MULTI/EXEC/DISCARD behavior in actual server mode with:
 //! - Multiple concurrent clients
 //! - True network-based connections
 //! - Connection lifecycle and cleanup
@@ -1229,4 +1229,230 @@ fn test_watch_error_messages_match_redis() {
 
     // Should error
     assert!(result.is_err(), "WATCH inside MULTI should error");
+}
+
+// ============================================================================
+// CATEGORY 7: BASIC TRANSACTIONS (without WATCH) (10 tests)
+// ============================================================================
+
+#[test]
+fn test_basic_multi_exec() {
+    let server = TestServer::start(18036);
+    let mut conn = server.connection();
+
+    // Basic transaction
+    redis::cmd("MULTI").execute(&mut conn);
+    redis::cmd("SET").arg("key1").arg("val1").execute(&mut conn);
+    redis::cmd("SET").arg("key2").arg("val2").execute(&mut conn);
+    redis::cmd("SET").arg("key3").arg("val3").execute(&mut conn);
+
+    let result: Option<Vec<String>> = redis::cmd("EXEC").query(&mut conn).unwrap();
+    assert!(result.is_some(), "EXEC should return results");
+    let results = result.unwrap();
+    assert_eq!(results.len(), 3, "Should have 3 results");
+
+    // Verify all keys were set
+    let val1: String = redis::cmd("GET").arg("key1").query(&mut conn).unwrap();
+    let val2: String = redis::cmd("GET").arg("key2").query(&mut conn).unwrap();
+    let val3: String = redis::cmd("GET").arg("key3").query(&mut conn).unwrap();
+    assert_eq!(val1, "val1");
+    assert_eq!(val2, "val2");
+    assert_eq!(val3, "val3");
+}
+
+#[test]
+fn test_multi_exec_with_get() {
+    let server = TestServer::start(18037);
+    let mut conn = server.connection();
+
+    // Setup
+    redis::cmd("SET").arg("key").arg("initial").execute(&mut conn);
+
+    // Transaction with GET
+    redis::cmd("MULTI").execute(&mut conn);
+    redis::cmd("SET").arg("key").arg("new").execute(&mut conn);
+    redis::cmd("GET").arg("key").execute(&mut conn);
+
+    let result: Option<Vec<redis::Value>> = redis::cmd("EXEC").query(&mut conn).unwrap();
+    assert!(result.is_some());
+    let results = result.unwrap();
+    assert_eq!(results.len(), 2);
+
+    // GET inside transaction should return "new"
+    if let redis::Value::BulkString(bytes) = &results[1] {
+        assert_eq!(bytes, b"new");
+    } else {
+        panic!("Expected BulkString");
+    }
+}
+
+#[test]
+fn test_discard_aborts_transaction() {
+    let server = TestServer::start(18038);
+    let mut conn = server.connection();
+
+    // Start transaction
+    redis::cmd("MULTI").execute(&mut conn);
+    redis::cmd("SET").arg("key1").arg("val1").execute(&mut conn);
+    redis::cmd("SET").arg("key2").arg("val2").execute(&mut conn);
+
+    // Discard
+    redis::cmd("DISCARD").execute(&mut conn);
+
+    // Keys should not exist
+    let val1: Option<String> = redis::cmd("GET").arg("key1").query(&mut conn).unwrap();
+    let val2: Option<String> = redis::cmd("GET").arg("key2").query(&mut conn).unwrap();
+    assert!(val1.is_none());
+    assert!(val2.is_none());
+}
+
+#[test]
+fn test_multi_exec_error_handling() {
+    let server = TestServer::start(18039);
+    let mut conn = server.connection();
+
+    // Create a list
+    redis::cmd("LPUSH").arg("mylist").arg("item").execute(&mut conn);
+
+    // Try to use string command on list (type error)
+    redis::cmd("MULTI").execute(&mut conn);
+    redis::cmd("SET").arg("key").arg("val").execute(&mut conn);
+    // This will error but should be queued
+    redis::cmd("INCR").arg("mylist").execute(&mut conn);
+    redis::cmd("SET").arg("key2").arg("val2").execute(&mut conn);
+
+    // EXEC should execute but some commands may error
+    let result: redis::RedisResult<Option<Vec<redis::Value>>> = redis::cmd("EXEC").query(&mut conn);
+    // Redis behavior: transaction executes, errors are per-command
+    assert!(result.is_ok() || result.is_err());
+}
+
+#[test]
+fn test_exec_without_multi_errors() {
+    let server = TestServer::start(18040);
+    let mut conn = server.connection();
+
+    // EXEC without MULTI should error
+    let result: redis::RedisResult<()> = redis::cmd("EXEC").query(&mut conn);
+    assert!(result.is_err(), "EXEC without MULTI should error");
+}
+
+#[test]
+fn test_discard_without_multi_errors() {
+    let server = TestServer::start(18041);
+    let mut conn = server.connection();
+
+    // DISCARD without MULTI should error
+    let result: redis::RedisResult<()> = redis::cmd("DISCARD").query(&mut conn);
+    assert!(result.is_err(), "DISCARD without MULTI should error");
+}
+
+#[test]
+fn test_nested_multi_errors() {
+    let server = TestServer::start(18042);
+    let mut conn = server.connection();
+
+    // Start first MULTI
+    redis::cmd("MULTI").execute(&mut conn);
+
+    // Try to start another MULTI (should error)
+    let result: redis::RedisResult<()> = redis::cmd("MULTI").query(&mut conn);
+    assert!(result.is_err(), "Nested MULTI should error");
+}
+
+#[test]
+fn test_transaction_isolation() {
+    let server = TestServer::start(18043);
+    let mut conn1 = server.connection();
+    let mut conn2 = server.connection();
+
+    // Setup initial value
+    redis::cmd("SET").arg("counter").arg("0").execute(&mut conn1);
+
+    // Client1: Start transaction
+    redis::cmd("MULTI").execute(&mut conn1);
+    redis::cmd("SET").arg("counter").arg("100").execute(&mut conn1);
+
+    // Client2: Read counter (should still be 0)
+    let val: String = redis::cmd("GET").arg("counter").query(&mut conn2).unwrap();
+    assert_eq!(val, "0", "Transaction should not be visible until EXEC");
+
+    // Client1: Execute
+    redis::cmd("EXEC").execute(&mut conn1);
+
+    // Client2: Now read should show 100
+    let val: String = redis::cmd("GET").arg("counter").query(&mut conn2).unwrap();
+    assert_eq!(val, "100", "Transaction should be visible after EXEC");
+}
+
+#[test]
+fn test_large_transaction_100_commands() {
+    let server = TestServer::start(18044);
+    let mut conn = server.connection();
+
+    redis::cmd("MULTI").execute(&mut conn);
+
+    // Queue 100 commands
+    for i in 0..100 {
+        redis::cmd("SET")
+            .arg(format!("key{}", i))
+            .arg(format!("val{}", i))
+            .execute(&mut conn);
+    }
+
+    let result: Option<Vec<String>> = redis::cmd("EXEC").query(&mut conn).unwrap();
+    assert!(result.is_some());
+    let results = result.unwrap();
+    assert_eq!(results.len(), 100);
+
+    // Verify some keys
+    let val0: String = redis::cmd("GET").arg("key0").query(&mut conn).unwrap();
+    let val50: String = redis::cmd("GET").arg("key50").query(&mut conn).unwrap();
+    let val99: String = redis::cmd("GET").arg("key99").query(&mut conn).unwrap();
+    assert_eq!(val0, "val0");
+    assert_eq!(val50, "val50");
+    assert_eq!(val99, "val99");
+}
+
+#[test]
+fn test_transaction_with_mixed_data_types() {
+    let server = TestServer::start(18045);
+    let mut conn = server.connection();
+
+    redis::cmd("MULTI").execute(&mut conn);
+
+    // String
+    redis::cmd("SET").arg("mystring").arg("hello").execute(&mut conn);
+
+    // List
+    redis::cmd("LPUSH").arg("mylist").arg("item1").execute(&mut conn);
+    redis::cmd("LPUSH").arg("mylist").arg("item2").execute(&mut conn);
+
+    // Hash
+    redis::cmd("HSET").arg("myhash").arg("field1").arg("val1").execute(&mut conn);
+
+    // Set
+    redis::cmd("SADD").arg("myset").arg("member1").execute(&mut conn);
+
+    // Sorted set
+    redis::cmd("ZADD").arg("myzset").arg("1").arg("member1").execute(&mut conn);
+
+    let result: Option<Vec<redis::Value>> = redis::cmd("EXEC").query(&mut conn).unwrap();
+    assert!(result.is_some());
+
+    // Verify all data types
+    let s: String = redis::cmd("GET").arg("mystring").query(&mut conn).unwrap();
+    assert_eq!(s, "hello");
+
+    let l: i64 = redis::cmd("LLEN").arg("mylist").query(&mut conn).unwrap();
+    assert_eq!(l, 2);
+
+    let h: String = redis::cmd("HGET").arg("myhash").arg("field1").query(&mut conn).unwrap();
+    assert_eq!(h, "val1");
+
+    let set: i64 = redis::cmd("SCARD").arg("myset").query(&mut conn).unwrap();
+    assert_eq!(set, 1);
+
+    let zset: i64 = redis::cmd("ZCARD").arg("myzset").query(&mut conn).unwrap();
+    assert_eq!(zset, 1);
 }

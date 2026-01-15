@@ -3603,10 +3603,11 @@ impl Db {
         };
 
         // Get all list entries to find matching positions
-        let mut stmt = conn.prepare("SELECT pos FROM lists WHERE key_id = ?1 ORDER BY pos ASC")?;
-        let rows = stmt.query_map(params![key_id], |row| row.get::<_, i64>(0))?;
-
-        let all_positions: Vec<i64> = rows.filter_map(|r| r.ok()).collect();
+        let all_positions: Vec<i64> = {
+            let mut stmt = conn.prepare("SELECT pos FROM lists WHERE key_id = ?1 ORDER BY pos ASC")?;
+            let rows = stmt.query_map(params![key_id], |row| row.get::<_, i64>(0))?;
+            rows.filter_map(|r| r.ok()).collect()
+        };
 
         if all_positions.is_empty() {
             return Ok(0);
@@ -3679,6 +3680,9 @@ impl Db {
                 params![now, key_id],
             )?;
 
+            // Drop lock before calling record_history to avoid deadlock
+            drop(conn);
+
             // Record history for LREM operation
             let _ = self.record_history(self.selected_db, key, "LREM", None);
 
@@ -3706,10 +3710,11 @@ impl Db {
         };
 
         // Find the position of the pivot element
-        let mut stmt = conn.prepare("SELECT pos FROM lists WHERE key_id = ?1 ORDER BY pos ASC")?;
-        let rows = stmt.query_map(params![key_id], |row| row.get::<_, i64>(0))?;
-
-        let positions: Vec<i64> = rows.filter_map(|r| r.ok()).collect();
+        let positions: Vec<i64> = {
+            let mut stmt = conn.prepare("SELECT pos FROM lists WHERE key_id = ?1 ORDER BY pos ASC")?;
+            let rows = stmt.query_map(params![key_id], |row| row.get::<_, i64>(0))?;
+            rows.filter_map(|r| r.ok()).collect()
+        };
         let mut pivot_pos: Option<i64> = None;
 
         for pos in &positions {
@@ -3831,6 +3836,9 @@ impl Db {
             "UPDATE keys SET updated_at = ?1, version = version + 1 WHERE id = ?2",
             params![now, key_id],
         )?;
+
+        // Drop lock before calling record_history to avoid deadlock
+        drop(conn);
 
         // Record history for LINSERT operation
         let _ = self.record_history(self.selected_db, key, "LINSERT", None);
@@ -4296,11 +4304,13 @@ impl Db {
         // Compute the difference
         let diff_result = self.sdiff(keys)?;
 
-        // Clear destination if it exists
-        if let Some(dest_key_id) = self.get_set_key_id(
-            &self.core.conn.lock().unwrap_or_else(|e| e.into_inner()),
-            destination,
-        )? {
+        // Clear destination if it exists (separate lock scopes to avoid deadlock)
+        let dest_key_id_opt = {
+            let conn = self.core.conn.lock().unwrap_or_else(|e| e.into_inner());
+            self.get_set_key_id(&conn, destination)?
+        };
+
+        if let Some(dest_key_id) = dest_key_id_opt {
             let conn = self.core.conn.lock().unwrap_or_else(|e| e.into_inner());
             conn.execute("DELETE FROM sets WHERE key_id = ?1", params![dest_key_id])?;
             conn.execute("DELETE FROM keys WHERE id = ?1", params![dest_key_id])?;
@@ -4342,11 +4352,13 @@ impl Db {
         // Compute the intersection
         let inter_result = self.sinter(keys)?;
 
-        // Clear destination if it exists
-        if let Some(dest_key_id) = self.get_set_key_id(
-            &self.core.conn.lock().unwrap_or_else(|e| e.into_inner()),
-            destination,
-        )? {
+        // Clear destination if it exists (separate lock scopes to avoid deadlock)
+        let dest_key_id_opt = {
+            let conn = self.core.conn.lock().unwrap_or_else(|e| e.into_inner());
+            self.get_set_key_id(&conn, destination)?
+        };
+
+        if let Some(dest_key_id) = dest_key_id_opt {
             let conn = self.core.conn.lock().unwrap_or_else(|e| e.into_inner());
             conn.execute("DELETE FROM sets WHERE key_id = ?1", params![dest_key_id])?;
             conn.execute("DELETE FROM keys WHERE id = ?1", params![dest_key_id])?;
@@ -4388,11 +4400,13 @@ impl Db {
         // Compute the union
         let union_result = self.sunion(keys)?;
 
-        // Clear destination if it exists
-        if let Some(dest_key_id) = self.get_set_key_id(
-            &self.core.conn.lock().unwrap_or_else(|e| e.into_inner()),
-            destination,
-        )? {
+        // Clear destination if it exists (separate lock scopes to avoid deadlock)
+        let dest_key_id_opt = {
+            let conn = self.core.conn.lock().unwrap_or_else(|e| e.into_inner());
+            self.get_set_key_id(&conn, destination)?
+        };
+
+        if let Some(dest_key_id) = dest_key_id_opt {
             let conn = self.core.conn.lock().unwrap_or_else(|e| e.into_inner());
             conn.execute("DELETE FROM sets WHERE key_id = ?1", params![dest_key_id])?;
             conn.execute("DELETE FROM keys WHERE id = ?1", params![dest_key_id])?;
@@ -4747,7 +4761,13 @@ impl Db {
             (start, stop, false)
         };
 
-        if needs_bounds && (start > stop || start >= total) {
+        // Check for invalid range (start > stop) regardless of index type
+        if start > stop {
+            return Ok(vec![]);
+        }
+
+        // Check bounds only when total was queried (negative indices)
+        if needs_bounds && start >= total {
             return Ok(vec![]);
         }
 
@@ -6154,9 +6174,9 @@ impl Db {
             let entries: Vec<StreamEntry> = if *id_str == ">" {
                 // Read new entries (after last_delivered_id)
                 let start = if last_seq == i64::MAX {
-                    StreamId::new(last_ms + 1, 0)
+                    StreamId::new(last_ms.saturating_add(1), 0)
                 } else {
-                    StreamId::new(last_ms, last_seq + 1)
+                    StreamId::new(last_ms, last_seq.saturating_add(1))
                 };
 
                 let limit = count.unwrap_or(i64::MAX);

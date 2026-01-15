@@ -4,7 +4,7 @@ See [CHANGELOG.md](./CHANGELOG.md) for completed features.
 
 ## Next Steps
 
-### Session 38: Plan and Execute Next SDK/Features
+### Session 40: Plan and Execute Next Features
 
 **Approach**: Use this roadmap file for planning. When you start a session:
 1. Write detailed implementation plan in markdown in this ROADMAP.md
@@ -15,37 +15,84 @@ See [CHANGELOG.md](./CHANGELOG.md) for completed features.
 
 **Potential Focus Areas**:
 
-**Option 1 - Python SDK Completion**:
+**Option 1 - Fix Poll Benchmark FK Constraint & Complete Analysis**:
+- Debug FK constraint error in poll_impact benchmarks
+- Complete remaining 2 benchmark groups (waiter scaling, CPU impact)
+- Analyze all results and document PollConfig recommendations
+- **Target**: Complete benchmark report in ROADMAP or separate PERFORMANCE.md
+
+**Option 2 - Fix Remaining Oracle Test Failures** (redlite-dst):
+- **Current Status**: 219 passed / ~11-50 failed (test pollution issues)
+- **Priority**: Fix test pollution (shared Redis state between tests)
+- **SCAN/ZSCAN Issues** (2 tests): oracle_cmd_scan, oracle_cmd_zscan
+- **Sorted Set Range Queries** (3 tests): oracle_cmd_zcount, oracle_cmd_zrange, oracle_cmd_zrangebyscore
+- **Stream Consumer Groups** (1 test): oracle_cmd_xclaim
+- **Random Operations** (5 tests): hashes_random_ops, lists_random_ops, sets_random_ops, strings_random_ops, zsets_random_ops
+- **Target**: 225+ tests passing consistently (98%+ pass rate)
+
+**Option 3 - Run Server-Mode Transaction Tests**:
+- Configure test infrastructure to run tests/server_watch.rs
+- Verify all 10 new transaction tests pass
+- Fix any failures found
+- **Target**: 100% server-mode transaction test coverage
+
+**Option 4 - Python SDK Completion**:
 - Similar to Go SDK work, add missing commands to Python SDK
 - Run oracle tests and identify gaps
-- Target: 100% test coverage for Python SDK
+- **Target**: 100% test coverage for Python SDK
 
-**Option 2 - TypeScript SDK Completion**:
+**Option 5 - TypeScript SDK Completion**:
 - Add missing commands to TypeScript SDK
 - Run oracle tests and identify gaps
-- Target: 100% test coverage for TypeScript SDK
-
-**Option 3 - Fix Remaining Oracle Test Failures** (redlite-dst):
-- Address 17 failing/timeout tests from oracle test suite (212 passed, 92% pass rate)
-- Timeout issues (7 tests): List/Set operations likely deadlocking
-- Z-Commands (4 tests): Range queries and boundary conditions
-- Complex scenarios (4 tests): Random operation edge cases
-- Basic operations (2 tests): persist, rename
-- Target: 225+ tests passing (98%+ pass rate)
-
-**Option 4 - Performance Optimization**:
-- Profile hot paths in common operations
-- Optimize query patterns
-- Benchmark against Redis for comparison
-
-**Option 5 - Documentation & Examples**:
-- Add comprehensive examples for each SDK
-- Create migration guides from Redis
-- Add performance tuning guide
+- **Target**: 100% test coverage for TypeScript SDK
 
 ---
 
 ## Recently Completed
+
+### Session 39: Core Bug Fixes & Transaction Tests - ✅ COMPLETE
+
+**Completed**:
+- Fixed 3 critical bugs: persist(), rename(), lrem()/linsert() compilation errors
+- Added 10 server-mode transaction tests (MULTI/EXEC/DISCARD)
+- Started poll impact benchmarks (6/8 groups completed)
+- Identified oracle test pollution issues (not implementation bugs)
+
+**Bug Fixes**:
+1. persist() - Now correctly returns false when key has no TTL
+2. rename() - Now handles renaming key to itself correctly
+3. lrem()/linsert() - Fixed borrowing conflicts preventing compilation
+
+**New Tests**: 10 transaction tests in tests/server_watch.rs covering MULTI/EXEC/DISCARD without WATCH
+
+**Benchmark Results** (partial):
+- Baseline: 24-48K ops/sec
+- With 10 waiters: 11-12K ops/sec (~50% degradation, acceptable)
+- FK constraint error halted remaining benchmarks
+
+**Oracle Analysis**: Most failures are test pollution (shared Redis state), not implementation bugs
+
+---
+
+### Session 38: DST Oracle Tests - Deadlock Fixes (7 Timeouts Resolved) - ✅ COMPLETE
+
+**Completed**:
+- Fixed all 7 timeout tests (100% timeout fix rate)
+- Eliminated deadlocks in LINSERT, LREM, SDIFFSTORE, SINTERSTORE, SUNIONSTORE
+- Improved test pass rate from 92% (212/230) to 95% (219/230)
+- Two deadlock patterns identified and fixed:
+  1. Calling `record_history()` while holding connection lock
+  2. Nested lock acquisition in if-let expressions
+
+**Key Fixes**:
+- Added `drop(conn)` before `record_history()` calls in linsert/lrem
+- Separated lock scopes in set store operations (sdiffstore/sinterstore/sunionstore)
+
+**Test Results**: 219 passed / 11 failed / 0 timeouts (vs 212 passed / 17 failed / 7 timeouts before)
+
+**Remaining Work**: 11 non-deadlock failures (SCAN/ZSCAN, sorted set range queries, stream xclaim, random ops)
+
+---
 
 ### Session 37: Go SDK Complete - 100% Oracle Test Coverage - ✅ COMPLETE
 
