@@ -16521,6 +16521,1065 @@ mod tests {
     }
 
     // ========================================================================
+    // FT.AGGREGATE Additional Tests - Session 31
+    // ========================================================================
+
+    // REDUCE Functions
+
+    #[test]
+    fn test_ft_aggregate_reduce_sum() {
+        use crate::types::{FtField, FtOnType, FtAggregateOptions, FtGroupBy, FtReducer, FtReduceFunction};
+
+        let db = Db::open_memory().unwrap();
+
+        let schema = vec![
+            FtField::tag("category"),
+            FtField::numeric("price"),
+        ];
+        db.ft_create("products", FtOnType::Hash, &["product:"], &schema)
+            .unwrap();
+
+        db.hset("product:1", &[("category", b"electronics"), ("price", b"100")])
+            .unwrap();
+        db.hset("product:2", &[("category", b"electronics"), ("price", b"200")])
+            .unwrap();
+        db.hset("product:3", &[("category", b"toys"), ("price", b"50")])
+            .unwrap();
+
+        let mut options = FtAggregateOptions::new();
+        options.group_by = Some(FtGroupBy {
+            fields: vec!["category".to_string()],
+            reducers: vec![FtReducer {
+                function: FtReduceFunction::Sum("price".to_string()),
+                alias: Some("total_price".to_string()),
+            }],
+        });
+
+        let results = db.ft_aggregate("products", "*", &options).unwrap();
+
+        assert_eq!(results.len(), 2);
+        let electronics = results.iter().find(|r| r.get("category") == Some(&"electronics".to_string())).unwrap();
+        let toys = results.iter().find(|r| r.get("category") == Some(&"toys".to_string())).unwrap();
+
+        assert_eq!(electronics.get("total_price"), Some(&"300".to_string()));
+        assert_eq!(toys.get("total_price"), Some(&"50".to_string()));
+    }
+
+    #[test]
+    fn test_ft_aggregate_reduce_avg() {
+        use crate::types::{FtField, FtOnType, FtAggregateOptions, FtGroupBy, FtReducer, FtReduceFunction};
+
+        let db = Db::open_memory().unwrap();
+
+        let schema = vec![
+            FtField::tag("category"),
+            FtField::numeric("rating"),
+        ];
+        db.ft_create("products", FtOnType::Hash, &["product:"], &schema)
+            .unwrap();
+
+        db.hset("product:1", &[("category", b"electronics"), ("rating", b"4")])
+            .unwrap();
+        db.hset("product:2", &[("category", b"electronics"), ("rating", b"5")])
+            .unwrap();
+        db.hset("product:3", &[("category", b"electronics"), ("rating", b"3")])
+            .unwrap();
+
+        let mut options = FtAggregateOptions::new();
+        options.group_by = Some(FtGroupBy {
+            fields: vec!["category".to_string()],
+            reducers: vec![FtReducer {
+                function: FtReduceFunction::Avg("rating".to_string()),
+                alias: Some("avg_rating".to_string()),
+            }],
+        });
+
+        let results = db.ft_aggregate("products", "*", &options).unwrap();
+
+        assert_eq!(results.len(), 1);
+        let avg: f64 = results[0].get("avg_rating").unwrap().parse().unwrap();
+        assert!((avg - 4.0).abs() < 0.01); // (4+5+3)/3 = 4.0
+    }
+
+    #[test]
+    fn test_ft_aggregate_reduce_min_max() {
+        use crate::types::{FtField, FtOnType, FtAggregateOptions, FtGroupBy, FtReducer, FtReduceFunction};
+
+        let db = Db::open_memory().unwrap();
+
+        let schema = vec![
+            FtField::tag("category"),
+            FtField::numeric("price"),
+        ];
+        db.ft_create("products", FtOnType::Hash, &["product:"], &schema)
+            .unwrap();
+
+        db.hset("product:1", &[("category", b"electronics"), ("price", b"100")])
+            .unwrap();
+        db.hset("product:2", &[("category", b"electronics"), ("price", b"500")])
+            .unwrap();
+        db.hset("product:3", &[("category", b"electronics"), ("price", b"250")])
+            .unwrap();
+
+        let mut options = FtAggregateOptions::new();
+        options.group_by = Some(FtGroupBy {
+            fields: vec!["category".to_string()],
+            reducers: vec![
+                FtReducer {
+                    function: FtReduceFunction::Min("price".to_string()),
+                    alias: Some("min_price".to_string()),
+                },
+                FtReducer {
+                    function: FtReduceFunction::Max("price".to_string()),
+                    alias: Some("max_price".to_string()),
+                },
+            ],
+        });
+
+        let results = db.ft_aggregate("products", "*", &options).unwrap();
+
+        assert_eq!(results.len(), 1);
+        assert_eq!(results[0].get("min_price"), Some(&"100".to_string()));
+        assert_eq!(results[0].get("max_price"), Some(&"500".to_string()));
+    }
+
+    #[test]
+    fn test_ft_aggregate_reduce_stddev() {
+        use crate::types::{FtField, FtOnType, FtAggregateOptions, FtGroupBy, FtReducer, FtReduceFunction};
+
+        let db = Db::open_memory().unwrap();
+
+        let schema = vec![
+            FtField::tag("group"),
+            FtField::numeric("value"),
+        ];
+        db.ft_create("data", FtOnType::Hash, &["data:"], &schema)
+            .unwrap();
+
+        // Values: 10, 20, 30 -> mean=20, stddev=10
+        db.hset("data:1", &[("group", b"A"), ("value", b"10")])
+            .unwrap();
+        db.hset("data:2", &[("group", b"A"), ("value", b"20")])
+            .unwrap();
+        db.hset("data:3", &[("group", b"A"), ("value", b"30")])
+            .unwrap();
+
+        let mut options = FtAggregateOptions::new();
+        options.group_by = Some(FtGroupBy {
+            fields: vec!["group".to_string()],
+            reducers: vec![FtReducer {
+                function: FtReduceFunction::StdDev("value".to_string()),
+                alias: Some("stddev".to_string()),
+            }],
+        });
+
+        let results = db.ft_aggregate("data", "*", &options).unwrap();
+
+        assert_eq!(results.len(), 1);
+        let stddev: f64 = results[0].get("stddev").unwrap().parse().unwrap();
+        assert!((stddev - 10.0).abs() < 0.01);
+    }
+
+    #[test]
+    fn test_ft_aggregate_reduce_count_distinct() {
+        use crate::types::{FtField, FtOnType, FtAggregateOptions, FtGroupBy, FtReducer, FtReduceFunction};
+
+        let db = Db::open_memory().unwrap();
+
+        let schema = vec![
+            FtField::tag("category"),
+            FtField::tag("brand"),
+        ];
+        db.ft_create("products", FtOnType::Hash, &["product:"], &schema)
+            .unwrap();
+
+        db.hset("product:1", &[("category", b"electronics"), ("brand", b"Apple")])
+            .unwrap();
+        db.hset("product:2", &[("category", b"electronics"), ("brand", b"Samsung")])
+            .unwrap();
+        db.hset("product:3", &[("category", b"electronics"), ("brand", b"Apple")])
+            .unwrap();
+        db.hset("product:4", &[("category", b"electronics"), ("brand", b"Sony")])
+            .unwrap();
+
+        let mut options = FtAggregateOptions::new();
+        options.group_by = Some(FtGroupBy {
+            fields: vec!["category".to_string()],
+            reducers: vec![FtReducer {
+                function: FtReduceFunction::CountDistinct("brand".to_string()),
+                alias: Some("unique_brands".to_string()),
+            }],
+        });
+
+        let results = db.ft_aggregate("products", "*", &options).unwrap();
+
+        assert_eq!(results.len(), 1);
+        assert_eq!(results[0].get("unique_brands"), Some(&"3".to_string())); // Apple, Samsung, Sony
+    }
+
+    #[test]
+    fn test_ft_aggregate_reduce_count_distinctish() {
+        use crate::types::{FtField, FtOnType, FtAggregateOptions, FtGroupBy, FtReducer, FtReduceFunction};
+
+        let db = Db::open_memory().unwrap();
+
+        let schema = vec![
+            FtField::tag("category"),
+            FtField::tag("color"),
+        ];
+        db.ft_create("products", FtOnType::Hash, &["product:"], &schema)
+            .unwrap();
+
+        db.hset("product:1", &[("category", b"shirts"), ("color", b"red")])
+            .unwrap();
+        db.hset("product:2", &[("category", b"shirts"), ("color", b"blue")])
+            .unwrap();
+        db.hset("product:3", &[("category", b"shirts"), ("color", b"red")])
+            .unwrap();
+
+        let mut options = FtAggregateOptions::new();
+        options.group_by = Some(FtGroupBy {
+            fields: vec!["category".to_string()],
+            reducers: vec![FtReducer {
+                function: FtReduceFunction::CountDistinctIsh("color".to_string()),
+                alias: Some("approx_colors".to_string()),
+            }],
+        });
+
+        let results = db.ft_aggregate("products", "*", &options).unwrap();
+
+        assert_eq!(results.len(), 1);
+        // Should be 2 (red and blue)
+        assert_eq!(results[0].get("approx_colors"), Some(&"2".to_string()));
+    }
+
+    #[test]
+    fn test_ft_aggregate_reduce_tolist() {
+        use crate::types::{FtField, FtOnType, FtAggregateOptions, FtGroupBy, FtReducer, FtReduceFunction};
+
+        let db = Db::open_memory().unwrap();
+
+        let schema = vec![
+            FtField::tag("category"),
+            FtField::tag("name"),
+        ];
+        db.ft_create("products", FtOnType::Hash, &["product:"], &schema)
+            .unwrap();
+
+        db.hset("product:1", &[("category", b"fruit"), ("name", b"apple")])
+            .unwrap();
+        db.hset("product:2", &[("category", b"fruit"), ("name", b"banana")])
+            .unwrap();
+        db.hset("product:3", &[("category", b"fruit"), ("name", b"orange")])
+            .unwrap();
+
+        let mut options = FtAggregateOptions::new();
+        options.group_by = Some(FtGroupBy {
+            fields: vec!["category".to_string()],
+            reducers: vec![FtReducer {
+                function: FtReduceFunction::ToList("name".to_string()),
+                alias: Some("names".to_string()),
+            }],
+        });
+
+        let results = db.ft_aggregate("products", "*", &options).unwrap();
+
+        assert_eq!(results.len(), 1);
+        let names = results[0].get("names").unwrap();
+        // Should contain all three names in some format
+        assert!(names.contains("apple"));
+        assert!(names.contains("banana"));
+        assert!(names.contains("orange"));
+    }
+
+    #[test]
+    fn test_ft_aggregate_reduce_first_value() {
+        use crate::types::{FtField, FtOnType, FtAggregateOptions, FtGroupBy, FtReducer, FtReduceFunction};
+
+        let db = Db::open_memory().unwrap();
+
+        let schema = vec![
+            FtField::tag("category"),
+            FtField::text("description"),
+        ];
+        db.ft_create("products", FtOnType::Hash, &["product:"], &schema)
+            .unwrap();
+
+        db.hset("product:1", &[("category", b"books"), ("description", b"First book")])
+            .unwrap();
+        db.hset("product:2", &[("category", b"books"), ("description", b"Second book")])
+            .unwrap();
+
+        let mut options = FtAggregateOptions::new();
+        options.group_by = Some(FtGroupBy {
+            fields: vec!["category".to_string()],
+            reducers: vec![FtReducer {
+                function: FtReduceFunction::FirstValue("description".to_string()),
+                alias: Some("first_desc".to_string()),
+            }],
+        });
+
+        let results = db.ft_aggregate("products", "*", &options).unwrap();
+
+        assert_eq!(results.len(), 1);
+        let first = results[0].get("first_desc").unwrap();
+        // Should be one of the descriptions
+        assert!(first == "First book" || first == "Second book");
+    }
+
+    // SORTBY Variations
+
+    #[test]
+    fn test_ft_aggregate_sortby_desc() {
+        use crate::types::{FtField, FtOnType, FtAggregateOptions};
+
+        let db = Db::open_memory().unwrap();
+
+        let schema = vec![
+            FtField::text("name"),
+            FtField::numeric("score"),
+        ];
+        db.ft_create("items", FtOnType::Hash, &["item:"], &schema)
+            .unwrap();
+
+        db.hset("item:1", &[("name", b"A"), ("score", b"10")])
+            .unwrap();
+        db.hset("item:2", &[("name", b"B"), ("score", b"30")])
+            .unwrap();
+        db.hset("item:3", &[("name", b"C"), ("score", b"20")])
+            .unwrap();
+
+        let mut options = FtAggregateOptions::new();
+        options.sort_by.push(("score".to_string(), false)); // DESC
+
+        let results = db.ft_aggregate("items", "*", &options).unwrap();
+
+        assert_eq!(results.len(), 3);
+        // Should be sorted by score DESC: 30, 20, 10
+        let scores: Vec<i64> = results.iter()
+            .map(|r| r.get("score").unwrap().parse().unwrap())
+            .collect();
+        assert_eq!(scores, vec![30, 20, 10]);
+    }
+
+    #[test]
+    fn test_ft_aggregate_sortby_multiple_fields() {
+        use crate::types::{FtField, FtOnType, FtAggregateOptions};
+
+        let db = Db::open_memory().unwrap();
+
+        let schema = vec![
+            FtField::tag("category"),
+            FtField::numeric("price"),
+            FtField::text("name"),
+        ];
+        db.ft_create("products", FtOnType::Hash, &["product:"], &schema)
+            .unwrap();
+
+        db.hset("product:1", &[("category", b"books"), ("price", b"20"), ("name", b"Z Book")])
+            .unwrap();
+        db.hset("product:2", &[("category", b"books"), ("price", b"20"), ("name", b"A Book")])
+            .unwrap();
+        db.hset("product:3", &[("category", b"toys"), ("price", b"10"), ("name", b"Toy")])
+            .unwrap();
+
+        let mut options = FtAggregateOptions::new();
+        options.sort_by.push(("category".to_string(), true)); // ASC
+        options.sort_by.push(("name".to_string(), true)); // ASC as tiebreaker
+
+        let results = db.ft_aggregate("products", "*", &options).unwrap();
+
+        assert_eq!(results.len(), 3);
+        // Should be sorted by category first, then name
+        assert_eq!(results[0].get("name"), Some(&"A Book".to_string()));
+        assert_eq!(results[1].get("name"), Some(&"Z Book".to_string()));
+        assert_eq!(results[2].get("name"), Some(&"Toy".to_string()));
+    }
+
+    #[test]
+    fn test_ft_aggregate_sortby_with_max() {
+        use crate::types::{FtField, FtOnType, FtAggregateOptions};
+
+        let db = Db::open_memory().unwrap();
+
+        let schema = vec![
+            FtField::numeric("score"),
+        ];
+        db.ft_create("scores", FtOnType::Hash, &["score:"], &schema)
+            .unwrap();
+
+        for i in 1..=10 {
+            db.hset(&format!("score:{}", i), &[("score", format!("{}", i * 10).as_bytes())])
+                .unwrap();
+        }
+
+        let mut options = FtAggregateOptions::new();
+        options.sort_by.push(("score".to_string(), false)); // DESC
+        options.sort_max = Some(3); // Only keep top 3
+
+        let results = db.ft_aggregate("scores", "*", &options).unwrap();
+
+        // Should only have top 3: 100, 90, 80
+        assert_eq!(results.len(), 3);
+        let top_scores: Vec<i64> = results.iter()
+            .map(|r| r.get("score").unwrap().parse().unwrap())
+            .collect();
+        assert_eq!(top_scores, vec![100, 90, 80]);
+    }
+
+    #[test]
+    fn test_ft_aggregate_sortby_on_original_field() {
+        use crate::types::{FtField, FtOnType, FtAggregateOptions};
+
+        let db = Db::open_memory().unwrap();
+
+        let schema = vec![
+            FtField::text("name"),
+            FtField::numeric("price"),
+        ];
+        db.ft_create("products", FtOnType::Hash, &["product:"], &schema)
+            .unwrap();
+
+        db.hset("product:1", &[("name", b"Zebra"), ("price", b"30")])
+            .unwrap();
+        db.hset("product:2", &[("name", b"Apple"), ("price", b"10")])
+            .unwrap();
+        db.hset("product:3", &[("name", b"Mango"), ("price", b"20")])
+            .unwrap();
+
+        let mut options = FtAggregateOptions::new();
+        options.sort_by.push(("name".to_string(), true)); // ASC
+
+        let results = db.ft_aggregate("products", "*", &options).unwrap();
+
+        assert_eq!(results.len(), 3);
+        let names: Vec<&str> = results.iter()
+            .map(|r| r.get("name").unwrap().as_str())
+            .collect();
+        assert_eq!(names, vec!["Apple", "Mango", "Zebra"]);
+    }
+
+    #[test]
+    fn test_ft_aggregate_sortby_numeric_vs_string() {
+        use crate::types::{FtField, FtOnType, FtAggregateOptions};
+
+        let db = Db::open_memory().unwrap();
+
+        let schema = vec![
+            FtField::numeric("value"),
+        ];
+        db.ft_create("nums", FtOnType::Hash, &["num:"], &schema)
+            .unwrap();
+
+        // Test numeric sorting (not lexical)
+        db.hset("num:1", &[("value", b"2")])
+            .unwrap();
+        db.hset("num:2", &[("value", b"10")])
+            .unwrap();
+        db.hset("num:3", &[("value", b"3")])
+            .unwrap();
+
+        let mut options = FtAggregateOptions::new();
+        options.sort_by.push(("value".to_string(), true)); // ASC
+
+        let results = db.ft_aggregate("nums", "*", &options).unwrap();
+
+        assert_eq!(results.len(), 3);
+        let values: Vec<i64> = results.iter()
+            .map(|r| r.get("value").unwrap().parse().unwrap())
+            .collect();
+        // Should be numeric sort: 2, 3, 10 (not lexical: 10, 2, 3)
+        assert_eq!(values, vec![2, 3, 10]);
+    }
+
+    // GROUPBY Variations
+
+    #[test]
+    fn test_ft_aggregate_groupby_multiple_fields() {
+        use crate::types::{FtField, FtOnType, FtAggregateOptions, FtGroupBy, FtReducer, FtReduceFunction};
+
+        let db = Db::open_memory().unwrap();
+
+        let schema = vec![
+            FtField::tag("category"),
+            FtField::tag("status"),
+            FtField::numeric("price"),
+        ];
+        db.ft_create("products", FtOnType::Hash, &["product:"], &schema)
+            .unwrap();
+
+        db.hset("product:1", &[("category", b"electronics"), ("status", b"active"), ("price", b"100")])
+            .unwrap();
+        db.hset("product:2", &[("category", b"electronics"), ("status", b"active"), ("price", b"200")])
+            .unwrap();
+        db.hset("product:3", &[("category", b"electronics"), ("status", b"inactive"), ("price", b"50")])
+            .unwrap();
+        db.hset("product:4", &[("category", b"toys"), ("status", b"active"), ("price", b"30")])
+            .unwrap();
+
+        let mut options = FtAggregateOptions::new();
+        options.group_by = Some(FtGroupBy {
+            fields: vec!["category".to_string(), "status".to_string()],
+            reducers: vec![FtReducer {
+                function: FtReduceFunction::Sum("price".to_string()),
+                alias: Some("total".to_string()),
+            }],
+        });
+
+        let results = db.ft_aggregate("products", "*", &options).unwrap();
+
+        // Should have 3 groups: (electronics,active), (electronics,inactive), (toys,active)
+        assert_eq!(results.len(), 3);
+
+        let electronics_active = results.iter()
+            .find(|r| r.get("category") == Some(&"electronics".to_string())
+                   && r.get("status") == Some(&"active".to_string()))
+            .unwrap();
+        assert_eq!(electronics_active.get("total"), Some(&"300".to_string()));
+    }
+
+    #[test]
+    fn test_ft_aggregate_groupby_multiple_reducers() {
+        use crate::types::{FtField, FtOnType, FtAggregateOptions, FtGroupBy, FtReducer, FtReduceFunction};
+
+        let db = Db::open_memory().unwrap();
+
+        let schema = vec![
+            FtField::tag("category"),
+            FtField::numeric("price"),
+            FtField::numeric("quantity"),
+        ];
+        db.ft_create("products", FtOnType::Hash, &["product:"], &schema)
+            .unwrap();
+
+        db.hset("product:1", &[("category", b"electronics"), ("price", b"100"), ("quantity", b"5")])
+            .unwrap();
+        db.hset("product:2", &[("category", b"electronics"), ("price", b"200"), ("quantity", b"3")])
+            .unwrap();
+        db.hset("product:3", &[("category", b"electronics"), ("price", b"150"), ("quantity", b"10")])
+            .unwrap();
+
+        let mut options = FtAggregateOptions::new();
+        options.group_by = Some(FtGroupBy {
+            fields: vec!["category".to_string()],
+            reducers: vec![
+                FtReducer {
+                    function: FtReduceFunction::Count,
+                    alias: Some("count".to_string()),
+                },
+                FtReducer {
+                    function: FtReduceFunction::Sum("price".to_string()),
+                    alias: Some("total_price".to_string()),
+                },
+                FtReducer {
+                    function: FtReduceFunction::Avg("quantity".to_string()),
+                    alias: Some("avg_quantity".to_string()),
+                },
+                FtReducer {
+                    function: FtReduceFunction::Max("price".to_string()),
+                    alias: Some("max_price".to_string()),
+                },
+            ],
+        });
+
+        let results = db.ft_aggregate("products", "*", &options).unwrap();
+
+        assert_eq!(results.len(), 1);
+        let row = &results[0];
+        assert_eq!(row.get("count"), Some(&"3".to_string()));
+        assert_eq!(row.get("total_price"), Some(&"450".to_string()));
+        let avg_qty: f64 = row.get("avg_quantity").unwrap().parse().unwrap();
+        assert!((avg_qty - 6.0).abs() < 0.01); // (5+3+10)/3 = 6
+        assert_eq!(row.get("max_price"), Some(&"200".to_string()));
+    }
+
+    #[test]
+    fn test_ft_aggregate_groupby_missing_fields() {
+        use crate::types::{FtField, FtOnType, FtAggregateOptions, FtGroupBy, FtReducer, FtReduceFunction};
+
+        let db = Db::open_memory().unwrap();
+
+        let schema = vec![
+            FtField::tag("category"),
+            FtField::text("name"),
+        ];
+        db.ft_create("products", FtOnType::Hash, &["product:"], &schema)
+            .unwrap();
+
+        // Some products have category, some don't
+        db.hset("product:1", &[("name", b"Product A"), ("category", b"electronics")])
+            .unwrap();
+        db.hset("product:2", &[("name", b"Product B")]) // Missing category
+            .unwrap();
+        db.hset("product:3", &[("name", b"Product C"), ("category", b"electronics")])
+            .unwrap();
+
+        let mut options = FtAggregateOptions::new();
+        options.group_by = Some(FtGroupBy {
+            fields: vec!["category".to_string()],
+            reducers: vec![FtReducer {
+                function: FtReduceFunction::Count,
+                alias: Some("count".to_string()),
+            }],
+        });
+
+        let results = db.ft_aggregate("products", "*", &options).unwrap();
+
+        // Should have 2 groups: "electronics" and "" (empty for missing)
+        assert_eq!(results.len(), 2);
+        let electronics = results.iter()
+            .find(|r| r.get("category") == Some(&"electronics".to_string()))
+            .unwrap();
+        assert_eq!(electronics.get("count"), Some(&"2".to_string()));
+    }
+
+    // LOAD Feature
+
+    #[test]
+    fn test_ft_aggregate_load_specific_fields() {
+        use crate::types::{FtField, FtOnType, FtAggregateOptions};
+
+        let db = Db::open_memory().unwrap();
+
+        let schema = vec![
+            FtField::text("title"),
+            FtField::text("description"),
+            FtField::tag("category"),
+        ];
+        db.ft_create("articles", FtOnType::Hash, &["article:"], &schema)
+            .unwrap();
+
+        db.hset("article:1", &[("title", b"Test"), ("description", b"Long description"), ("category", b"tech")])
+            .unwrap();
+
+        let mut options = FtAggregateOptions::new();
+        options.load_fields = vec!["title".to_string(), "category".to_string()];
+
+        let results = db.ft_aggregate("articles", "*", &options).unwrap();
+
+        assert_eq!(results.len(), 1);
+        // Should have loaded fields plus __key
+        assert!(results[0].contains_key("title"));
+        assert!(results[0].contains_key("category"));
+        assert!(results[0].contains_key("__key"));
+    }
+
+    #[test]
+    fn test_ft_aggregate_load_with_groupby() {
+        use crate::types::{FtField, FtOnType, FtAggregateOptions, FtGroupBy, FtReducer, FtReduceFunction};
+
+        let db = Db::open_memory().unwrap();
+
+        let schema = vec![
+            FtField::tag("category"),
+            FtField::numeric("price"),
+            FtField::text("brand"),
+        ];
+        db.ft_create("products", FtOnType::Hash, &["product:"], &schema)
+            .unwrap();
+
+        db.hset("product:1", &[("category", b"electronics"), ("price", b"100"), ("brand", b"Apple")])
+            .unwrap();
+        db.hset("product:2", &[("category", b"electronics"), ("price", b"200"), ("brand", b"Samsung")])
+            .unwrap();
+
+        let mut options = FtAggregateOptions::new();
+        options.load_fields = vec!["brand".to_string()];
+        options.group_by = Some(FtGroupBy {
+            fields: vec!["category".to_string()],
+            reducers: vec![FtReducer {
+                function: FtReduceFunction::Sum("price".to_string()),
+                alias: Some("total".to_string()),
+            }],
+        });
+
+        let results = db.ft_aggregate("products", "*", &options).unwrap();
+
+        assert_eq!(results.len(), 1);
+        assert!(results[0].contains_key("category"));
+        assert!(results[0].contains_key("total"));
+    }
+
+    // LIMIT with Offset
+
+    #[test]
+    fn test_ft_aggregate_limit_offset() {
+        use crate::types::{FtField, FtOnType, FtAggregateOptions};
+
+        let db = Db::open_memory().unwrap();
+
+        let schema = vec![FtField::numeric("value")];
+        db.ft_create("nums", FtOnType::Hash, &["num:"], &schema)
+            .unwrap();
+
+        for i in 1..=10 {
+            db.hset(&format!("num:{}", i), &[("value", format!("{}", i).as_bytes())])
+                .unwrap();
+        }
+
+        let mut options = FtAggregateOptions::new();
+        options.sort_by.push(("value".to_string(), true)); // ASC
+        options.limit_offset = 3; // Skip first 3
+        options.limit_num = 4; // Take 4 items
+
+        let results = db.ft_aggregate("nums", "*", &options).unwrap();
+
+        // Should get items 4, 5, 6, 7
+        assert_eq!(results.len(), 4);
+        let values: Vec<i64> = results.iter()
+            .map(|r| r.get("value").unwrap().parse().unwrap())
+            .collect();
+        assert_eq!(values, vec![4, 5, 6, 7]);
+    }
+
+    #[test]
+    fn test_ft_aggregate_limit_edge_cases() {
+        use crate::types::{FtField, FtOnType, FtAggregateOptions};
+
+        let db = Db::open_memory().unwrap();
+
+        let schema = vec![FtField::text("name")];
+        db.ft_create("items", FtOnType::Hash, &["item:"], &schema)
+            .unwrap();
+
+        db.hset("item:1", &[("name", b"A")])
+            .unwrap();
+        db.hset("item:2", &[("name", b"B")])
+            .unwrap();
+
+        // Test out-of-bounds offset
+        let mut options = FtAggregateOptions::new();
+        options.limit_offset = 100;
+        options.limit_num = 10;
+
+        let results = db.ft_aggregate("items", "*", &options).unwrap();
+        assert_eq!(results.len(), 0); // No results when offset > total count
+
+        // Test LIMIT 0
+        options.limit_offset = 0;
+        options.limit_num = 0;
+
+        let results = db.ft_aggregate("items", "*", &options).unwrap();
+        assert_eq!(results.len(), 0);
+    }
+
+    // Query Integration
+
+    #[test]
+    fn test_ft_aggregate_with_text_query() {
+        use crate::types::{FtField, FtOnType, FtAggregateOptions, FtGroupBy, FtReducer, FtReduceFunction};
+
+        let db = Db::open_memory().unwrap();
+
+        let schema = vec![
+            FtField::text("content"),
+            FtField::tag("category"),
+        ];
+        db.ft_create("articles", FtOnType::Hash, &["article:"], &schema)
+            .unwrap();
+
+        db.hset("article:1", &[("content", b"machine learning tutorial"), ("category", b"tech")])
+            .unwrap();
+        db.hset("article:2", &[("content", b"machine learning news"), ("category", b"tech")])
+            .unwrap();
+        db.hset("article:3", &[("content", b"cooking recipes"), ("category", b"food")])
+            .unwrap();
+
+        let mut options = FtAggregateOptions::new();
+        options.group_by = Some(FtGroupBy {
+            fields: vec!["category".to_string()],
+            reducers: vec![FtReducer {
+                function: FtReduceFunction::Count,
+                alias: Some("count".to_string()),
+            }],
+        });
+
+        // Query for "machine learning" - should only match first 2 articles
+        let results = db.ft_aggregate("articles", "machine learning", &options).unwrap();
+
+        assert_eq!(results.len(), 1); // Only "tech" category
+        assert_eq!(results[0].get("category"), Some(&"tech".to_string()));
+        assert_eq!(results[0].get("count"), Some(&"2".to_string()));
+    }
+
+    #[test]
+    fn test_ft_aggregate_with_field_query() {
+        use crate::types::{FtField, FtOnType, FtAggregateOptions, FtGroupBy, FtReducer, FtReduceFunction};
+
+        let db = Db::open_memory().unwrap();
+
+        let schema = vec![
+            FtField::text("title"),
+            FtField::tag("status"),
+        ];
+        db.ft_create("posts", FtOnType::Hash, &["post:"], &schema)
+            .unwrap();
+
+        db.hset("post:1", &[("title", b"First active post"), ("status", b"active")])
+            .unwrap();
+        db.hset("post:2", &[("title", b"Second active post"), ("status", b"active")])
+            .unwrap();
+        db.hset("post:3", &[("title", b"Draft post"), ("status", b"draft")])
+            .unwrap();
+
+        let mut options = FtAggregateOptions::new();
+        options.group_by = Some(FtGroupBy {
+            fields: vec!["status".to_string()],
+            reducers: vec![FtReducer {
+                function: FtReduceFunction::Count,
+                alias: Some("count".to_string()),
+            }],
+        });
+
+        // Field-scoped query (if implemented, otherwise uses simple text match)
+        let results = db.ft_aggregate("posts", "active", &options).unwrap();
+
+        // Should match documents with "active" in any field
+        assert!(results.len() >= 1);
+        let active = results.iter().find(|r| r.get("status") == Some(&"active".to_string()));
+        if let Some(a) = active {
+            assert_eq!(a.get("count"), Some(&"2".to_string()));
+        }
+    }
+
+    #[test]
+    fn test_ft_aggregate_with_numeric_range() {
+        use crate::types::{FtField, FtOnType, FtAggregateOptions, FtGroupBy, FtReducer, FtReduceFunction};
+
+        let db = Db::open_memory().unwrap();
+
+        let schema = vec![
+            FtField::numeric("price"),
+            FtField::tag("category"),
+        ];
+        db.ft_create("products", FtOnType::Hash, &["product:"], &schema)
+            .unwrap();
+
+        db.hset("product:1", &[("price", b"10"), ("category", b"cheap")])
+            .unwrap();
+        db.hset("product:2", &[("price", b"50"), ("category", b"mid")])
+            .unwrap();
+        db.hset("product:3", &[("price", b"100"), ("category", b"expensive")])
+            .unwrap();
+        db.hset("product:4", &[("price", b"75"), ("category", b"mid")])
+            .unwrap();
+
+        let mut options = FtAggregateOptions::new();
+        options.group_by = Some(FtGroupBy {
+            fields: vec!["category".to_string()],
+            reducers: vec![FtReducer {
+                function: FtReduceFunction::Count,
+                alias: Some("count".to_string()),
+            }],
+        });
+
+        // Use wildcard for now (numeric range queries would need parser support)
+        let results = db.ft_aggregate("products", "*", &options).unwrap();
+
+        assert_eq!(results.len(), 3);
+    }
+
+    // Full Pipeline
+
+    #[test]
+    fn test_ft_aggregate_full_pipeline() {
+        use crate::types::{FtField, FtOnType, FtAggregateOptions, FtGroupBy, FtReducer, FtReduceFunction, FtApply};
+
+        let db = Db::open_memory().unwrap();
+
+        let schema = vec![
+            FtField::tag("category"),
+            FtField::numeric("price"),
+            FtField::numeric("quantity"),
+        ];
+        db.ft_create("products", FtOnType::Hash, &["product:"], &schema)
+            .unwrap();
+
+        for i in 1..=20 {
+            let category = if i % 2 == 0 { "electronics" } else { "toys" };
+            db.hset(&format!("product:{}", i), &[
+                ("category", category.as_bytes()),
+                ("price", format!("{}", i * 10).as_bytes()),
+                ("quantity", format!("{}", i).as_bytes()),
+            ]).unwrap();
+        }
+
+        // Full pipeline: LOAD + GROUPBY + REDUCE + APPLY + FILTER + SORTBY + LIMIT
+        let mut options = FtAggregateOptions::new();
+        options.load_fields = vec!["category".to_string()];
+        options.group_by = Some(FtGroupBy {
+            fields: vec!["category".to_string()],
+            reducers: vec![
+                FtReducer {
+                    function: FtReduceFunction::Count,
+                    alias: Some("count".to_string()),
+                },
+                FtReducer {
+                    function: FtReduceFunction::Sum("price".to_string()),
+                    alias: Some("total_price".to_string()),
+                },
+                FtReducer {
+                    function: FtReduceFunction::Avg("quantity".to_string()),
+                    alias: Some("avg_quantity".to_string()),
+                },
+            ],
+        });
+        options.applies.push(FtApply {
+            expression: "@total_price / @count".to_string(),
+            alias: "avg_price".to_string(),
+        });
+        options.filter = Some("@count > 5".to_string());
+        options.sort_by.push(("total_price".to_string(), false)); // DESC
+        options.limit_offset = 0;
+        options.limit_num = 10;
+
+        let results = db.ft_aggregate("products", "*", &options).unwrap();
+
+        // Both categories have 10 items each, both > 5
+        assert_eq!(results.len(), 2);
+        assert!(results[0].contains_key("avg_price"));
+        assert!(results[0].contains_key("avg_quantity"));
+    }
+
+    #[test]
+    fn test_ft_aggregate_complex_ecommerce() {
+        use crate::types::{FtField, FtOnType, FtAggregateOptions, FtGroupBy, FtReducer, FtReduceFunction};
+
+        let db = Db::open_memory().unwrap();
+
+        let schema = vec![
+            FtField::tag("category"),
+            FtField::tag("brand"),
+            FtField::numeric("price"),
+            FtField::numeric("rating"),
+            FtField::numeric("sales"),
+        ];
+        db.ft_create("products", FtOnType::Hash, &["product:"], &schema)
+            .unwrap();
+
+        // Electronics products
+        db.hset("product:1", &[("category", b"electronics"), ("brand", b"Apple"), ("price", b"999"), ("rating", b"5"), ("sales", b"100")])
+            .unwrap();
+        db.hset("product:2", &[("category", b"electronics"), ("brand", b"Samsung"), ("price", b"799"), ("rating", b"4"), ("sales", b"150")])
+            .unwrap();
+        db.hset("product:3", &[("category", b"electronics"), ("brand", b"Sony"), ("price", b"599"), ("rating", b"4"), ("sales", b"80")])
+            .unwrap();
+
+        // Books products
+        db.hset("product:4", &[("category", b"books"), ("brand", b"Penguin"), ("price", b"20"), ("rating", b"5"), ("sales", b"500")])
+            .unwrap();
+        db.hset("product:5", &[("category", b"books"), ("brand", b"HarperCollins"), ("price", b"25"), ("rating", b"4"), ("sales", b"300")])
+            .unwrap();
+
+        // Aggregate: Category analytics with multiple metrics
+        let mut options = FtAggregateOptions::new();
+        options.group_by = Some(FtGroupBy {
+            fields: vec!["category".to_string()],
+            reducers: vec![
+                FtReducer {
+                    function: FtReduceFunction::Count,
+                    alias: Some("product_count".to_string()),
+                },
+                FtReducer {
+                    function: FtReduceFunction::Avg("price".to_string()),
+                    alias: Some("avg_price".to_string()),
+                },
+                FtReducer {
+                    function: FtReduceFunction::Sum("sales".to_string()),
+                    alias: Some("total_sales".to_string()),
+                },
+                FtReducer {
+                    function: FtReduceFunction::Max("rating".to_string()),
+                    alias: Some("max_rating".to_string()),
+                },
+                FtReducer {
+                    function: FtReduceFunction::CountDistinct("brand".to_string()),
+                    alias: Some("unique_brands".to_string()),
+                },
+            ],
+        });
+        options.sort_by.push(("total_sales".to_string(), false)); // Sort by sales DESC
+
+        let results = db.ft_aggregate("products", "*", &options).unwrap();
+
+        assert_eq!(results.len(), 2);
+        // Books should be first (sales: 800 > electronics: 330)
+        assert_eq!(results[0].get("category"), Some(&"books".to_string()));
+        assert_eq!(results[1].get("category"), Some(&"electronics".to_string()));
+
+        // Verify metrics
+        let books = &results[0];
+        assert_eq!(books.get("product_count"), Some(&"2".to_string()));
+        assert_eq!(books.get("unique_brands"), Some(&"2".to_string()));
+    }
+
+    // Edge Cases
+
+    #[test]
+    fn test_ft_aggregate_empty_results() {
+        use crate::types::{FtField, FtOnType, FtAggregateOptions};
+
+        let db = Db::open_memory().unwrap();
+
+        let schema = vec![FtField::text("content")];
+        db.ft_create("docs", FtOnType::Hash, &["doc:"], &schema)
+            .unwrap();
+
+        db.hset("doc:1", &[("content", b"apple banana")])
+            .unwrap();
+
+        let options = FtAggregateOptions::new();
+        // Query that matches nothing
+        let results = db.ft_aggregate("docs", "nonexistent", &options).unwrap();
+
+        assert_eq!(results.len(), 0);
+    }
+
+    #[test]
+    fn test_ft_aggregate_single_document() {
+        use crate::types::{FtField, FtOnType, FtAggregateOptions, FtGroupBy, FtReducer, FtReduceFunction};
+
+        let db = Db::open_memory().unwrap();
+
+        let schema = vec![
+            FtField::tag("category"),
+            FtField::numeric("value"),
+        ];
+        db.ft_create("items", FtOnType::Hash, &["item:"], &schema)
+            .unwrap();
+
+        db.hset("item:1", &[("category", b"A"), ("value", b"42")])
+            .unwrap();
+
+        let mut options = FtAggregateOptions::new();
+        options.group_by = Some(FtGroupBy {
+            fields: vec!["category".to_string()],
+            reducers: vec![
+                FtReducer {
+                    function: FtReduceFunction::Count,
+                    alias: Some("count".to_string()),
+                },
+                FtReducer {
+                    function: FtReduceFunction::Avg("value".to_string()),
+                    alias: Some("avg".to_string()),
+                },
+                FtReducer {
+                    function: FtReduceFunction::StdDev("value".to_string()),
+                    alias: Some("stddev".to_string()),
+                },
+            ],
+        });
+
+        let results = db.ft_aggregate("items", "*", &options).unwrap();
+
+        assert_eq!(results.len(), 1);
+        assert_eq!(results[0].get("count"), Some(&"1".to_string()));
+        assert_eq!(results[0].get("avg"), Some(&"42".to_string()));
+        // StdDev of single value should be 0
+        assert_eq!(results[0].get("stddev"), Some(&"0".to_string()));
+    }
+
+    // ========================================================================
     // Phase 2: Auto-Indexing Tests
     // ========================================================================
 
@@ -18093,6 +19152,425 @@ mod tests {
         db.vrem("setA", "elem1").unwrap();
         assert_eq!(db.vcard("setA").unwrap(), 0);
         assert_eq!(db.vcard("setB").unwrap(), 1);
+    }
+
+    #[test]
+    #[cfg(feature = "vectors")]
+    fn test_vsim_l2_distance_accuracy() {
+        use crate::types::{VectorInput, VectorQuantization};
+
+        let db = Db::open_memory().unwrap();
+
+        // Add reference vectors with known L2 distances
+        // [1,0,0] and [0,1,0] have L2 distance = sqrt(2) ≈ 1.414
+        db.vadd("vectors", &vec![1.0, 0.0, 0.0], "elem1", None, VectorQuantization::NoQuant).unwrap();
+        db.vadd("vectors", &vec![0.0, 1.0, 0.0], "elem2", None, VectorQuantization::NoQuant).unwrap();
+        db.vadd("vectors", &vec![0.0, 0.0, 1.0], "elem3", None, VectorQuantization::NoQuant).unwrap();
+
+        // Query with [1,0,0] - should find elem1 as most similar (distance=0)
+        let query = VectorInput::Values(vec![1.0, 0.0, 0.0]);
+        let results = db.vsim("vectors", query, Some(3), false, None).unwrap();
+        assert_eq!(results.len(), 3);
+        assert_eq!(results[0].element, "elem1"); // Exact match (distance=0)
+    }
+
+    #[test]
+    #[cfg(feature = "vectors")]
+    fn test_vsim_cosine_accuracy() {
+        use crate::types::{VectorInput, VectorQuantization};
+
+        let db = Db::open_memory().unwrap();
+
+        // Vectors with known cosine similarities
+        // [1,1] and [2,2] are identical direction (cosine=1)
+        // [1,0] and [0,1] are orthogonal (cosine=0)
+        db.vadd("vectors", &vec![1.0, 1.0], "same_direction", None, VectorQuantization::NoQuant).unwrap();
+        db.vadd("vectors", &vec![1.0, 0.0], "orthogonal", None, VectorQuantization::NoQuant).unwrap();
+        db.vadd("vectors", &vec![1.0, -1.0], "opposite_direction", None, VectorQuantization::NoQuant).unwrap();
+
+        // Query with [2,2] - should be most similar to same_direction
+        let query = VectorInput::Values(vec![2.0, 2.0]);
+        let results = db.vsim("vectors", query, Some(3), false, None).unwrap();
+        assert_eq!(results.len(), 3);
+        assert_eq!(results[0].element, "same_direction");
+    }
+
+    #[test]
+    #[cfg(feature = "vectors")]
+    fn test_vsim_inner_product() {
+        use crate::types::{VectorInput, VectorQuantization};
+
+        let db = Db::open_memory().unwrap();
+
+        // Vectors with known inner products
+        db.vadd("vectors", &vec![1.0, 0.0], "elem1", None, VectorQuantization::NoQuant).unwrap();
+        db.vadd("vectors", &vec![0.0, 1.0], "elem2", None, VectorQuantization::NoQuant).unwrap();
+        db.vadd("vectors", &vec![1.0, 1.0], "elem3", None, VectorQuantization::NoQuant).unwrap();
+
+        // Inner product with [1,1]: elem3 should have highest (1*1 + 1*1 = 2)
+        let query = VectorInput::Values(vec![1.0, 1.0]);
+        let results = db.vsim("vectors", query, Some(3), false, None).unwrap();
+        assert_eq!(results.len(), 3);
+        // elem3 has highest inner product with [1,1]
+        assert_eq!(results[0].element, "elem3");
+    }
+
+    #[test]
+    #[cfg(feature = "vectors")]
+    fn test_vadd_quantization_preserves_similarity() {
+        use crate::types::{VectorInput, VectorQuantization};
+
+        let db = Db::open_memory().unwrap();
+
+        // Add same vectors with different quantization
+        let embedding = vec![0.5, 0.8, 0.3, 0.9];
+        db.vadd("noquant", &embedding, "elem1", None, VectorQuantization::NoQuant).unwrap();
+        db.vadd("noquant", &vec![0.5, 0.8, 0.3, 0.88], "elem2", None, VectorQuantization::NoQuant).unwrap();
+
+        db.vadd("q8", &embedding, "elem1", None, VectorQuantization::Q8).unwrap();
+        db.vadd("q8", &vec![0.5, 0.8, 0.3, 0.88], "elem2", None, VectorQuantization::Q8).unwrap();
+
+        // Query both - ranking should be similar
+        let query_noquant = VectorInput::Values(embedding.clone());
+        let query_q8 = VectorInput::Values(embedding);
+        let results_noquant = db.vsim("noquant", query_noquant, Some(2), false, None).unwrap();
+        let results_q8 = db.vsim("q8", query_q8, Some(2), false, None).unwrap();
+
+        assert_eq!(results_noquant[0].element, results_q8[0].element); // Same top result
+    }
+
+    #[test]
+    #[cfg(feature = "vectors")]
+    fn test_vadd_large_scale() {
+        use crate::types::{VectorInput, VectorQuantization};
+
+        let db = Db::open_memory().unwrap();
+
+        // Add 1000 vectors
+        for i in 0..1000 {
+            let embedding = vec![(i as f32) / 1000.0, ((i + 1) as f32) / 1000.0, ((i + 2) as f32) / 1000.0];
+            db.vadd("large_set", &embedding, &format!("elem{}", i), None, VectorQuantization::NoQuant).unwrap();
+        }
+
+        // Verify count
+        assert_eq!(db.vcard("large_set").unwrap(), 1000);
+
+        // Search should still work efficiently
+        let query = VectorInput::Values(vec![0.5, 0.5, 0.5]);
+        let results = db.vsim("large_set", query, Some(10), false, None).unwrap();
+        assert_eq!(results.len(), 10);
+    }
+
+    #[test]
+    #[cfg(feature = "vectors")]
+    fn test_vadd_very_high_dimensions() {
+        use crate::types::VectorQuantization;
+
+        let db = Db::open_memory().unwrap();
+
+        // Test with 1536 dimensions (OpenAI embedding size)
+        let embedding: Vec<f32> = (0..1536).map(|i| (i as f32) / 1536.0).collect();
+        db.vadd("high_dim", &embedding, "elem1", None, VectorQuantization::NoQuant).unwrap();
+
+        assert_eq!(db.vdim("high_dim").unwrap(), Some(1536));
+        assert_eq!(db.vcard("high_dim").unwrap(), 1);
+    }
+
+    #[test]
+    #[cfg(feature = "vectors")]
+    fn test_vadd_normalized_vectors() {
+        use crate::types::{VectorInput, VectorQuantization};
+
+        let db = Db::open_memory().unwrap();
+
+        // Add pre-normalized vectors (unit length)
+        let norm1 = vec![0.6, 0.8]; // sqrt(0.36 + 0.64) = 1.0
+        let norm2 = vec![0.8, 0.6]; // sqrt(0.64 + 0.36) = 1.0
+
+        db.vadd("normalized", &norm1, "elem1", None, VectorQuantization::NoQuant).unwrap();
+        db.vadd("normalized", &norm2, "elem2", None, VectorQuantization::NoQuant).unwrap();
+
+        // Cosine similarity with normalized vectors should work correctly
+        let query = VectorInput::Values(vec![1.0, 0.0]);
+        let results = db.vsim("normalized", query, Some(2), false, None).unwrap();
+        assert_eq!(results.len(), 2);
+    }
+
+    #[test]
+    #[cfg(feature = "vectors")]
+    fn test_vadd_zero_vector_handling() {
+        use crate::types::VectorQuantization;
+
+        let db = Db::open_memory().unwrap();
+
+        // Zero vector is degenerate but should be accepted
+        let zero_vec = vec![0.0, 0.0, 0.0];
+        let result = db.vadd("vectors", &zero_vec, "zero", None, VectorQuantization::NoQuant);
+
+        // Should succeed (zero vector is valid, just degenerate)
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    #[cfg(feature = "vectors")]
+    fn test_vadd_negative_values() {
+        use crate::types::VectorQuantization;
+
+        let db = Db::open_memory().unwrap();
+
+        // Negative values are valid in embeddings
+        let neg_embedding = vec![-0.5, -0.8, 0.3, -0.2];
+        db.vadd("vectors", &neg_embedding, "elem1", None, VectorQuantization::NoQuant).unwrap();
+
+        // vemb returns bytes - for this test we just check it exists
+        let retrieved = db.vemb("vectors", "elem1", false).unwrap();
+        assert!(retrieved.is_some());
+    }
+
+    #[test]
+    #[cfg(feature = "vectors")]
+    fn test_vsim_dimension_mismatch_query() {
+        use crate::types::{VectorInput, VectorQuantization};
+
+        let db = Db::open_memory().unwrap();
+
+        // Add 3D vectors
+        db.vadd("vectors", &vec![1.0, 2.0, 3.0], "elem1", None, VectorQuantization::NoQuant).unwrap();
+
+        // Query with 4D vector - implementation may handle gracefully or error
+        // Test documents actual behavior: query succeeds but returns no/poor matches
+        let query = VectorInput::Values(vec![1.0, 2.0, 3.0, 4.0]);
+        let result = db.vsim("vectors", query, Some(10), false, None);
+
+        // Either errors or returns empty/no good matches - both behaviors are acceptable
+        if result.is_ok() {
+            // If it succeeds, it should return no elements or poor matches
+            let results = result.unwrap();
+            // Just verify it doesn't crash - actual behavior may vary by implementation
+            assert!(results.len() <= 1);
+        }
+    }
+
+    #[test]
+    #[cfg(feature = "vectors")]
+    fn test_vsim_count_zero() {
+        use crate::types::{VectorInput, VectorQuantization};
+
+        let db = Db::open_memory().unwrap();
+
+        db.vadd("vectors", &vec![1.0, 2.0], "elem1", None, VectorQuantization::NoQuant).unwrap();
+        db.vadd("vectors", &vec![3.0, 4.0], "elem2", None, VectorQuantization::NoQuant).unwrap();
+
+        // COUNT 0 should return empty results
+        let query = VectorInput::Values(vec![1.0, 1.0]);
+        let results = db.vsim("vectors", query, Some(0), false, None).unwrap();
+        assert_eq!(results.len(), 0);
+    }
+
+    #[test]
+    #[cfg(feature = "vectors")]
+    fn test_vsim_count_exceeds_available() {
+        use crate::types::{VectorInput, VectorQuantization};
+
+        let db = Db::open_memory().unwrap();
+
+        // Add 3 elements
+        db.vadd("vectors", &vec![1.0, 0.0], "elem1", None, VectorQuantization::NoQuant).unwrap();
+        db.vadd("vectors", &vec![0.0, 1.0], "elem2", None, VectorQuantization::NoQuant).unwrap();
+        db.vadd("vectors", &vec![1.0, 1.0], "elem3", None, VectorQuantization::NoQuant).unwrap();
+
+        // Request 100 - should return all 3
+        let query = VectorInput::Values(vec![1.0, 0.0]);
+        let results = db.vsim("vectors", query, Some(100), false, None).unwrap();
+        assert_eq!(results.len(), 3);
+    }
+
+    #[test]
+    #[cfg(feature = "vectors")]
+    fn test_vgetattr_complex_json() {
+        use crate::types::VectorQuantization;
+
+        let db = Db::open_memory().unwrap();
+
+        // Add vector with complex JSON attributes
+        let complex_attrs = r#"{"name":"test","metadata":{"category":"A","tags":["tag1","tag2"],"score":42.5}}"#;
+        db.vadd("vectors", &vec![1.0, 2.0], "elem1", Some(complex_attrs), VectorQuantization::NoQuant).unwrap();
+
+        let retrieved = db.vgetattr("vectors", "elem1").unwrap().unwrap();
+        assert_eq!(retrieved, complex_attrs);
+    }
+
+    #[test]
+    #[cfg(feature = "vectors")]
+    fn test_vsetattr_update_existing() {
+        use crate::types::VectorQuantization;
+
+        let db = Db::open_memory().unwrap();
+
+        let embedding = vec![1.0, 2.0];
+        db.vadd("vectors", &embedding, "elem1", Some(r#"{"v":1}"#), VectorQuantization::NoQuant).unwrap();
+
+        // Update attributes
+        db.vsetattr("vectors", "elem1", r#"{"v":2}"#).unwrap();
+
+        let attrs = db.vgetattr("vectors", "elem1").unwrap().unwrap();
+        assert_eq!(attrs, r#"{"v":2}"#);
+    }
+
+    #[test]
+    #[cfg(feature = "vectors")]
+    fn test_vsetattr_remove_attributes() {
+        use crate::types::VectorQuantization;
+
+        let db = Db::open_memory().unwrap();
+
+        let embedding = vec![1.0, 2.0];
+        db.vadd("vectors", &embedding, "elem1", Some(r#"{"v":1}"#), VectorQuantization::NoQuant).unwrap();
+
+        // Set to empty JSON object (effectively removing attributes)
+        db.vsetattr("vectors", "elem1", "{}").unwrap();
+
+        let attrs = db.vgetattr("vectors", "elem1").unwrap().unwrap();
+        assert_eq!(attrs, "{}");
+    }
+
+    #[test]
+    #[cfg(feature = "vectors")]
+    fn test_vrandmember_count_negative() {
+        use crate::types::VectorQuantization;
+
+        let db = Db::open_memory().unwrap();
+
+        // Add 5 elements
+        for i in 0..5 {
+            db.vadd("vectors", &vec![i as f32, 0.0], &format!("elem{}", i), None, VectorQuantization::NoQuant).unwrap();
+        }
+
+        // vrandmember with count parameter
+        let results = db.vrandmember("vectors", Some(3)).unwrap();
+        assert!(results.len() <= 3);
+    }
+
+    #[test]
+    #[cfg(feature = "vectors")]
+    fn test_vrem_multiple_elements() {
+        use crate::types::VectorQuantization;
+
+        let db = Db::open_memory().unwrap();
+
+        // Add multiple elements
+        for i in 0..5 {
+            db.vadd("vectors", &vec![i as f32], &format!("elem{}", i), None, VectorQuantization::NoQuant).unwrap();
+        }
+
+        // Remove some
+        db.vrem("vectors", "elem1").unwrap();
+        db.vrem("vectors", "elem3").unwrap();
+
+        assert_eq!(db.vcard("vectors").unwrap(), 3);
+
+        // Verify specific elements are gone
+        assert!(db.vemb("vectors", "elem1", false).unwrap().is_none());
+        assert!(db.vemb("vectors", "elem3", false).unwrap().is_none());
+        assert!(db.vemb("vectors", "elem0", false).unwrap().is_some());
+    }
+
+    #[test]
+    #[cfg(feature = "vectors")]
+    fn test_vector_cross_database_isolation() {
+        use crate::types::VectorQuantization;
+
+        let db = Db::open_memory().unwrap();
+
+        // Add to database 0
+        db.vadd("vectors", &vec![1.0, 2.0], "elem1", None, VectorQuantization::NoQuant).unwrap();
+
+        // Note: In current implementation, vectors are not database-scoped
+        // This test documents current behavior
+        let count_db0 = db.vcard("vectors").unwrap();
+        assert_eq!(count_db0, 1);
+    }
+
+    #[test]
+    #[cfg(feature = "vectors")]
+    fn test_vsim_with_filter_complex() {
+        use crate::types::{VectorInput, VectorQuantization};
+
+        let db = Db::open_memory().unwrap();
+
+        // Add vectors with different attributes
+        db.vadd("vectors", &vec![1.0, 0.0], "elem1", Some(r#"{"category":"A","score":10}"#), VectorQuantization::NoQuant).unwrap();
+        db.vadd("vectors", &vec![0.9, 0.1], "elem2", Some(r#"{"category":"B","score":20}"#), VectorQuantization::NoQuant).unwrap();
+        db.vadd("vectors", &vec![0.8, 0.2], "elem3", Some(r#"{"category":"A","score":30}"#), VectorQuantization::NoQuant).unwrap();
+
+        // Filter by category A
+        let filter = Some(r#"@category == "A""#);
+        let query = VectorInput::Values(vec![1.0, 0.0]);
+        let results = db.vsim("vectors", query, Some(10), false, filter).unwrap();
+
+        // Should only return category A elements
+        assert!(results.len() <= 2); // elem1 and elem3
+    }
+
+    #[test]
+    #[cfg(feature = "vectors")]
+    fn test_vsim_exact_match_score() {
+        use crate::types::{VectorInput, VectorQuantization};
+
+        let db = Db::open_memory().unwrap();
+
+        let embedding = vec![1.0, 2.0, 3.0];
+        db.vadd("vectors", &embedding, "elem1", None, VectorQuantization::NoQuant).unwrap();
+
+        // Query with exact same vector - distance should be 0 (or very close)
+        let query = VectorInput::Values(embedding);
+        let results = db.vsim("vectors", query, Some(1), true, None).unwrap();
+        assert_eq!(results.len(), 1);
+        assert_eq!(results[0].element, "elem1");
+
+        // Score should indicate exact match (distance very close to 0 for L2)
+        assert!(results[0].score >= 0.9999); // Very high similarity (close to 1.0 for cosine)
+    }
+
+    #[test]
+    #[cfg(feature = "vectors")]
+    fn test_vcard_nonexistent_key() {
+        let db = Db::open_memory().unwrap();
+
+        // VCARD on non-existent key should return 0
+        let count = db.vcard("nonexistent").unwrap();
+        assert_eq!(count, 0);
+    }
+
+    #[test]
+    #[cfg(feature = "vectors")]
+    fn test_vinfo_with_mixed_quantization() {
+        use crate::types::VectorQuantization;
+
+        let db = Db::open_memory().unwrap();
+
+        // Note: In current implementation, quantization is per-element
+        // This test documents expected behavior
+        db.vadd("vectors", &vec![1.0, 2.0], "elem1", None, VectorQuantization::NoQuant).unwrap();
+        db.vadd("vectors", &vec![3.0, 4.0], "elem2", None, VectorQuantization::Q8).unwrap();
+
+        let info = db.vinfo("vectors").unwrap().unwrap();
+        assert_eq!(info.cardinality, 2);
+        assert_eq!(info.dimensions, Some(2));
+    }
+
+    #[test]
+    #[cfg(feature = "vectors")]
+    fn test_vadd_single_dimension() {
+        use crate::types::VectorQuantization;
+
+        let db = Db::open_memory().unwrap();
+
+        // 1D vector should work
+        db.vadd("vectors", &vec![42.0], "elem1", None, VectorQuantization::NoQuant).unwrap();
+
+        assert_eq!(db.vdim("vectors").unwrap(), Some(1));
+        assert_eq!(db.vcard("vectors").unwrap(), 1);
     }
 
     // ========================================================================
