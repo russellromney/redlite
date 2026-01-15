@@ -1,5 +1,56 @@
 # Changelog
 
+## Session 37: Go SDK Complete - 100% Oracle Test Coverage
+
+### Added - 17 Missing Redis Commands
+
+Completed Go SDK implementation by adding all missing Redis commands, achieving 100% oracle test coverage (137/137 tests passing, up from 107/137).
+
+**String Commands (8)**:
+- MGET - Get multiple key values
+- MSET - Set multiple key-value pairs
+- GETDEL - Get and delete a key
+- GETRANGE - Get substring of string value
+- SETRANGE - Overwrite part of string value
+- DECRBY - Decrement by amount
+- INCRBYFLOAT - Increment by float amount
+- PSETEX - Set with millisecond expiration
+
+**Key Commands (4)**:
+- PTTL - Get TTL in milliseconds
+- PEXPIRE - Set TTL in milliseconds
+- RENAME - Rename a key
+- RENAMENX - Rename only if new key doesn't exist
+
+**Hash Commands (2)**:
+- HGETALL - Get all fields and values
+- HMGET - Get multiple hash field values
+
+**Sorted Set Commands (3)**:
+- ZREM - Remove members from sorted set
+- ZRANGE - Get range of members
+- ZREVRANGE - Get range in reverse order
+
+**Implementation Changes**:
+- FFI Layer: Added 6 new C functions to redlite-ffi/src/lib.rs (mget, mset, hgetall, hmget, zrange, zrevrange)
+- C Headers: Updated redlite.h with new function declarations
+- Go SDK: Added 17 new methods to embedded.go
+- Test Runner: Added command handlers and special dict type comparison for HGETALL tests
+- Removed all commands from unsupportedCommands map
+
+**Test Results**:
+- Oracle tests: 137/137 passing (100%)
+- Previously: 107/137 (78%) with 30 skipped tests
+- All 17 new commands fully tested and working
+
+**Files Changed**:
+- crates/redlite-ffi/src/lib.rs - 6 new FFI functions
+- sdks/redlite-go/redlite.h - C header updates
+- sdks/redlite-go/embedded.go - 17 new Go methods
+- sdks/oracle/runners/go_runner.go - Command handlers and test support
+
+---
+
 ## Session 36: History Feature Bug Fixes & Parallel Test Infrastructure
 
 ### Fixed - History Tracking Deadlock

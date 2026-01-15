@@ -4,40 +4,63 @@ See [CHANGELOG.md](./CHANGELOG.md) for completed features.
 
 ## Next Steps
 
-### Session 37: Fix Remaining Oracle Test Failures
+### Session 38: Plan and Execute Next SDK/Features
 
-**Goal**: Address 17 failing/timeout tests from oracle test suite (212 passed, 92% pass rate).
+**Approach**: Use this roadmap file for planning. When you start a session:
+1. Write detailed implementation plan in markdown in this ROADMAP.md
+2. Execute the plan step by step
+3. Run tests to verify implementation
+4. Update docs/README/ROADMAP/CHANGELOG
+5. Suggest a prompt for the next session to plan and execute next steps
 
-**Priority 1 - Timeout Issues** (7 tests, likely deadlocks):
-- `oracle_cmd_linsert`, `oracle_cmd_lrem` - List operations hanging
-- `oracle_cmd_sdiffstore`, `oracle_cmd_sinterstore`, `oracle_cmd_sunionstore` - Set store operations
-- `oracle_lists_linsert`, `oracle_lists_lset_lrem` - List operation variants
-- Pattern: All involve list or set operations, likely similar deadlock to history bug
+**Potential Focus Areas**:
 
-**Priority 2 - Z-Commands** (4 tests, likely related):
-- `oracle_cmd_zcount`, `oracle_cmd_zrange`, `oracle_cmd_zrangebyscore` - Range/count queries
-- `oracle_cmd_xclaim` - Stream claim operation
-- Pattern: Range queries and boundary conditions
+**Option 1 - Python SDK Completion**:
+- Similar to Go SDK work, add missing commands to Python SDK
+- Run oracle tests and identify gaps
+- Target: 100% test coverage for Python SDK
 
-**Priority 3 - Complex Scenarios** (4 tests):
-- `oracle_comprehensive_mixed_ops`, `oracle_hashes_random_ops`, `oracle_keys_random_ops`, `oracle_keys_persist`
-- Random operation tests, likely edge cases
+**Option 2 - TypeScript SDK Completion**:
+- Add missing commands to TypeScript SDK
+- Run oracle tests and identify gaps
+- Target: 100% test coverage for TypeScript SDK
 
-**Priority 4 - Basic Operations** (2 tests):
-- `oracle_cmd_persist` - TTL removal
-- `oracle_cmd_rename` - Key renaming
+**Option 3 - Fix Remaining Oracle Test Failures** (redlite-dst):
+- Address 17 failing/timeout tests from oracle test suite (212 passed, 92% pass rate)
+- Timeout issues (7 tests): List/Set operations likely deadlocking
+- Z-Commands (4 tests): Range queries and boundary conditions
+- Complex scenarios (4 tests): Random operation edge cases
+- Basic operations (2 tests): persist, rename
+- Target: 225+ tests passing (98%+ pass rate)
 
-**Approach**:
-1. Investigate timeout tests first (likely similar pattern to history deadlock)
-2. Run each failing test individually with debug output
-3. Fix bugs, run full suite to verify no regressions
-4. Update CHANGELOG, ROADMAP, README with results
+**Option 4 - Performance Optimization**:
+- Profile hot paths in common operations
+- Optimize query patterns
+- Benchmark against Redis for comparison
 
-**Target**: 225+ tests passing (98%+ pass rate)
+**Option 5 - Documentation & Examples**:
+- Add comprehensive examples for each SDK
+- Create migration guides from Redis
+- Add performance tuning guide
 
 ---
 
 ## Recently Completed
+
+### Session 37: Go SDK Complete - 100% Oracle Test Coverage - ✅ COMPLETE
+
+**Completed**:
+- Added 17 missing Redis commands to Go SDK
+- FFI layer: 6 new C functions (mget, mset, hgetall, hmget, zrange, zrevrange)
+- Go SDK: 17 new methods across String, Key, Hash, and Sorted Set operations
+- Oracle tests: 137/137 passing (100%), up from 107/137 (78%)
+- All commands removed from unsupportedCommands map
+
+**Commands Added**: MGET, MSET, GETDEL, GETRANGE, SETRANGE, DECRBY, INCRBYFLOAT, PSETEX, PTTL, PEXPIRE, RENAME, RENAMENX, HGETALL, HMGET, ZREM, ZRANGE, ZREVRANGE
+
+**Key Achievement**: First SDK to reach 100% oracle test coverage. Provides template for completing Python and TypeScript SDKs.
+
+---
 
 ### Session 36: History Feature Bug Fixes & Parallel Test Infrastructure - ✅ COMPLETE
 

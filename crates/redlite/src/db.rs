@@ -2029,6 +2029,11 @@ impl Db {
                     }
                 }
 
+                // If renaming to the same key, just return success
+                if key == newkey {
+                    return Ok(());
+                }
+
                 // Delete destination key if exists
                 conn.execute(
                     "DELETE FROM keys WHERE db = ?1 AND key = ?2",

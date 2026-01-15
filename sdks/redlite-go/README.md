@@ -2,6 +2,10 @@
 
 Go SDK for Redlite - Redis API + SQLite durability.
 
+## Status
+
+100% Oracle Test Coverage - All 137 oracle tests passing
+
 ## Install
 
 ```bash
