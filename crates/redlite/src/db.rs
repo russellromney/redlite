@@ -1945,7 +1945,7 @@ impl Db {
             "UPDATE keys
              SET expire_at = NULL, updated_at = ?1, version = version + 1
              WHERE db = ?2 AND key = ?3
-             AND (expire_at IS NULL OR expire_at > ?1)",
+             AND expire_at IS NOT NULL AND expire_at > ?1",
             params![now, db, key],
         )?;
 

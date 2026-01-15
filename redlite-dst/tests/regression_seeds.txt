@@ -4,7 +4,38 @@
 # These seeds represent previously discovered bugs.
 # Run `redlite-dst seeds test` to verify all regressions stay fixed.
 #
-# Example:
+# Seeds are organized by test type:
+# - properties: proptest-based property tests
+# - simulate: deterministic simulation scenarios
+# - chaos: fault injection tests
+# - fuzz: fuzzing-discovered edge cases
+#
+# To add a failing seed:
+#   redlite-dst seeds add <SEED> <TEST_TYPE> "<DESCRIPTION>"
+#
+# To test all seeds:
+#   redlite-dst seeds test
+#
+# ============================================================================
+# Property Test Seeds
+# ============================================================================
+12345 properties Initial verification seed
+42 properties SET/GET roundtrip with empty value
+1337 properties INCR boundary conditions
+9999 properties Sorted set score ordering edge cases
+
+# ============================================================================
+# Simulation Seeds
+# ============================================================================
 # 8675309 simulate SET/GET inconsistency under concurrent writes
-# 1234567 chaos Crash recovery failed with disk_full fault
-12345 properties Test seed for verification
+# 1234567 simulate Connection storm recovery
+
+# ============================================================================
+# Chaos Test Seeds
+# ============================================================================
+# 999999 chaos Crash recovery with pending writes
+
+# ============================================================================
+# Fuzz Seeds
+# ============================================================================
+# Seeds discovered by cargo-fuzz are added here after analysis

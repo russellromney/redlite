@@ -2,20 +2,61 @@
 
 ## Executive Summary
 
-**Current State (Updated Session 34):**
-- **~230 total oracle tests** in `tests/oracle.rs` (~10,250 lines)
-- **~145 command-specific tests** (oracle_cmd_*) with ~1,270 test scenarios
-- **Average: ~8.8 scenarios per command**
+**Current State (Updated Session 35):**
+- **~242 total oracle tests** in `tests/oracle.rs` (~10,600 lines)
+- **~157 command-specific tests** (oracle_cmd_*) with ~1,400 test scenarios
+- **Average: ~8.9 scenarios per command**
 
 **Target State:**
 - **163 commands** supported by Redlite (per COMMANDS.md)
 - **~2,445 test scenarios needed** (163 commands × 15 avg configurations)
-- **Missing: ~18 commands + ~1,175 additional scenarios**
+- **Missing: ~6 commands + ~1,045 additional scenarios**
 
 **Gap Analysis:**
-- ✅ Tested: ~145/163 commands (89%)
-- ❌ Missing: ~18 commands (11%)
+- ✅ Tested: ~157/163 commands (96%)
+- ❌ Missing: ~6 commands (4%) - mainly Pub/Sub (server-only)
 - ⚠️ Under-configured: Some commands need more scenario coverage
+- ⚠️ **CRITICAL**: Session 34 tests don't compile - API mismatches need fixing
+
+---
+
+## Session 35 Progress
+
+**Completed:**
+1. ✅ **BLPOP/BRPOP already implemented** in db.rs with tokio async/await
+   - Uses broadcast channel notifications (not polling)
+   - 100ms sleep between checks with notification wakeup
+   - Supports timeout=0 for infinite wait
+2. ✅ **Added 12 BLPOP/BRPOP oracle tests** (~350 lines)
+   - `oracle_cmd_blpop_immediate` - Data already in list
+   - `oracle_cmd_blpop_timeout` - Empty list timeout
+   - `oracle_cmd_blpop_multiple_keys` - First non-empty key wins
+   - `oracle_cmd_blpop_priority` - Key priority order
+   - `oracle_cmd_blpop_binary` - Binary data handling
+   - `oracle_cmd_brpop_immediate` - Right pop with data
+   - `oracle_cmd_brpop_timeout` - Right pop timeout
+   - `oracle_cmd_brpop_multiple_keys` - Multiple keys
+   - `oracle_cmd_blpop_concurrent_push` - Data pushed during wait
+   - `oracle_cmd_blpop_nonexistent_keys` - Skip non-existent keys
+   - `oracle_cmd_blpop_empties_list` - List deletion after empty
+3. ✅ **Fixed search.rs** - Added missing `QueryExpr::Fuzzy` case in `expr_to_explain`
+4. ✅ **Fixed 9 FT.* tests** - Changed from builder pattern to direct API calls
+   - `ft_create(name, on_type, prefixes, schema)` instead of `FtIndex::new().with_*`
+
+**Discovered Issues (Session 34 tests don't compile):**
+- FT.* tests: ~~Fixed~~ - now use direct API calls
+- FTS.* tests: Method signatures look correct but need verification
+- HISTORY.* tests: Field access wrong (`.0` vs `.timestamp_ms`)
+- Vector tests: May have QuantizationType path issues
+
+**Tests still need fixing:**
+1. `oracle_cmd_fts_index_search` - verify `fts_search` return type
+2. `oracle_cmd_fts_deindex_reindex` - verify method signatures
+3. `oracle_cmd_fts_info` - verify `FtsStats` field names
+4. `oracle_cmd_history_*` (6 tests) - fix `HistoryEntry` field access
+5. Vector tests - verify `QuantizationType` import path
+
+---
 
 ## Session 34 Progress
 

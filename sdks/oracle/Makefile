@@ -3,23 +3,51 @@
 
 PYTHON_VENV := ../redlite-python/.venv/bin/python
 SPEC_DIR := spec
+RUST_RUNNER := runners/rust_runner
 
-.PHONY: help test test-python test-ts test-verbose clean
+.PHONY: help test test-python test-ts test-rust test-go test-verbose clean build-rust
 
 help:
 	@echo "Oracle Test Commands:"
-	@echo "  make test           - Run all oracle tests (all SDKs)"
+	@echo "  make test           - Run all oracle tests (Python + TypeScript)"
+	@echo "  make test-all       - Run all including Rust baseline and Go"
 	@echo "  make test-python    - Run oracle tests against Python SDK"
 	@echo "  make test-ts        - Run oracle tests against TypeScript SDK"
+	@echo "  make test-rust      - Run oracle tests against Rust core (baseline)"
+	@echo "  make test-go        - Run oracle tests against Go SDK"
 	@echo "  make test-verbose   - Run all tests with verbose output"
+	@echo "  make build-rust     - Build Rust runner"
 	@echo ""
 	@echo "Spec files:"
 	@ls -1 $(SPEC_DIR)/*.yaml 2>/dev/null || echo "  (none found)"
 
-# Run all SDK tests
+# Run Python + TypeScript SDK tests
 test: test-python test-ts
 	@echo ""
 	@echo "All oracle tests complete!"
+
+# Run all including Rust baseline and Go
+test-all: test-rust test-go test-python test-ts
+	@echo ""
+	@echo "All oracle tests complete!"
+
+# Build Rust runner
+build-rust:
+	cd $(RUST_RUNNER) && cargo build --release
+
+# Rust core tests (baseline reference)
+test-rust: build-rust
+	@echo "Running Oracle tests against Rust core (baseline)..."
+	cd $(RUST_RUNNER) && cargo run --release -- ../../spec
+
+# Go SDK tests
+test-go:
+	@echo "Running Oracle tests against Go SDK..."
+	cd runners && go run go_runner.go
+
+# Go SDK tests (verbose)
+test-go-verbose:
+	cd runners && go run go_runner.go -v
 
 # Python SDK tests
 test-python:

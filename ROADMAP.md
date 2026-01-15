@@ -1679,6 +1679,67 @@ SQLite extension optimized for append-only time series:
 - ACL system
 - Nightly CI for battle tests (`.github/workflows/battle-test.yml`, 1M seeds)
 
+### SDK-Assisted Failover
+
+Optimize the HA design with client-side awareness for sub-second failover.
+
+**Concept**: The basic HA design uses 5-second heartbeat timeout for failover. Client SDKs can detect leader failure immediately (request timeout) and trigger faster promotion.
+
+**Client Behavior:**
+```python
+class RedliteClient:
+    def __init__(self, leader: str, follower: str, timeout_ms: int = 100):
+        self.leader = leader
+        self.follower = follower
+        self.active = self.leader
+        self.timeout = timeout_ms
+
+    def request(self, cmd):
+        try:
+            return self.conn(self.active).execute(cmd, timeout=self.timeout)
+        except Timeout:
+            # Leader timed out - try follower
+            self.active = self.follower if self.active == self.leader else self.leader
+            return self.conn(self.active).execute(cmd)
+```
+
+**Follower Promotion Trigger:**
+```rust
+// Follower receives request while in follower mode
+async fn handle_request(&self, req: Request) -> Response {
+    if self.role == Role::Follower {
+        // Client couldn't reach leader - fast-path promotion
+        if self.try_grab_lease().await.is_ok() {
+            self.promote().await;
+        } else {
+            return Error::NotLeader("retry primary");
+        }
+    }
+    self.process(req).await
+}
+```
+
+**Failover Scenarios:**
+
+| Scenario | Server-Only HA | SDK-Assisted |
+|----------|---------------|--------------|
+| Leader dead | ~5 seconds | **~200ms** |
+| Network blip to leader | ~5 seconds | **0ms** (retry succeeds) |
+| False alarm | Protected by S3 lease | Protected by S3 lease |
+
+**Safety**: S3 lease prevents split-brain. Even with aggressive client retries, only one node can grab the lease. Failed promotion attempts are harmless.
+
+**Benefits:**
+- 25x faster failover for actual failures
+- Instant retry for transient network issues
+- No false failovers (lease arbitration)
+- Works with existing server-only HA (graceful degradation)
+
+**Implementation:**
+- Add `RedliteClient` wrapper class to Python/Node/Go SDKs
+- Add `/promote` endpoint to server (tries lease grab + promotion)
+- Document configuration: `RedliteClient(["leader:6379", "follower:6379"], timeout=100)`
+
 ### Soft Delete + PURGE
 
 Mark keys as deleted without removing data. Enables recovery and audit trails.

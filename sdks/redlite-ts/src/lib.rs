@@ -204,6 +204,42 @@ impl JsDb {
             .map_err(|e| Error::from_reason(e.to_string()))
     }
 
+    /// Get values of multiple keys
+    #[napi]
+    pub fn mget(&self, keys: Vec<String>) -> Result<Vec<Option<Buffer>>> {
+        let key_refs: Vec<&str> = keys.iter().map(|s| s.as_str()).collect();
+        let results = self.inner.mget(&key_refs);
+        Ok(results.into_iter().map(|opt| opt.map(Buffer::from)).collect())
+    }
+
+    /// Set multiple key-value pairs atomically
+    #[napi]
+    pub fn mset(&self, pairs: Vec<Vec<Buffer>>) -> Result<bool> {
+        // pairs is [[key, value], [key, value], ...]
+        let string_pairs: Vec<(String, Vec<u8>)> = pairs
+            .into_iter()
+            .filter_map(|pair| {
+                if pair.len() == 2 {
+                    let key = String::from_utf8_lossy(pair[0].as_ref()).to_string();
+                    let value = pair[1].to_vec();
+                    Some((key, value))
+                } else {
+                    None
+                }
+            })
+            .collect();
+
+        let pair_refs: Vec<(&str, &[u8])> = string_pairs
+            .iter()
+            .map(|(k, v)| (k.as_str(), v.as_slice()))
+            .collect();
+
+        self.inner
+            .mset(&pair_refs)
+            .map(|_| true)
+            .map_err(|e| Error::from_reason(e.to_string()))
+    }
+
     // =========================================================================
     // Key Commands
     // =========================================================================
@@ -428,6 +464,30 @@ impl JsDb {
             .map_err(|e| Error::from_reason(e.to_string()))
     }
 
+    /// Get all fields and values in a hash
+    #[napi]
+    pub fn hgetall(&self, key: String) -> Result<Vec<Vec<Buffer>>> {
+        self.inner
+            .hgetall(&key)
+            .map(|pairs| {
+                pairs
+                    .into_iter()
+                    .map(|(field, value)| vec![Buffer::from(field.into_bytes()), Buffer::from(value)])
+                    .collect()
+            })
+            .map_err(|e| Error::from_reason(e.to_string()))
+    }
+
+    /// Get values of multiple hash fields
+    #[napi]
+    pub fn hmget(&self, key: String, fields: Vec<String>) -> Result<Vec<Option<Buffer>>> {
+        let field_refs: Vec<&str> = fields.iter().map(|s| s.as_str()).collect();
+        self.inner
+            .hmget(&key, &field_refs)
+            .map(|values| values.into_iter().map(|opt| opt.map(Buffer::from)).collect())
+            .map_err(|e| Error::from_reason(e.to_string()))
+    }
+
     // =========================================================================
     // List Commands
     // =========================================================================
@@ -610,6 +670,56 @@ impl JsDb {
     pub fn zincrby(&self, key: String, increment: f64, member: Buffer) -> Result<f64> {
         self.inner
             .zincrby(&key, increment, member.as_ref())
+            .map_err(|e| Error::from_reason(e.to_string()))
+    }
+
+    /// Get a range of members from a sorted set by index
+    #[napi]
+    pub fn zrange(&self, key: String, start: i64, stop: i64, with_scores: Option<bool>) -> Result<Vec<Buffer>> {
+        let ws = with_scores.unwrap_or(false);
+        self.inner
+            .zrange(&key, start, stop, ws)
+            .map(|members| {
+                if ws {
+                    // Return interleaved [member, score, member, score, ...]
+                    members
+                        .into_iter()
+                        .flat_map(|m| {
+                            vec![
+                                Buffer::from(m.member),
+                                Buffer::from(m.score.to_string().into_bytes()),
+                            ]
+                        })
+                        .collect()
+                } else {
+                    members.into_iter().map(|m| Buffer::from(m.member)).collect()
+                }
+            })
+            .map_err(|e| Error::from_reason(e.to_string()))
+    }
+
+    /// Get a range of members from a sorted set by index, in reverse order
+    #[napi]
+    pub fn zrevrange(&self, key: String, start: i64, stop: i64, with_scores: Option<bool>) -> Result<Vec<Buffer>> {
+        let ws = with_scores.unwrap_or(false);
+        self.inner
+            .zrevrange(&key, start, stop, ws)
+            .map(|members| {
+                if ws {
+                    // Return interleaved [member, score, member, score, ...]
+                    members
+                        .into_iter()
+                        .flat_map(|m| {
+                            vec![
+                                Buffer::from(m.member),
+                                Buffer::from(m.score.to_string().into_bytes()),
+                            ]
+                        })
+                        .collect()
+                } else {
+                    members.into_iter().map(|m| Buffer::from(m.member)).collect()
+                }
+            })
             .map_err(|e| Error::from_reason(e.to_string()))
     }
 

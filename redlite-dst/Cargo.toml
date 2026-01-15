@@ -5,9 +5,9 @@ edition = "2021"
 description = "Deterministic Simulation Testing suite for Redlite"
 license = "Apache-2.0"
 
-# Allow cfg(madsim) without warning (set via RUSTFLAGS)
+# Allow cfg(madsim), feature = "geo", feature = "vectors", feature = "unimplemented" without warning
 [lints.rust]
-unexpected_cfgs = { level = "warn", check-cfg = ['cfg(madsim)'] }
+unexpected_cfgs = { level = "warn", check-cfg = ['cfg(madsim)', 'cfg(feature, values("geo", "vectors", "unimplemented"))'] }
 
 [[bin]]
 name = "redlite-dst"
@@ -18,6 +18,12 @@ default = []
 # Enable MadSim deterministic runtime
 # Build with: RUSTFLAGS="--cfg madsim" cargo build --features madsim
 madsim = ["dep:madsim"]
+# Enable geo commands testing (requires geo support in redlite)
+geo = []
+# Enable vector commands testing (requires vector support in redlite)
+vectors = []
+# Enable tests for commands not yet implemented (zpopmin, zpopmax, copy, unlink, etc.)
+unimplemented = []
 
 [dependencies]
 # Redlite
@@ -90,9 +96,17 @@ version = "0.32"
 [dependencies.parking_lot]
 version = "0.12"
 
-# Fuzzing (using proptest in-process fuzzing)
+# Property-based testing
+[dependencies.proptest]
+version = "1.5"
+
+[dependencies.arbitrary]
+version = "1.3"
+features = ["derive"]
+
+# Fuzzing with cargo-fuzz (dev only)
 [dev-dependencies]
-proptest = "1.4"
+libfuzzer-sys = "0.4"
 
 # Patch crates that use randomness/time for determinism under madsim
 [patch.crates-io]

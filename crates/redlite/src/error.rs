@@ -32,6 +32,9 @@ pub enum KvError {
     #[error("invalid data")]
     InvalidData,
 
+    #[error("{0}")]
+    InvalidArgument(String),
+
     #[error("BUSYGROUP Consumer Group name already exists")]
     BusyGroup,
 

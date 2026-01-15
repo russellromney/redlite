@@ -148,7 +148,12 @@ func (db *EmbeddedDb) Set(key string, value []byte, ttl time.Duration) error {
 		ttlSeconds = int64(ttl.Seconds())
 	}
 
-	result := C.redlite_set(db.handle, cKey, (*C.uint8_t)(unsafe.Pointer(&value[0])), C.size_t(len(value)), C.int64_t(ttlSeconds))
+	var dataPtr *C.uint8_t
+	if len(value) > 0 {
+		dataPtr = (*C.uint8_t)(unsafe.Pointer(&value[0]))
+	}
+
+	result := C.redlite_set(db.handle, cKey, dataPtr, C.size_t(len(value)), C.int64_t(ttlSeconds))
 	if result < 0 {
 		return getLastError()
 	}
@@ -164,7 +169,12 @@ func (db *EmbeddedDb) SetEx(key string, seconds int64, value []byte) error {
 	cKey := C.CString(key)
 	defer C.free(unsafe.Pointer(cKey))
 
-	result := C.redlite_setex(db.handle, cKey, C.int64_t(seconds), (*C.uint8_t)(unsafe.Pointer(&value[0])), C.size_t(len(value)))
+	var dataPtr *C.uint8_t
+	if len(value) > 0 {
+		dataPtr = (*C.uint8_t)(unsafe.Pointer(&value[0]))
+	}
+
+	result := C.redlite_setex(db.handle, cKey, C.int64_t(seconds), dataPtr, C.size_t(len(value)))
 	if result < 0 {
 		return getLastError()
 	}
@@ -228,7 +238,12 @@ func (db *EmbeddedDb) Append(key string, value []byte) (int64, error) {
 	cKey := C.CString(key)
 	defer C.free(unsafe.Pointer(cKey))
 
-	result := C.redlite_append(db.handle, cKey, (*C.uint8_t)(unsafe.Pointer(&value[0])), C.size_t(len(value)))
+	var dataPtr *C.uint8_t
+	if len(value) > 0 {
+		dataPtr = (*C.uint8_t)(unsafe.Pointer(&value[0]))
+	}
+
+	result := C.redlite_append(db.handle, cKey, dataPtr, C.size_t(len(value)))
 	if result < 0 {
 		return 0, getLastError()
 	}
@@ -249,6 +264,182 @@ func (db *EmbeddedDb) StrLen(key string) (int64, error) {
 		return 0, getLastError()
 	}
 	return int64(result), nil
+}
+
+// GetDel returns and deletes the value of a key.
+func (db *EmbeddedDb) GetDel(key string) ([]byte, error) {
+	if err := db.checkOpen(); err != nil {
+		return nil, err
+	}
+
+	cKey := C.CString(key)
+	defer C.free(unsafe.Pointer(cKey))
+
+	result := C.redlite_getdel(db.handle, cKey)
+	return bytesToGo(result), nil
+}
+
+// GetRange returns a substring of the value stored at key.
+func (db *EmbeddedDb) GetRange(key string, start, end int64) ([]byte, error) {
+	if err := db.checkOpen(); err != nil {
+		return nil, err
+	}
+
+	cKey := C.CString(key)
+	defer C.free(unsafe.Pointer(cKey))
+
+	result := C.redlite_getrange(db.handle, cKey, C.int64_t(start), C.int64_t(end))
+	return bytesToGo(result), nil
+}
+
+// SetRange overwrites part of the value stored at key.
+func (db *EmbeddedDb) SetRange(key string, offset int64, value []byte) (int64, error) {
+	if err := db.checkOpen(); err != nil {
+		return 0, err
+	}
+
+	cKey := C.CString(key)
+	defer C.free(unsafe.Pointer(cKey))
+
+	var dataPtr *C.uint8_t
+	if len(value) > 0 {
+		dataPtr = (*C.uint8_t)(unsafe.Pointer(&value[0]))
+	}
+
+	result := C.redlite_setrange(db.handle, cKey, C.int64_t(offset), dataPtr, C.size_t(len(value)))
+	if result < 0 {
+		return 0, getLastError()
+	}
+	return int64(result), nil
+}
+
+// DecrBy decrements a key by amount.
+func (db *EmbeddedDb) DecrBy(key string, amount int64) (int64, error) {
+	if err := db.checkOpen(); err != nil {
+		return 0, err
+	}
+
+	cKey := C.CString(key)
+	defer C.free(unsafe.Pointer(cKey))
+
+	result := C.redlite_decrby(db.handle, cKey, C.int64_t(amount))
+	if result == C.int64_t(math.MinInt64) {
+		return 0, getLastError()
+	}
+	return int64(result), nil
+}
+
+// IncrByFloat increments a key by a float amount.
+func (db *EmbeddedDb) IncrByFloat(key string, amount float64) (string, error) {
+	if err := db.checkOpen(); err != nil {
+		return "", err
+	}
+
+	cKey := C.CString(key)
+	defer C.free(unsafe.Pointer(cKey))
+
+	result := C.redlite_incrbyfloat(db.handle, cKey, C.double(amount))
+	if result == nil {
+		return "", getLastError()
+	}
+	defer C.redlite_free_string(result)
+	return C.GoString(result), nil
+}
+
+// PSetEx sets the value with expiration in milliseconds.
+func (db *EmbeddedDb) PSetEx(key string, milliseconds int64, value []byte) error {
+	if err := db.checkOpen(); err != nil {
+		return err
+	}
+
+	cKey := C.CString(key)
+	defer C.free(unsafe.Pointer(cKey))
+
+	var dataPtr *C.uint8_t
+	if len(value) > 0 {
+		dataPtr = (*C.uint8_t)(unsafe.Pointer(&value[0]))
+	}
+
+	result := C.redlite_psetex(db.handle, cKey, C.int64_t(milliseconds), dataPtr, C.size_t(len(value)))
+	if result < 0 {
+		return getLastError()
+	}
+	return nil
+}
+
+// MGet returns the values of multiple keys.
+func (db *EmbeddedDb) MGet(keys ...string) ([][]byte, error) {
+	if err := db.checkOpen(); err != nil {
+		return nil, err
+	}
+	if len(keys) == 0 {
+		return nil, nil
+	}
+
+	cKeys := make([]*C.char, len(keys))
+	for i, k := range keys {
+		cKeys[i] = C.CString(k)
+		defer C.free(unsafe.Pointer(cKeys[i]))
+	}
+
+	result := C.redlite_mget(db.handle, &cKeys[0], C.size_t(len(keys)))
+	return bytesArrayToGo(result), nil
+}
+
+// MSet sets multiple key-value pairs.
+func (db *EmbeddedDb) MSet(pairs map[string][]byte) error {
+	if err := db.checkOpen(); err != nil {
+		return err
+	}
+	if len(pairs) == 0 {
+		return nil
+	}
+
+	// Allocate C array for key-value pairs
+	pairsPtr := C.malloc(C.size_t(len(pairs)) * C.size_t(unsafe.Sizeof(C.RedliteKV{})))
+	defer C.free(pairsPtr)
+	cPairs := (*[1 << 30]C.RedliteKV)(pairsPtr)[:len(pairs):len(pairs)]
+
+	// Track allocations for cleanup
+	var cKeys []*C.char
+	var cDatas []unsafe.Pointer
+	defer func() {
+		for _, k := range cKeys {
+			C.free(unsafe.Pointer(k))
+		}
+		for _, d := range cDatas {
+			C.free(d)
+		}
+	}()
+
+	i := 0
+	for key, value := range pairs {
+		cKey := C.CString(key)
+		cKeys = append(cKeys, cKey)
+
+		if len(value) > 0 {
+			cData := C.CBytes(value)
+			cDatas = append(cDatas, cData)
+			cPairs[i] = C.RedliteKV{
+				key:       cKey,
+				value:     (*C.uint8_t)(cData),
+				value_len: C.size_t(len(value)),
+			}
+		} else {
+			cPairs[i] = C.RedliteKV{
+				key:       cKey,
+				value:     nil,
+				value_len: 0,
+			}
+		}
+		i++
+	}
+
+	result := C.redlite_mset(db.handle, (*C.RedliteKV)(pairsPtr), C.size_t(len(pairs)))
+	if result < 0 {
+		return getLastError()
+	}
+	return nil
 }
 
 // =============================================================================
@@ -355,6 +546,71 @@ func (db *EmbeddedDb) Persist(key string) (bool, error) {
 	defer C.free(unsafe.Pointer(cKey))
 
 	result := C.redlite_persist(db.handle, cKey)
+	if result < 0 {
+		return false, getLastError()
+	}
+	return result == 1, nil
+}
+
+// PTTL returns the TTL of a key in milliseconds.
+func (db *EmbeddedDb) PTTL(key string) (int64, error) {
+	if err := db.checkOpen(); err != nil {
+		return 0, err
+	}
+
+	cKey := C.CString(key)
+	defer C.free(unsafe.Pointer(cKey))
+
+	result := C.redlite_pttl(db.handle, cKey)
+	return int64(result), nil
+}
+
+// PExpire sets a TTL on a key in milliseconds.
+func (db *EmbeddedDb) PExpire(key string, milliseconds int64) (bool, error) {
+	if err := db.checkOpen(); err != nil {
+		return false, err
+	}
+
+	cKey := C.CString(key)
+	defer C.free(unsafe.Pointer(cKey))
+
+	result := C.redlite_pexpire(db.handle, cKey, C.int64_t(milliseconds))
+	if result < 0 {
+		return false, getLastError()
+	}
+	return result == 1, nil
+}
+
+// Rename renames a key.
+func (db *EmbeddedDb) Rename(key, newkey string) error {
+	if err := db.checkOpen(); err != nil {
+		return err
+	}
+
+	cKey := C.CString(key)
+	defer C.free(unsafe.Pointer(cKey))
+	cNewKey := C.CString(newkey)
+	defer C.free(unsafe.Pointer(cNewKey))
+
+	result := C.redlite_rename(db.handle, cKey, cNewKey)
+	if result < 0 {
+		return getLastError()
+	}
+	return nil
+}
+
+// RenameNX renames a key only if the new key doesn't exist.
+func (db *EmbeddedDb) RenameNX(key, newkey string) (bool, error) {
+	if err := db.checkOpen(); err != nil {
+		return false, err
+	}
+
+	cKey := C.CString(key)
+	defer C.free(unsafe.Pointer(cKey))
+	cNewKey := C.CString(newkey)
+	defer C.free(unsafe.Pointer(cNewKey))
+
+	result := C.redlite_renamenx(db.handle, cKey, cNewKey)
 	if result < 0 {
 		return false, getLastError()
 	}
@@ -579,6 +835,52 @@ func (db *EmbeddedDb) HIncrBy(key, field string, amount int64) (int64, error) {
 		return 0, getLastError()
 	}
 	return int64(result), nil
+}
+
+// HGetAll returns all fields and values in a hash.
+func (db *EmbeddedDb) HGetAll(key string) (map[string][]byte, error) {
+	if err := db.checkOpen(); err != nil {
+		return nil, err
+	}
+
+	cKey := C.CString(key)
+	defer C.free(unsafe.Pointer(cKey))
+
+	result := C.redlite_hgetall(db.handle, cKey)
+	flatArray := bytesArrayToGo(result)
+
+	// Convert flat array of field-value pairs to map
+	hashMap := make(map[string][]byte)
+	for i := 0; i < len(flatArray); i += 2 {
+		if i+1 < len(flatArray) {
+			field := string(flatArray[i])
+			value := flatArray[i+1]
+			hashMap[field] = value
+		}
+	}
+	return hashMap, nil
+}
+
+// HMGet returns the values of multiple hash fields.
+func (db *EmbeddedDb) HMGet(key string, fields ...string) ([][]byte, error) {
+	if err := db.checkOpen(); err != nil {
+		return nil, err
+	}
+	if len(fields) == 0 {
+		return nil, nil
+	}
+
+	cKey := C.CString(key)
+	defer C.free(unsafe.Pointer(cKey))
+
+	cFields := make([]*C.char, len(fields))
+	for i, f := range fields {
+		cFields[i] = C.CString(f)
+		defer C.free(unsafe.Pointer(cFields[i]))
+	}
+
+	result := C.redlite_hmget(db.handle, cKey, &cFields[0], C.size_t(len(fields)))
+	return bytesArrayToGo(result), nil
 }
 
 // =============================================================================
@@ -857,7 +1159,12 @@ func (db *EmbeddedDb) SIsMember(key string, member []byte) (bool, error) {
 	cKey := C.CString(key)
 	defer C.free(unsafe.Pointer(cKey))
 
-	result := C.redlite_sismember(db.handle, cKey, (*C.uint8_t)(unsafe.Pointer(&member[0])), C.size_t(len(member)))
+	var dataPtr *C.uint8_t
+	if len(member) > 0 {
+		dataPtr = (*C.uint8_t)(unsafe.Pointer(&member[0]))
+	}
+
+	result := C.redlite_sismember(db.handle, cKey, dataPtr, C.size_t(len(member)))
 	if result < 0 {
 		return false, getLastError()
 	}
@@ -940,7 +1247,12 @@ func (db *EmbeddedDb) ZScore(key string, member []byte) (float64, bool, error) {
 	cKey := C.CString(key)
 	defer C.free(unsafe.Pointer(cKey))
 
-	result := C.redlite_zscore(db.handle, cKey, (*C.uint8_t)(unsafe.Pointer(&member[0])), C.size_t(len(member)))
+	var dataPtr *C.uint8_t
+	if len(member) > 0 {
+		dataPtr = (*C.uint8_t)(unsafe.Pointer(&member[0]))
+	}
+
+	result := C.redlite_zscore(db.handle, cKey, dataPtr, C.size_t(len(member)))
 	if math.IsNaN(float64(result)) {
 		return 0, false, nil
 	}
@@ -988,11 +1300,96 @@ func (db *EmbeddedDb) ZIncrBy(key string, increment float64, member []byte) (flo
 	cKey := C.CString(key)
 	defer C.free(unsafe.Pointer(cKey))
 
-	result := C.redlite_zincrby(db.handle, cKey, C.double(increment), (*C.uint8_t)(unsafe.Pointer(&member[0])), C.size_t(len(member)))
+	var dataPtr *C.uint8_t
+	if len(member) > 0 {
+		dataPtr = (*C.uint8_t)(unsafe.Pointer(&member[0]))
+	}
+
+	result := C.redlite_zincrby(db.handle, cKey, C.double(increment), dataPtr, C.size_t(len(member)))
 	if math.IsNaN(float64(result)) {
 		return 0, getLastError()
 	}
 	return float64(result), nil
+}
+
+// ZRem removes members from a sorted set.
+func (db *EmbeddedDb) ZRem(key string, members ...[]byte) (int64, error) {
+	if err := db.checkOpen(); err != nil {
+		return 0, err
+	}
+	if len(members) == 0 {
+		return 0, nil
+	}
+
+	cKey := C.CString(key)
+	defer C.free(unsafe.Pointer(cKey))
+
+	// Allocate C array
+	membersPtr := C.malloc(C.size_t(len(members)) * C.size_t(unsafe.Sizeof(C.RedliteBytes{})))
+	defer C.free(membersPtr)
+	cMembers := (*[1 << 30]C.RedliteBytes)(membersPtr)[:len(members):len(members)]
+
+	cDataPtrs := make([]unsafe.Pointer, 0, len(members))
+	defer func() {
+		for _, p := range cDataPtrs {
+			C.free(p)
+		}
+	}()
+
+	for i, m := range members {
+		if len(m) > 0 {
+			cData := C.CBytes(m)
+			cDataPtrs = append(cDataPtrs, cData)
+			cMembers[i] = C.RedliteBytes{
+				data: (*C.uint8_t)(cData),
+				len:  C.size_t(len(m)),
+			}
+		} else {
+			cMembers[i] = C.RedliteBytes{data: nil, len: 0}
+		}
+	}
+
+	result := C.redlite_zrem(db.handle, cKey, (*C.RedliteBytes)(membersPtr), C.size_t(len(members)))
+	if result < 0 {
+		return 0, getLastError()
+	}
+	return int64(result), nil
+}
+
+// ZRange returns a range of members from a sorted set.
+func (db *EmbeddedDb) ZRange(key string, start, stop int64, withScores bool) ([][]byte, error) {
+	if err := db.checkOpen(); err != nil {
+		return nil, err
+	}
+
+	cKey := C.CString(key)
+	defer C.free(unsafe.Pointer(cKey))
+
+	withScoresInt := C.int(0)
+	if withScores {
+		withScoresInt = C.int(1)
+	}
+
+	result := C.redlite_zrange(db.handle, cKey, C.int64_t(start), C.int64_t(stop), withScoresInt)
+	return bytesArrayToGo(result), nil
+}
+
+// ZRevRange returns a range of members from a sorted set in reverse order.
+func (db *EmbeddedDb) ZRevRange(key string, start, stop int64, withScores bool) ([][]byte, error) {
+	if err := db.checkOpen(); err != nil {
+		return nil, err
+	}
+
+	cKey := C.CString(key)
+	defer C.free(unsafe.Pointer(cKey))
+
+	withScoresInt := C.int(0)
+	if withScores {
+		withScoresInt = C.int(1)
+	}
+
+	result := C.redlite_zrevrange(db.handle, cKey, C.int64_t(start), C.int64_t(stop), withScoresInt)
+	return bytesArrayToGo(result), nil
 }
 
 // =============================================================================

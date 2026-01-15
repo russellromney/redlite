@@ -1,5 +1,79 @@
 # Changelog
 
+## Session 36: History Feature Bug Fixes & Parallel Test Infrastructure
+
+### Fixed - History Tracking Deadlock
+
+**Critical Bug**: History tracking was causing deadlocks when enabled globally.
+
+**Root Cause**:
+- `record_history()` acquired connection lock, then called helper functions that tried to acquire the same lock
+- `increment_version()` used `row.get()` on nullable `MAX(version_num)` which returned error on first insert
+
+**Fixes Applied**:
+1. **Deadlock Fix** (db.rs:7567-7570):
+   - Call `get_or_create_key_id()` and `increment_version()` BEFORE acquiring main lock
+   - Added explicit lock scope blocks to ensure proper release
+
+2. **NULL Handling** (db.rs:7437-7441):
+   - Changed `SELECT MAX(version_num)` to `SELECT COALESCE(MAX(version_num), 0)`
+   - Fixed `query_to_history_entries()` to use `row.get::<_, Option<Vec<u8>>>()` for nullable columns
+
+3. **Sort Order** (db.rs:7747-7796):
+   - Changed all `ORDER BY timestamp_ms DESC` to `ORDER BY timestamp_ms ASC` in `history_get()`
+   - Test expects ascending order, implementation was returning descending
+
+4. **Data Snapshot** (db.rs:520):
+   - SET operation now records `data_snapshot` with actual value instead of None
+   - Enables time-travel queries via `history_get_at()`
+
+### Added - Parallel Test Infrastructure
+
+**New Scripts** (`redlite-dst/`):
+- `run_tests_sqlite.sh` - Parallel test runner with SQLite result tracking
+  - WAL mode for concurrent writes
+  - Configurable parallelism (default: 8 workers)
+  - 30s timeout per test
+  - Real-time status updates to SQLite
+
+- `query_tests.sh` - Test result query tool
+  - `./query_tests.sh status` - Pass/fail counts
+  - `./query_tests.sh failed` - List failed tests
+  - `./query_tests.sh watch` - Live dashboard (refreshes every 2s)
+  - `./query_tests.sh slow` - Slowest tests
+  - `./query_tests.sh output <test>` - Show test output
+
+**Database Schema**:
+```sql
+test_runs (id, started_at, completed_at, total_tests, parallelism)
+test_results (id, run_id, test_name, status, duration_ms, output)
+```
+
+### Test Results
+
+**Oracle Test Suite** (redlite-dst):
+- **212 passed** / 10 failed / 7 timeout (92% pass rate)
+- **All 6 history tests passing** after fixes
+- Runtime: ~2 minutes with 8 parallel workers (vs 10+ minutes sequential)
+
+**Failed Tests** (10):
+- `oracle_cmd_persist`, `oracle_cmd_rename` - Persist/rename issues
+- `oracle_cmd_xclaim`, `oracle_cmd_zcount`, `oracle_cmd_zrange`, `oracle_cmd_zrangebyscore` - Z-command bugs
+- `oracle_comprehensive_mixed_ops`, `oracle_hashes_random_ops`, `oracle_keys_persist`, `oracle_keys_random_ops` - Complex scenario failures
+
+**Timeout Tests** (7):
+- `oracle_cmd_linsert`, `oracle_cmd_lrem` - List operation hangs
+- `oracle_cmd_sdiffstore`, `oracle_cmd_sinterstore`, `oracle_cmd_sunionstore` - Set store operation hangs
+- `oracle_lists_linsert`, `oracle_lists_lset_lrem` - List operation hangs
+
+**Files Changed**:
+- `crates/redlite/src/db.rs` - History deadlock fixes
+- `redlite-dst/tests/oracle.rs` - Fixed test parameter order
+- `redlite-dst/run_tests_sqlite.sh` - New parallel runner
+- `redlite-dst/query_tests.sh` - New query tool
+
+---
+
 ## Session 35.1: Sync Blocking Operations for Embedded Mode
 
 ### Added - Sync Blocking Methods

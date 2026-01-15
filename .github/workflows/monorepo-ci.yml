@@ -1,0 +1,317 @@
+name: Monorepo CI
+
+on:
+  push:
+    branches: [main, develop]
+    tags: ["v*"]
+  pull_request:
+    branches: [main, develop]
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  # Rust Core Tests
+  rust-test:
+    name: Rust Core Tests
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache Cargo
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/bin/
+            ~/.cargo/registry/index/
+            ~/.cargo/registry/cache/
+            ~/.cargo/git/db/
+            crates/redlite/target/
+          key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
+
+      - name: Build
+        run: cd crates/redlite && cargo build --release --all-features
+
+      - name: Run tests
+        run: cd crates/redlite && cargo test --all-features
+
+  # Build Rust binaries for all platforms
+  build-rust-binaries:
+    name: Build Rust Binary (${{ matrix.platform }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      matrix:
+        include:
+          - os: macos-latest
+            target: aarch64-apple-darwin
+            platform: darwin-aarch64
+          - os: macos-13
+            target: x86_64-apple-darwin
+            platform: darwin-x86_64
+          - os: ubuntu-latest
+            target: x86_64-unknown-linux-gnu
+            platform: linux-x86_64
+          - os: windows-latest
+            target: x86_64-pc-windows-msvc
+            platform: win32-x86_64
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+
+      - name: Build binary
+        run: cd crates/redlite && cargo build --release --target ${{ matrix.target }}
+
+      - name: Upload binary artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: binary-${{ matrix.platform }}
+          path: |
+            crates/redlite/target/${{ matrix.target }}/release/redlite
+            crates/redlite/target/${{ matrix.target }}/release/redlite.exe
+
+  # Python SDK Tests
+  python-test:
+    name: Python SDK Tests
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v4
+
+      - name: Install dependencies
+        run: cd bindings/python && uv sync --dev
+
+      - name: Run tests (without embedded)
+        run: cd bindings/python && uv run pytest tests/ -v --ignore=tests/test_embedded_mode.py
+
+  # Python Embedded Tests
+  python-test-embedded:
+    name: Python Embedded Tests (${{ matrix.platform }})
+    needs: build-rust-binaries
+    runs-on: ${{ matrix.os }}
+    strategy:
+      matrix:
+        include:
+          - os: macos-latest
+            platform: darwin-aarch64
+          - os: ubuntu-latest
+            platform: linux-x86_64
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Download binary
+        uses: actions/download-artifact@v4
+        with:
+          name: binary-${{ matrix.platform }}
+          path: binaries-temp/
+
+      - name: Move binary to SDK location
+        run: |
+          mkdir -p bindings/python/src/redlite/_binary/${{ matrix.platform }}
+          cp binaries-temp/redlite bindings/python/src/redlite/_binary/${{ matrix.platform }}/
+          chmod +x bindings/python/src/redlite/_binary/${{ matrix.platform }}/redlite
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v4
+
+      - name: Install dependencies
+        run: cd bindings/python && uv sync --dev
+
+      - name: Run embedded tests
+        run: cd bindings/python && RUN_EMBEDDED=1 uv run pytest tests/test_embedded_mode.py -v
+
+  # TypeScript/Node SDK Tests
+  node-test:
+    name: TypeScript SDK Tests
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+
+      - name: Install dependencies
+        run: cd bindings/node && npm install
+
+      - name: Build TypeScript
+        run: cd bindings/node && npm run build
+
+      - name: Run tests (without embedded)
+        run: cd bindings/node && npm test
+
+  # Node Embedded Tests
+  node-test-embedded:
+    name: Node Embedded Tests (${{ matrix.platform }})
+    needs: build-rust-binaries
+    runs-on: ${{ matrix.os }}
+    strategy:
+      matrix:
+        include:
+          - os: macos-latest
+            platform: darwin-aarch64
+          - os: ubuntu-latest
+            platform: linux-x86_64
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Download binary
+        uses: actions/download-artifact@v4
+        with:
+          name: binary-${{ matrix.platform }}
+          path: binaries-temp/
+
+      - name: Move binary to SDK location
+        run: |
+          mkdir -p bindings/node/binaries/${{ matrix.platform }}
+          cp binaries-temp/redlite bindings/node/binaries/${{ matrix.platform }}/
+          chmod +x bindings/node/binaries/${{ matrix.platform }}/redlite
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+
+      - name: Install dependencies
+        run: cd bindings/node && npm install
+
+      - name: Build TypeScript
+        run: cd bindings/node && npm run build
+
+      - name: Run embedded tests
+        run: cd bindings/node && REDLITE_TEST_EMBEDDED=1 npm run test:embedded
+
+  # Build Python wheels
+  build-python-wheels:
+    name: Build Python Wheel (${{ matrix.platform }})
+    needs: build-rust-binaries
+    runs-on: ${{ matrix.os }}
+    strategy:
+      matrix:
+        include:
+          - os: macos-latest
+            platform: darwin-aarch64
+          - os: macos-13
+            platform: darwin-x86_64
+          - os: ubuntu-latest
+            platform: linux-x86_64
+          - os: windows-latest
+            platform: win32-x86_64
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Download binary
+        uses: actions/download-artifact@v4
+        with:
+          name: binary-${{ matrix.platform }}
+          path: binaries-temp/
+
+      - name: Move binary (Unix)
+        if: runner.os != 'Windows'
+        run: |
+          mkdir -p bindings/python/src/redlite/_binary/${{ matrix.platform }}
+          cp binaries-temp/redlite bindings/python/src/redlite/_binary/${{ matrix.platform }}/
+          chmod +x bindings/python/src/redlite/_binary/${{ matrix.platform }}/redlite
+
+      - name: Move binary (Windows)
+        if: runner.os == 'Windows'
+        run: |
+          mkdir -p bindings/python/src/redlite/_binary/${{ matrix.platform }}
+          cp binaries-temp/redlite.exe bindings/python/src/redlite/_binary/${{ matrix.platform }}/
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+
+      - name: Install build tools
+        run: pip install build hatchling
+
+      - name: Build wheel
+        run: cd bindings/python && python -m build --wheel
+
+      - name: Upload wheel
+        uses: actions/upload-artifact@v4
+        with:
+          name: python-wheel-${{ matrix.platform }}
+          path: bindings/python/dist/*.whl
+
+  # Build Node packages
+  build-node-packages:
+    name: Build Node Package (${{ matrix.platform }})
+    needs: build-rust-binaries
+    runs-on: ${{ matrix.os }}
+    strategy:
+      matrix:
+        include:
+          - os: macos-latest
+            platform: darwin-aarch64
+          - os: ubuntu-latest
+            platform: linux-x86_64
+          - os: windows-latest
+            platform: win32-x86_64
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Download binary
+        uses: actions/download-artifact@v4
+        with:
+          name: binary-${{ matrix.platform }}
+          path: binaries-temp/
+
+      - name: Move binary (Unix)
+        if: runner.os != 'Windows'
+        run: |
+          mkdir -p bindings/node/binaries/${{ matrix.platform }}
+          cp binaries-temp/redlite bindings/node/binaries/${{ matrix.platform }}/
+          chmod +x bindings/node/binaries/${{ matrix.platform }}/redlite
+
+      - name: Move binary (Windows)
+        if: runner.os == 'Windows'
+        run: |
+          mkdir -p bindings/node/binaries/${{ matrix.platform }}
+          cp binaries-temp/redlite.exe bindings/node/binaries/${{ matrix.platform }}/
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+
+      - name: Install dependencies
+        run: cd bindings/node && npm install
+
+      - name: Build
+        run: cd bindings/node && npm run build
+
+      - name: Pack
+        run: cd bindings/node && npm pack
+
+      - name: Upload package
+        uses: actions/upload-artifact@v4
+        with:
+          name: node-package-${{ matrix.platform }}
+          path: bindings/node/*.tgz

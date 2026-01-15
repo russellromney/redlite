@@ -5,10 +5,10 @@
 //! Note: These tests start a TCP server and may conflict with other
 //! services on port 16379. Run with --test-threads=1 if needed.
 
+use redis::Commands;
 use std::process::{Child, Command};
 use std::thread;
 use std::time::Duration;
-use redis::Commands;
 
 struct ServerProcess(Child);
 
@@ -91,11 +91,14 @@ fn redis_cli_pipeline(port: u16, commands: &[&[&str]]) -> Vec<String> {
                     }
                 }
 
-                let output = process.wait_with_output().expect("Failed to read redis-cli output");
+                let output = process
+                    .wait_with_output()
+                    .expect("Failed to read redis-cli output");
                 let stdout = String::from_utf8_lossy(&output.stdout);
 
                 // Split output by lines, filtering empty lines
-                let results: Vec<String> = stdout.lines()
+                let results: Vec<String> = stdout
+                    .lines()
                     .map(|s| s.trim().to_string())
                     .filter(|s| !s.is_empty() && !s.starts_with("Could not connect"))
                     .collect();
@@ -119,7 +122,6 @@ fn redis_cli_pipeline(port: u16, commands: &[&[&str]]) -> Vec<String> {
         }
     }
 }
-
 
 #[test]
 fn test_ping() {
@@ -292,11 +294,7 @@ fn test_pttl() {
     // No expiry
     redis_cli(16393, &["SET", "noexp", "value"]);
     let pttl_none = redis_cli(16393, &["PTTL", "noexp"]);
-    assert!(
-        check_int(&pttl_none, -1),
-        "Expected -1, got: {}",
-        pttl_none
-    );
+    assert!(check_int(&pttl_none, -1), "Expected -1, got: {}", pttl_none);
 
     // Non-existent
     let pttl_nonexistent = redis_cli(16393, &["PTTL", "nonexistent"]);
@@ -417,11 +415,7 @@ fn test_incrbyfloat() {
     redis_cli(16402, &["SET", "pi", "3.14"]);
 
     let result = redis_cli(16402, &["INCRBYFLOAT", "pi", "0.01"]);
-    assert!(
-        result.contains("3.15"),
-        "Expected 3.15, got: {}",
-        result
-    );
+    assert!(result.contains("3.15"), "Expected 3.15, got: {}", result);
 }
 
 #[test]
@@ -525,7 +519,10 @@ fn test_hset_multiple() {
     let _server = start_server(16411);
 
     // HSET multiple fields
-    let r1 = redis_cli(16411, &["HSET", "myhash", "f1", "v1", "f2", "v2", "f3", "v3"]);
+    let r1 = redis_cli(
+        16411,
+        &["HSET", "myhash", "f1", "v1", "f2", "v2", "f3", "v3"],
+    );
     assert!(check_int(&r1, 3), "Expected 3, got: {}", r1);
 
     assert_eq!(redis_cli(16411, &["HGET", "myhash", "f1"]), "v1");
@@ -561,7 +558,10 @@ fn test_hgetall() {
 fn test_hdel() {
     let _server = start_server(16414);
 
-    redis_cli(16414, &["HSET", "myhash", "f1", "v1", "f2", "v2", "f3", "v3"]);
+    redis_cli(
+        16414,
+        &["HSET", "myhash", "f1", "v1", "f2", "v2", "f3", "v3"],
+    );
 
     // Delete one field
     let r1 = redis_cli(16414, &["HDEL", "myhash", "f1"]);
@@ -690,7 +690,11 @@ fn test_lpush_rpush() {
 
     // Check order: c, b, a, d
     let range = redis_cli(16422, &["LRANGE", "mylist", "0", "-1"]);
-    assert!(range.contains('c') && range.contains('d'), "Unexpected range: {}", range);
+    assert!(
+        range.contains('c') && range.contains('d'),
+        "Unexpected range: {}",
+        range
+    );
 }
 
 #[test]
@@ -709,7 +713,11 @@ fn test_lpop_rpop() {
 
     // LPOP with count
     let r3 = redis_cli(16423, &["LPOP", "mylist", "2"]);
-    assert!(r3.contains('b') && r3.contains('c'), "Expected 'b' and 'c', got: {}", r3);
+    assert!(
+        r3.contains('b') && r3.contains('c'),
+        "Expected 'b' and 'c', got: {}",
+        r3
+    );
 
     // List should be empty now
     let len = redis_cli(16423, &["LLEN", "mylist"]);
@@ -722,7 +730,11 @@ fn test_lpop_empty() {
 
     // LPOP on non-existent key returns nil
     let result = redis_cli(16424, &["LPOP", "nonexistent"]);
-    assert!(result.is_empty() || result == "(nil)", "Expected nil, got: {}", result);
+    assert!(
+        result.is_empty() || result == "(nil)",
+        "Expected nil, got: {}",
+        result
+    );
 }
 
 #[test]
@@ -747,15 +759,27 @@ fn test_lrange() {
 
     // Full range
     let r1 = redis_cli(16426, &["LRANGE", "mylist", "0", "-1"]);
-    assert!(r1.contains('a') && r1.contains('e'), "Expected full list, got: {}", r1);
+    assert!(
+        r1.contains('a') && r1.contains('e'),
+        "Expected full list, got: {}",
+        r1
+    );
 
     // Partial range
     let r2 = redis_cli(16426, &["LRANGE", "mylist", "1", "3"]);
-    assert!(r2.contains('b') && r2.contains('d'), "Expected b-d, got: {}", r2);
+    assert!(
+        r2.contains('b') && r2.contains('d'),
+        "Expected b-d, got: {}",
+        r2
+    );
 
     // Negative indices
     let r3 = redis_cli(16426, &["LRANGE", "mylist", "-2", "-1"]);
-    assert!(r3.contains('d') && r3.contains('e'), "Expected d-e, got: {}", r3);
+    assert!(
+        r3.contains('d') && r3.contains('e'),
+        "Expected d-e, got: {}",
+        r3
+    );
 }
 
 #[test]
@@ -791,13 +815,21 @@ fn test_lset_errors() {
 
     // LSET on non-existent key
     let r1 = redis_cli(16429, &["LSET", "nonexistent", "0", "value"]);
-    assert!(r1.contains("no such key") || r1.contains("ERR"), "Expected error, got: {}", r1);
+    assert!(
+        r1.contains("no such key") || r1.contains("ERR"),
+        "Expected error, got: {}",
+        r1
+    );
 
     redis_cli(16429, &["RPUSH", "mylist", "a"]);
 
     // LSET out of range
     let r2 = redis_cli(16429, &["LSET", "mylist", "10", "value"]);
-    assert!(r2.contains("out of range") || r2.contains("ERR"), "Expected error, got: {}", r2);
+    assert!(
+        r2.contains("out of range") || r2.contains("ERR"),
+        "Expected error, got: {}",
+        r2
+    );
 }
 
 #[test]
@@ -813,7 +845,11 @@ fn test_ltrim() {
     assert!(check_int(&len, 3), "Expected 3, got: {}", len);
 
     let range = redis_cli(16430, &["LRANGE", "mylist", "0", "-1"]);
-    assert!(range.contains('b') && range.contains('d'), "Expected b-d, got: {}", range);
+    assert!(
+        range.contains('b') && range.contains('d'),
+        "Expected b-d, got: {}",
+        range
+    );
 }
 
 #[test]
@@ -855,10 +891,26 @@ fn test_sadd_smembers() {
 
     // SMEMBERS returns all members
     let members = redis_cli(16433, &["SMEMBERS", "myset"]);
-    assert!(members.contains('a'), "Expected 'a' in members: {}", members);
-    assert!(members.contains('b'), "Expected 'b' in members: {}", members);
-    assert!(members.contains('c'), "Expected 'c' in members: {}", members);
-    assert!(members.contains('d'), "Expected 'd' in members: {}", members);
+    assert!(
+        members.contains('a'),
+        "Expected 'a' in members: {}",
+        members
+    );
+    assert!(
+        members.contains('b'),
+        "Expected 'b' in members: {}",
+        members
+    );
+    assert!(
+        members.contains('c'),
+        "Expected 'c' in members: {}",
+        members
+    );
+    assert!(
+        members.contains('d'),
+        "Expected 'd' in members: {}",
+        members
+    );
 }
 
 #[test]
@@ -918,7 +970,11 @@ fn test_spop() {
 
     // Pop single element
     let r1 = redis_cli(16437, &["SPOP", "myset"]);
-    assert!(!r1.is_empty() && r1 != "(nil)", "Expected a value, got: {}", r1);
+    assert!(
+        !r1.is_empty() && r1 != "(nil)",
+        "Expected a value, got: {}",
+        r1
+    );
 
     let card = redis_cli(16437, &["SCARD", "myset"]);
     assert!(check_int(&card, 2), "Expected 2, got: {}", card);
@@ -936,7 +992,11 @@ fn test_srandmember() {
 
     // Get random member without removing
     let r1 = redis_cli(16438, &["SRANDMEMBER", "myset"]);
-    assert!(!r1.is_empty() && r1 != "(nil)", "Expected a value, got: {}", r1);
+    assert!(
+        !r1.is_empty() && r1 != "(nil)",
+        "Expected a value, got: {}",
+        r1
+    );
 
     // Verify set unchanged
     let card = redis_cli(16438, &["SCARD", "myset"]);
@@ -982,9 +1042,21 @@ fn test_sunion() {
     redis_cli(16441, &["SADD", "set2", "b", "c"]);
 
     let union_result = redis_cli(16441, &["SUNION", "set1", "set2"]);
-    assert!(union_result.contains('a'), "Expected 'a' in union: {}", union_result);
-    assert!(union_result.contains('b'), "Expected 'b' in union: {}", union_result);
-    assert!(union_result.contains('c'), "Expected 'c' in union: {}", union_result);
+    assert!(
+        union_result.contains('a'),
+        "Expected 'a' in union: {}",
+        union_result
+    );
+    assert!(
+        union_result.contains('b'),
+        "Expected 'b' in union: {}",
+        union_result
+    );
+    assert!(
+        union_result.contains('c'),
+        "Expected 'c' in union: {}",
+        union_result
+    );
 }
 
 #[test]
@@ -1105,16 +1177,27 @@ fn test_zrange() {
 
     // Get all members
     let r1 = redis_cli(16448, &["ZRANGE", "myzset", "0", "-1"]);
-    assert!(r1.contains('a') && r1.contains('b') && r1.contains('c'),
-            "Expected a, b, c in result: {}", r1);
+    assert!(
+        r1.contains('a') && r1.contains('b') && r1.contains('c'),
+        "Expected a, b, c in result: {}",
+        r1
+    );
 
     // Subset
     let r2 = redis_cli(16448, &["ZRANGE", "myzset", "0", "1"]);
-    assert!(r2.contains('a') && r2.contains('b'), "Expected a, b in result: {}", r2);
+    assert!(
+        r2.contains('a') && r2.contains('b'),
+        "Expected a, b in result: {}",
+        r2
+    );
 
     // With WITHSCORES
     let r3 = redis_cli(16448, &["ZRANGE", "myzset", "0", "-1", "WITHSCORES"]);
-    assert!(r3.contains('a') && r3.contains('1'), "Expected member and score: {}", r3);
+    assert!(
+        r3.contains('a') && r3.contains('1'),
+        "Expected member and score: {}",
+        r3
+    );
 }
 
 #[test]
@@ -1129,28 +1212,53 @@ fn test_zrevrange() {
     let lines: Vec<&str> = r1.lines().collect();
     assert!(!lines.is_empty(), "Expected results, got empty");
     // The first result should contain 'c'
-    assert!(lines[0].contains('c') || lines[1].contains('c'),
-            "Expected c first in reverse: {}", r1);
+    assert!(
+        lines[0].contains('c') || lines[1].contains('c'),
+        "Expected c first in reverse: {}",
+        r1
+    );
 }
 
 #[test]
 fn test_zrangebyscore() {
     let _server = start_server(16450);
 
-    redis_cli(16450, &["ZADD", "myzset", "1", "a", "2", "b", "3", "c", "4", "d"]);
+    redis_cli(
+        16450,
+        &["ZADD", "myzset", "1", "a", "2", "b", "3", "c", "4", "d"],
+    );
 
     // Score range
     let r1 = redis_cli(16450, &["ZRANGEBYSCORE", "myzset", "2", "3"]);
-    assert!(r1.contains('b') && r1.contains('c'), "Expected b, c in result: {}", r1);
-    assert!(!r1.contains('a') && !r1.contains('d'), "Unexpected a or d in result: {}", r1);
+    assert!(
+        r1.contains('b') && r1.contains('c'),
+        "Expected b, c in result: {}",
+        r1
+    );
+    assert!(
+        !r1.contains('a') && !r1.contains('d'),
+        "Unexpected a or d in result: {}",
+        r1
+    );
 
     // With LIMIT
-    let r2 = redis_cli(16450, &["ZRANGEBYSCORE", "myzset", "1", "4", "LIMIT", "1", "2"]);
-    assert!(r2.contains('b') && r2.contains('c'), "Expected b, c with LIMIT: {}", r2);
+    let r2 = redis_cli(
+        16450,
+        &["ZRANGEBYSCORE", "myzset", "1", "4", "LIMIT", "1", "2"],
+    );
+    assert!(
+        r2.contains('b') && r2.contains('c'),
+        "Expected b, c with LIMIT: {}",
+        r2
+    );
 
     // -inf and +inf
     let r3 = redis_cli(16450, &["ZRANGEBYSCORE", "myzset", "-inf", "+inf"]);
-    assert!(r3.contains('a') && r3.contains('d'), "Expected all with -inf/+inf: {}", r3);
+    assert!(
+        r3.contains('a') && r3.contains('d'),
+        "Expected all with -inf/+inf: {}",
+        r3
+    );
 }
 
 #[test]
@@ -1194,7 +1302,10 @@ fn test_zincrby() {
 fn test_zremrangebyrank() {
     let _server = start_server(16453);
 
-    redis_cli(16453, &["ZADD", "myzset", "1", "a", "2", "b", "3", "c", "4", "d"]);
+    redis_cli(
+        16453,
+        &["ZADD", "myzset", "1", "a", "2", "b", "3", "c", "4", "d"],
+    );
 
     // Remove first two
     let r1 = redis_cli(16453, &["ZREMRANGEBYRANK", "myzset", "0", "1"]);
@@ -1205,14 +1316,21 @@ fn test_zremrangebyrank() {
 
     // Verify remaining members
     let r3 = redis_cli(16453, &["ZRANGE", "myzset", "0", "-1"]);
-    assert!(r3.contains('c') && r3.contains('d'), "Expected c, d remaining: {}", r3);
+    assert!(
+        r3.contains('c') && r3.contains('d'),
+        "Expected c, d remaining: {}",
+        r3
+    );
 }
 
 #[test]
 fn test_zremrangebyscore() {
     let _server = start_server(16454);
 
-    redis_cli(16454, &["ZADD", "myzset", "1", "a", "2", "b", "3", "c", "4", "d"]);
+    redis_cli(
+        16454,
+        &["ZADD", "myzset", "1", "a", "2", "b", "3", "c", "4", "d"],
+    );
 
     // Remove middle scores
     let r1 = redis_cli(16454, &["ZREMRANGEBYSCORE", "myzset", "2", "3"]);
@@ -1223,7 +1341,11 @@ fn test_zremrangebyscore() {
 
     // Verify remaining members
     let r3 = redis_cli(16454, &["ZRANGE", "myzset", "0", "-1"]);
-    assert!(r3.contains('a') && r3.contains('d'), "Expected a, d remaining: {}", r3);
+    assert!(
+        r3.contains('a') && r3.contains('d'),
+        "Expected a, d remaining: {}",
+        r3
+    );
 }
 
 #[test]
@@ -1268,7 +1390,11 @@ fn test_select_db() {
 
     // Use -n flag to query db 1 - key shouldn't exist
     let r2 = redis_cli_n(16457, 1, &["GET", "key"]);
-    assert!(r2.is_empty() || r2.contains("nil"), "Expected nil in db 1, got: {}", r2);
+    assert!(
+        r2.is_empty() || r2.contains("nil"),
+        "Expected nil in db 1, got: {}",
+        r2
+    );
 
     // Set a different value in db 1
     redis_cli_n(16457, 1, &["SET", "key", "value1"]);
@@ -1284,13 +1410,25 @@ fn test_select_invalid_db() {
 
     // SELECT with invalid database index
     let r1 = redis_cli(16458, &["SELECT", "16"]);
-    assert!(r1.contains("ERR") || r1.contains("out of range"), "Expected error, got: {}", r1);
+    assert!(
+        r1.contains("ERR") || r1.contains("out of range"),
+        "Expected error, got: {}",
+        r1
+    );
 
     let r2 = redis_cli(16458, &["SELECT", "-1"]);
-    assert!(r2.contains("ERR") || r2.contains("out of range") || r2.contains("integer"), "Expected error, got: {}", r2);
+    assert!(
+        r2.contains("ERR") || r2.contains("out of range") || r2.contains("integer"),
+        "Expected error, got: {}",
+        r2
+    );
 
     let r3 = redis_cli(16458, &["SELECT", "abc"]);
-    assert!(r3.contains("integer") || r3.contains("ERR"), "Expected error, got: {}", r3);
+    assert!(
+        r3.contains("integer") || r3.contains("ERR"),
+        "Expected error, got: {}",
+        r3
+    );
 }
 
 #[test]
@@ -1335,7 +1473,11 @@ fn test_flushdb() {
 
     // Verify keys are gone
     let r4 = redis_cli(16461, &["GET", "key1"]);
-    assert!(r4.is_empty() || r4.contains("nil"), "Expected nil, got: {}", r4);
+    assert!(
+        r4.is_empty() || r4.contains("nil"),
+        "Expected nil, got: {}",
+        r4
+    );
 }
 
 #[test]
@@ -1343,7 +1485,11 @@ fn test_info_basic() {
     let _server = start_server(16462);
 
     let r = redis_cli(16462, &["INFO"]);
-    assert!(r.contains("Server") || r.contains("redis_version"), "Expected INFO output, got: {}", r);
+    assert!(
+        r.contains("Server") || r.contains("redis_version"),
+        "Expected INFO output, got: {}",
+        r
+    );
 }
 
 #[test]
@@ -1354,8 +1500,16 @@ fn test_info_keyspace() {
     redis_cli(16463, &["SET", "key2", "value2"]);
 
     let r = redis_cli(16463, &["INFO", "keyspace"]);
-    assert!(r.contains("Keyspace") || r.contains("db0"), "Expected keyspace info, got: {}", r);
-    assert!(r.contains("keys=2") || r.contains("2"), "Expected keys count, got: {}", r);
+    assert!(
+        r.contains("Keyspace") || r.contains("db0"),
+        "Expected keyspace info, got: {}",
+        r
+    );
+    assert!(
+        r.contains("keys=2") || r.contains("2"),
+        "Expected keys count, got: {}",
+        r
+    );
 }
 
 #[test]
@@ -1394,7 +1548,11 @@ fn test_flushdb_only_current() {
     redis_cli_n(16465, 1, &["FLUSHDB"]);
 
     let r1 = redis_cli_n(16465, 1, &["DBSIZE"]);
-    assert!(check_int(&r1, 0), "Expected 0 in db 1 after flush, got: {}", r1);
+    assert!(
+        check_int(&r1, 0),
+        "Expected 0 in db 1 after flush, got: {}",
+        r1
+    );
 
     // db 0 should still have its key
     let r2 = redis_cli(16465, &["DBSIZE"]);
@@ -1446,7 +1604,11 @@ fn test_keyinfo_nonexistent() {
     let _server = start_server(16468);
 
     let r = redis_cli(16468, &["KEYINFO", "nonexistent"]);
-    assert!(r.is_empty() || r.contains("nil"), "Expected nil for nonexistent key, got: {}", r);
+    assert!(
+        r.is_empty() || r.contains("nil"),
+        "Expected nil for nonexistent key, got: {}",
+        r
+    );
 }
 
 #[test]
@@ -1456,10 +1618,22 @@ fn test_keyinfo_string() {
     redis_cli(16469, &["SET", "mykey", "myvalue"]);
 
     let r = redis_cli(16469, &["KEYINFO", "mykey"]);
-    assert!(r.contains("type") && r.contains("string"), "Expected type=string, got: {}", r);
+    assert!(
+        r.contains("type") && r.contains("string"),
+        "Expected type=string, got: {}",
+        r
+    );
     assert!(r.contains("ttl"), "Expected ttl field, got: {}", r);
-    assert!(r.contains("created_at"), "Expected created_at field, got: {}", r);
-    assert!(r.contains("updated_at"), "Expected updated_at field, got: {}", r);
+    assert!(
+        r.contains("created_at"),
+        "Expected created_at field, got: {}",
+        r
+    );
+    assert!(
+        r.contains("updated_at"),
+        "Expected updated_at field, got: {}",
+        r
+    );
 }
 
 #[test]
@@ -1469,7 +1643,11 @@ fn test_keyinfo_with_ttl() {
     redis_cli(16470, &["SET", "mykey", "myvalue", "EX", "100"]);
 
     let r = redis_cli(16470, &["KEYINFO", "mykey"]);
-    assert!(r.contains("type") && r.contains("string"), "Expected type=string, got: {}", r);
+    assert!(
+        r.contains("type") && r.contains("string"),
+        "Expected type=string, got: {}",
+        r
+    );
     // TTL should be present and approximately 100 or less
     assert!(r.contains("ttl"), "Expected ttl field, got: {}", r);
 }
@@ -1481,7 +1659,11 @@ fn test_keyinfo_hash() {
     redis_cli(16471, &["HSET", "myhash", "field1", "value1"]);
 
     let r = redis_cli(16471, &["KEYINFO", "myhash"]);
-    assert!(r.contains("type") && r.contains("hash"), "Expected type=hash, got: {}", r);
+    assert!(
+        r.contains("type") && r.contains("hash"),
+        "Expected type=hash, got: {}",
+        r
+    );
 }
 
 #[test]
@@ -1491,7 +1673,11 @@ fn test_keyinfo_list() {
     redis_cli(16472, &["RPUSH", "mylist", "a", "b", "c"]);
 
     let r = redis_cli(16472, &["KEYINFO", "mylist"]);
-    assert!(r.contains("type") && r.contains("list"), "Expected type=list, got: {}", r);
+    assert!(
+        r.contains("type") && r.contains("list"),
+        "Expected type=list, got: {}",
+        r
+    );
 }
 
 #[test]
@@ -1501,7 +1687,11 @@ fn test_keyinfo_set() {
     redis_cli(16473, &["SADD", "myset", "member1", "member2"]);
 
     let r = redis_cli(16473, &["KEYINFO", "myset"]);
-    assert!(r.contains("type") && r.contains("set"), "Expected type=set, got: {}", r);
+    assert!(
+        r.contains("type") && r.contains("set"),
+        "Expected type=set, got: {}",
+        r
+    );
 }
 
 #[test]
@@ -1511,7 +1701,11 @@ fn test_keyinfo_zset() {
     redis_cli(16474, &["ZADD", "myzset", "1", "member1"]);
 
     let r = redis_cli(16474, &["KEYINFO", "myzset"]);
-    assert!(r.contains("type") && r.contains("zset"), "Expected type=zset, got: {}", r);
+    assert!(
+        r.contains("type") && r.contains("zset"),
+        "Expected type=zset, got: {}",
+        r
+    );
 }
 
 // --- Session 13: Stream Integration Tests ---
@@ -1564,8 +1758,16 @@ fn test_xrange() {
     // Get range
     let r2 = redis_cli(16478, &["XRANGE", "mystream", "1500", "2500"]);
     assert!(r2.contains("2000-0"), "Expected 2000-0 in result: {}", r2);
-    assert!(!r2.contains("1000-0"), "Unexpected 1000-0 in result: {}", r2);
-    assert!(!r2.contains("3000-0"), "Unexpected 3000-0 in result: {}", r2);
+    assert!(
+        !r2.contains("1000-0"),
+        "Unexpected 1000-0 in result: {}",
+        r2
+    );
+    assert!(
+        !r2.contains("3000-0"),
+        "Unexpected 3000-0 in result: {}",
+        r2
+    );
 
     // With COUNT
     let r3 = redis_cli(16478, &["XRANGE", "mystream", "-", "+", "COUNT", "2"]);
@@ -1615,7 +1817,10 @@ fn test_xtrim_maxlen() {
     let _server = start_server(16481);
 
     for i in 1..=5 {
-        redis_cli(16481, &["XADD", "mystream", &format!("{}-0", i * 1000), "f", "v"]);
+        redis_cli(
+            16481,
+            &["XADD", "mystream", &format!("{}-0", i * 1000), "f", "v"],
+        );
     }
 
     let r1 = redis_cli(16481, &["XLEN", "mystream"]);
@@ -1634,7 +1839,10 @@ fn test_xtrim_minid() {
     let _server = start_server(16482);
 
     for i in 1..=5 {
-        redis_cli(16482, &["XADD", "mystream", &format!("{}-0", i * 1000), "f", "v"]);
+        redis_cli(
+            16482,
+            &["XADD", "mystream", &format!("{}-0", i * 1000), "f", "v"],
+        );
     }
 
     // Trim entries before 3000-0
@@ -1674,7 +1882,11 @@ fn test_xinfo_stream() {
 
     let r = redis_cli(16484, &["XINFO", "STREAM", "mystream"]);
     assert!(r.contains("length"), "Expected length: {}", r);
-    assert!(r.contains("last-generated-id"), "Expected last-generated-id: {}", r);
+    assert!(
+        r.contains("last-generated-id"),
+        "Expected last-generated-id: {}",
+        r
+    );
     assert!(r.contains("2000-0"), "Expected 2000-0 as last ID: {}", r);
 }
 
@@ -1708,7 +1920,11 @@ fn test_xadd_nomkstream() {
 
     // NOMKSTREAM on non-existent stream should return nil
     let r1 = redis_cli(16487, &["XADD", "mystream", "NOMKSTREAM", "*", "f", "v"]);
-    assert!(r1.is_empty() || r1.contains("nil"), "Expected nil for NOMKSTREAM: {}", r1);
+    assert!(
+        r1.is_empty() || r1.contains("nil"),
+        "Expected nil for NOMKSTREAM: {}",
+        r1
+    );
 
     // Create the stream
     redis_cli(16487, &["XADD", "mystream", "*", "f", "v"]);
@@ -1724,7 +1940,18 @@ fn test_xadd_maxlen() {
 
     // Add entries with MAXLEN 3
     for i in 1..=5 {
-        redis_cli(16488, &["XADD", "mystream", "MAXLEN", "3", &format!("{}-0", i * 1000), "f", "v"]);
+        redis_cli(
+            16488,
+            &[
+                "XADD",
+                "mystream",
+                "MAXLEN",
+                "3",
+                &format!("{}-0", i * 1000),
+                "f",
+                "v",
+            ],
+        );
     }
 
     let r = redis_cli(16488, &["XLEN", "mystream"]);
@@ -1754,7 +1981,10 @@ fn test_xgroup_create_mkstream() {
     let _server = start_server(16490);
 
     // Create group with MKSTREAM on non-existent stream
-    let r1 = redis_cli(16490, &["XGROUP", "CREATE", "newstream", "mygroup", "0", "MKSTREAM"]);
+    let r1 = redis_cli(
+        16490,
+        &["XGROUP", "CREATE", "newstream", "mygroup", "0", "MKSTREAM"],
+    );
     assert_eq!(r1, "OK", "Expected OK, got: {}", r1);
 
     // Stream should now exist
@@ -1795,11 +2025,29 @@ fn test_xgroup_createconsumer() {
     redis_cli(16493, &["XADD", "mystream", "1000-0", "f", "v"]);
     redis_cli(16493, &["XGROUP", "CREATE", "mystream", "mygroup", "0"]);
 
-    let r1 = redis_cli(16493, &["XGROUP", "CREATECONSUMER", "mystream", "mygroup", "consumer1"]);
+    let r1 = redis_cli(
+        16493,
+        &[
+            "XGROUP",
+            "CREATECONSUMER",
+            "mystream",
+            "mygroup",
+            "consumer1",
+        ],
+    );
     assert!(check_int(&r1, 1), "Expected 1, got: {}", r1);
 
     // Creating same consumer again returns 0
-    let r2 = redis_cli(16493, &["XGROUP", "CREATECONSUMER", "mystream", "mygroup", "consumer1"]);
+    let r2 = redis_cli(
+        16493,
+        &[
+            "XGROUP",
+            "CREATECONSUMER",
+            "mystream",
+            "mygroup",
+            "consumer1",
+        ],
+    );
     assert!(check_int(&r2, 0), "Expected 0, got: {}", r2);
 }
 
@@ -1809,9 +2057,21 @@ fn test_xgroup_delconsumer() {
 
     redis_cli(16494, &["XADD", "mystream", "1000-0", "f", "v"]);
     redis_cli(16494, &["XGROUP", "CREATE", "mystream", "mygroup", "0"]);
-    redis_cli(16494, &["XGROUP", "CREATECONSUMER", "mystream", "mygroup", "consumer1"]);
+    redis_cli(
+        16494,
+        &[
+            "XGROUP",
+            "CREATECONSUMER",
+            "mystream",
+            "mygroup",
+            "consumer1",
+        ],
+    );
 
-    let r = redis_cli(16494, &["XGROUP", "DELCONSUMER", "mystream", "mygroup", "consumer1"]);
+    let r = redis_cli(
+        16494,
+        &["XGROUP", "DELCONSUMER", "mystream", "mygroup", "consumer1"],
+    );
     assert!(check_int(&r, 0), "Expected 0 pending, got: {}", r);
 }
 
@@ -1824,13 +2084,39 @@ fn test_xreadgroup_new_messages() {
     redis_cli(16495, &["XGROUP", "CREATE", "mystream", "mygroup", "0"]);
 
     // Read new messages with >
-    let r1 = redis_cli(16495, &["XREADGROUP", "GROUP", "mygroup", "consumer1", "STREAMS", "mystream", ">"]);
+    let r1 = redis_cli(
+        16495,
+        &[
+            "XREADGROUP",
+            "GROUP",
+            "mygroup",
+            "consumer1",
+            "STREAMS",
+            "mystream",
+            ">",
+        ],
+    );
     assert!(r1.contains("1000-0"), "Expected 1000-0 in result: {}", r1);
     assert!(r1.contains("2000-0"), "Expected 2000-0 in result: {}", r1);
 
     // Reading again returns nil (all delivered)
-    let r2 = redis_cli(16495, &["XREADGROUP", "GROUP", "mygroup", "consumer1", "STREAMS", "mystream", ">"]);
-    assert!(r2.is_empty() || r2.contains("nil"), "Expected nil, got: {}", r2);
+    let r2 = redis_cli(
+        16495,
+        &[
+            "XREADGROUP",
+            "GROUP",
+            "mygroup",
+            "consumer1",
+            "STREAMS",
+            "mystream",
+            ">",
+        ],
+    );
+    assert!(
+        r2.is_empty() || r2.contains("nil"),
+        "Expected nil, got: {}",
+        r2
+    );
 }
 
 #[test]
@@ -1841,11 +2127,37 @@ fn test_xreadgroup_pending() {
     redis_cli(16496, &["XGROUP", "CREATE", "mystream", "mygroup", "0"]);
 
     // First read creates pending entry
-    redis_cli(16496, &["XREADGROUP", "GROUP", "mygroup", "consumer1", "STREAMS", "mystream", ">"]);
+    redis_cli(
+        16496,
+        &[
+            "XREADGROUP",
+            "GROUP",
+            "mygroup",
+            "consumer1",
+            "STREAMS",
+            "mystream",
+            ">",
+        ],
+    );
 
     // Read pending entries with 0
-    let r = redis_cli(16496, &["XREADGROUP", "GROUP", "mygroup", "consumer1", "STREAMS", "mystream", "0"]);
-    assert!(r.contains("1000-0"), "Expected pending entry in result: {}", r);
+    let r = redis_cli(
+        16496,
+        &[
+            "XREADGROUP",
+            "GROUP",
+            "mygroup",
+            "consumer1",
+            "STREAMS",
+            "mystream",
+            "0",
+        ],
+    );
+    assert!(
+        r.contains("1000-0"),
+        "Expected pending entry in result: {}",
+        r
+    );
 }
 
 #[test]
@@ -1856,7 +2168,19 @@ fn test_xreadgroup_noack() {
     redis_cli(16497, &["XGROUP", "CREATE", "mystream", "mygroup", "0"]);
 
     // Read with NOACK
-    redis_cli(16497, &["XREADGROUP", "GROUP", "mygroup", "consumer1", "NOACK", "STREAMS", "mystream", ">"]);
+    redis_cli(
+        16497,
+        &[
+            "XREADGROUP",
+            "GROUP",
+            "mygroup",
+            "consumer1",
+            "NOACK",
+            "STREAMS",
+            "mystream",
+            ">",
+        ],
+    );
 
     // Check pending is empty
     let r = redis_cli(16497, &["XPENDING", "mystream", "mygroup"]);
@@ -1870,7 +2194,18 @@ fn test_xack() {
     redis_cli(16498, &["XADD", "mystream", "1000-0", "f", "v"]);
     redis_cli(16498, &["XADD", "mystream", "2000-0", "f", "v2"]);
     redis_cli(16498, &["XGROUP", "CREATE", "mystream", "mygroup", "0"]);
-    redis_cli(16498, &["XREADGROUP", "GROUP", "mygroup", "consumer1", "STREAMS", "mystream", ">"]);
+    redis_cli(
+        16498,
+        &[
+            "XREADGROUP",
+            "GROUP",
+            "mygroup",
+            "consumer1",
+            "STREAMS",
+            "mystream",
+            ">",
+        ],
+    );
 
     // Acknowledge one message
     let r1 = redis_cli(16498, &["XACK", "mystream", "mygroup", "1000-0"]);
@@ -1888,12 +2223,31 @@ fn test_xpending_summary() {
     redis_cli(16499, &["XADD", "mystream", "1000-0", "f", "v"]);
     redis_cli(16499, &["XADD", "mystream", "2000-0", "f", "v2"]);
     redis_cli(16499, &["XGROUP", "CREATE", "mystream", "mygroup", "0"]);
-    redis_cli(16499, &["XREADGROUP", "GROUP", "mygroup", "consumer1", "STREAMS", "mystream", ">"]);
+    redis_cli(
+        16499,
+        &[
+            "XREADGROUP",
+            "GROUP",
+            "mygroup",
+            "consumer1",
+            "STREAMS",
+            "mystream",
+            ">",
+        ],
+    );
 
     let r = redis_cli(16499, &["XPENDING", "mystream", "mygroup"]);
     assert!(r.contains('2'), "Expected 2 pending, got: {}", r);
-    assert!(r.contains("1000-0"), "Expected smallest ID 1000-0, got: {}", r);
-    assert!(r.contains("2000-0"), "Expected largest ID 2000-0, got: {}", r);
+    assert!(
+        r.contains("1000-0"),
+        "Expected smallest ID 1000-0, got: {}",
+        r
+    );
+    assert!(
+        r.contains("2000-0"),
+        "Expected largest ID 2000-0, got: {}",
+        r
+    );
     assert!(r.contains("consumer1"), "Expected consumer1, got: {}", r);
 }
 
@@ -1904,12 +2258,35 @@ fn test_xpending_range() {
     redis_cli(16500, &["XADD", "mystream", "1000-0", "f", "v"]);
     redis_cli(16500, &["XADD", "mystream", "2000-0", "f", "v2"]);
     redis_cli(16500, &["XGROUP", "CREATE", "mystream", "mygroup", "0"]);
-    redis_cli(16500, &["XREADGROUP", "GROUP", "mygroup", "consumer1", "STREAMS", "mystream", ">"]);
+    redis_cli(
+        16500,
+        &[
+            "XREADGROUP",
+            "GROUP",
+            "mygroup",
+            "consumer1",
+            "STREAMS",
+            "mystream",
+            ">",
+        ],
+    );
 
     let r = redis_cli(16500, &["XPENDING", "mystream", "mygroup", "-", "+", "10"]);
-    assert!(r.contains("1000-0"), "Expected 1000-0 in pending range: {}", r);
-    assert!(r.contains("2000-0"), "Expected 2000-0 in pending range: {}", r);
-    assert!(r.contains("consumer1"), "Expected consumer1 in result: {}", r);
+    assert!(
+        r.contains("1000-0"),
+        "Expected 1000-0 in pending range: {}",
+        r
+    );
+    assert!(
+        r.contains("2000-0"),
+        "Expected 2000-0 in pending range: {}",
+        r
+    );
+    assert!(
+        r.contains("consumer1"),
+        "Expected consumer1 in result: {}",
+        r
+    );
 }
 
 #[test]
@@ -1918,15 +2295,45 @@ fn test_xclaim() {
 
     redis_cli(16501, &["XADD", "mystream", "1000-0", "f", "v"]);
     redis_cli(16501, &["XGROUP", "CREATE", "mystream", "mygroup", "0"]);
-    redis_cli(16501, &["XREADGROUP", "GROUP", "mygroup", "consumer1", "STREAMS", "mystream", ">"]);
+    redis_cli(
+        16501,
+        &[
+            "XREADGROUP",
+            "GROUP",
+            "mygroup",
+            "consumer1",
+            "STREAMS",
+            "mystream",
+            ">",
+        ],
+    );
 
     // Claim with FORCE
-    let r = redis_cli(16501, &["XCLAIM", "mystream", "mygroup", "consumer2", "0", "1000-0", "FORCE"]);
-    assert!(r.contains("1000-0"), "Expected 1000-0 in claim result: {}", r);
+    let r = redis_cli(
+        16501,
+        &[
+            "XCLAIM",
+            "mystream",
+            "mygroup",
+            "consumer2",
+            "0",
+            "1000-0",
+            "FORCE",
+        ],
+    );
+    assert!(
+        r.contains("1000-0"),
+        "Expected 1000-0 in claim result: {}",
+        r
+    );
 
     // Verify consumer2 now owns it
     let r2 = redis_cli(16501, &["XPENDING", "mystream", "mygroup", "-", "+", "10"]);
-    assert!(r2.contains("consumer2"), "Expected consumer2 in pending: {}", r2);
+    assert!(
+        r2.contains("consumer2"),
+        "Expected consumer2 in pending: {}",
+        r2
+    );
 }
 
 #[test]
@@ -1935,11 +2342,38 @@ fn test_xclaim_justid() {
 
     redis_cli(16502, &["XADD", "mystream", "1000-0", "f", "v"]);
     redis_cli(16502, &["XGROUP", "CREATE", "mystream", "mygroup", "0"]);
-    redis_cli(16502, &["XREADGROUP", "GROUP", "mygroup", "consumer1", "STREAMS", "mystream", ">"]);
+    redis_cli(
+        16502,
+        &[
+            "XREADGROUP",
+            "GROUP",
+            "mygroup",
+            "consumer1",
+            "STREAMS",
+            "mystream",
+            ">",
+        ],
+    );
 
     // Claim with JUSTID
-    let r = redis_cli(16502, &["XCLAIM", "mystream", "mygroup", "consumer2", "0", "1000-0", "FORCE", "JUSTID"]);
-    assert!(r.contains("1000-0"), "Expected 1000-0 in justid result: {}", r);
+    let r = redis_cli(
+        16502,
+        &[
+            "XCLAIM",
+            "mystream",
+            "mygroup",
+            "consumer2",
+            "0",
+            "1000-0",
+            "FORCE",
+            "JUSTID",
+        ],
+    );
+    assert!(
+        r.contains("1000-0"),
+        "Expected 1000-0 in justid result: {}",
+        r
+    );
 }
 
 #[test]
@@ -1961,12 +2395,38 @@ fn test_xinfo_consumers() {
 
     redis_cli(16504, &["XADD", "mystream", "1000-0", "f", "v"]);
     redis_cli(16504, &["XGROUP", "CREATE", "mystream", "mygroup", "0"]);
-    redis_cli(16504, &["XGROUP", "CREATECONSUMER", "mystream", "mygroup", "consumer1"]);
-    redis_cli(16504, &["XGROUP", "CREATECONSUMER", "mystream", "mygroup", "consumer2"]);
+    redis_cli(
+        16504,
+        &[
+            "XGROUP",
+            "CREATECONSUMER",
+            "mystream",
+            "mygroup",
+            "consumer1",
+        ],
+    );
+    redis_cli(
+        16504,
+        &[
+            "XGROUP",
+            "CREATECONSUMER",
+            "mystream",
+            "mygroup",
+            "consumer2",
+        ],
+    );
 
     let r = redis_cli(16504, &["XINFO", "CONSUMERS", "mystream", "mygroup"]);
-    assert!(r.contains("consumer1"), "Expected consumer1 in result: {}", r);
-    assert!(r.contains("consumer2"), "Expected consumer2 in result: {}", r);
+    assert!(
+        r.contains("consumer1"),
+        "Expected consumer1 in result: {}",
+        r
+    );
+    assert!(
+        r.contains("consumer2"),
+        "Expected consumer2 in result: {}",
+        r
+    );
 }
 
 #[test]
@@ -1979,7 +2439,20 @@ fn test_xreadgroup_count() {
     redis_cli(16505, &["XGROUP", "CREATE", "mystream", "mygroup", "0"]);
 
     // Read with COUNT 2
-    let r = redis_cli(16505, &["XREADGROUP", "GROUP", "mygroup", "consumer1", "COUNT", "2", "STREAMS", "mystream", ">"]);
+    let r = redis_cli(
+        16505,
+        &[
+            "XREADGROUP",
+            "GROUP",
+            "mygroup",
+            "consumer1",
+            "COUNT",
+            "2",
+            "STREAMS",
+            "mystream",
+            ">",
+        ],
+    );
     assert!(r.contains("1000-0"), "Expected 1000-0 in result: {}", r);
     assert!(r.contains("2000-0"), "Expected 2000-0 in result: {}", r);
     // Should NOT contain 3000-0 due to COUNT limit - but actually redis-cli output may vary
@@ -1991,7 +2464,11 @@ fn test_xgroup_no_such_key() {
 
     // Try to create group on non-existent stream without MKSTREAM
     let r = redis_cli(16506, &["XGROUP", "CREATE", "nonexistent", "mygroup", "0"]);
-    assert!(r.to_lowercase().contains("key") || r.contains("ERR"), "Expected error about key, got: {}", r);
+    assert!(
+        r.to_lowercase().contains("key") || r.contains("ERR"),
+        "Expected error about key, got: {}",
+        r
+    );
 }
 
 #[test]
@@ -2012,10 +2489,24 @@ fn test_delconsumer_with_pending() {
     redis_cli(16508, &["XADD", "mystream", "1000-0", "f", "v"]);
     redis_cli(16508, &["XADD", "mystream", "2000-0", "f", "v2"]);
     redis_cli(16508, &["XGROUP", "CREATE", "mystream", "mygroup", "0"]);
-    redis_cli(16508, &["XREADGROUP", "GROUP", "mygroup", "consumer1", "STREAMS", "mystream", ">"]);
+    redis_cli(
+        16508,
+        &[
+            "XREADGROUP",
+            "GROUP",
+            "mygroup",
+            "consumer1",
+            "STREAMS",
+            "mystream",
+            ">",
+        ],
+    );
 
     // Delete consumer should return pending count
-    let r = redis_cli(16508, &["XGROUP", "DELCONSUMER", "mystream", "mygroup", "consumer1"]);
+    let r = redis_cli(
+        16508,
+        &["XGROUP", "DELCONSUMER", "mystream", "mygroup", "consumer1"],
+    );
     assert!(check_int(&r, 2), "Expected 2 pending deleted, got: {}", r);
 }
 
@@ -2104,7 +2595,15 @@ async fn test_integration_xadd_notification() {
     let push_task = tokio::spawn(async move {
         tokio::time::sleep(std::time::Duration::from_millis(50)).await;
         let id = db_clone
-            .xadd("events", None, &[(b"type", b"click")], false, None, None, false)
+            .xadd(
+                "events",
+                None,
+                &[(b"type", b"click")],
+                false,
+                None,
+                None,
+                false,
+            )
             .unwrap();
         assert!(id.is_some());
     });
@@ -2217,7 +2716,6 @@ async fn test_integration_concurrent_writes_same_key() {
     task3.await.unwrap();
 }
 
-
 // --- Pub/Sub Tests (Session 15.4) ---
 
 #[test]
@@ -2308,10 +2806,7 @@ fn test_watch_returns_ok() {
     let _server = start_server(17013);
 
     // Set a key first and then WATCH it in the same connection
-    let results = redis_cli_pipeline(17013, &[
-        &["SET", "mykey", "value1"],
-        &["WATCH", "mykey"],
-    ]);
+    let results = redis_cli_pipeline(17013, &[&["SET", "mykey", "value1"], &["WATCH", "mykey"]]);
 
     // Second result should be OK
     assert_eq!(results[1], "OK");
@@ -2322,11 +2817,14 @@ fn test_unwatch_returns_ok() {
     let _server = start_server(17014);
 
     // Set, watch, and unwatch a key in the same connection
-    let results = redis_cli_pipeline(17014, &[
-        &["SET", "mykey", "value1"],
-        &["WATCH", "mykey"],
-        &["UNWATCH"],
-    ]);
+    let results = redis_cli_pipeline(
+        17014,
+        &[
+            &["SET", "mykey", "value1"],
+            &["WATCH", "mykey"],
+            &["UNWATCH"],
+        ],
+    );
 
     // Results should be OK, OK, OK
     assert_eq!(results[1], "OK");
@@ -2338,18 +2836,29 @@ fn test_watch_exec_succeeds_when_not_modified() {
     let _server = start_server(17015);
 
     // Watch, start transaction, queue command, and exec - all in one connection
-    let results = redis_cli_pipeline(17015, &[
-        &["SET", "mykey", "value1"],
-        &["WATCH", "mykey"],
-        &["MULTI"],
-        &["SET", "mykey", "value2"],
-        &["EXEC"],
-    ]);
+    let results = redis_cli_pipeline(
+        17015,
+        &[
+            &["SET", "mykey", "value1"],
+            &["WATCH", "mykey"],
+            &["MULTI"],
+            &["SET", "mykey", "value2"],
+            &["EXEC"],
+        ],
+    );
 
     let exec_result = &results[4];
     // EXEC should return array with OK (not nil)
-    assert!(!exec_result.contains("nil"), "EXEC should succeed when watched key not modified, got: {}", exec_result);
-    assert!(exec_result.contains("OK"), "EXEC result should contain OK, got: {}", exec_result);
+    assert!(
+        !exec_result.contains("nil"),
+        "EXEC should succeed when watched key not modified, got: {}",
+        exec_result
+    );
+    assert!(
+        exec_result.contains("OK"),
+        "EXEC result should contain OK, got: {}",
+        exec_result
+    );
 
     // Verify the SET was executed
     let final_value = redis_cli(17015, &["GET", "mykey"]);
@@ -2365,23 +2874,38 @@ fn test_watch_exec_returns_nil_when_modified() {
     let client1 = redis::Client::open("redis://127.0.0.1:17016").unwrap();
     let mut conn1 = client1.get_connection().unwrap();
 
-    redis::cmd("SET").arg("mykey").arg("value1").execute(&mut conn1);
+    redis::cmd("SET")
+        .arg("mykey")
+        .arg("value1")
+        .execute(&mut conn1);
     redis::cmd("WATCH").arg("mykey").execute(&mut conn1);
     redis::cmd("MULTI").execute(&mut conn1);
-    redis::cmd("SET").arg("mykey").arg("value2").execute(&mut conn1);
+    redis::cmd("SET")
+        .arg("mykey")
+        .arg("value2")
+        .execute(&mut conn1);
 
     // Connection 2: Modify the watched key while connection 1 is in transaction
     let client2 = redis::Client::open("redis://127.0.0.1:17016").unwrap();
     let mut conn2 = client2.get_connection().unwrap();
-    redis::cmd("SET").arg("mykey").arg("modified").execute(&mut conn2);
+    redis::cmd("SET")
+        .arg("mykey")
+        .arg("modified")
+        .execute(&mut conn2);
 
     // Connection 1: Try to EXEC - should return nil because key was modified
     let exec_result: Option<Vec<String>> = redis::cmd("EXEC").query(&mut conn1).unwrap();
-    assert_eq!(exec_result, None, "EXEC should return nil when watched key modified");
+    assert_eq!(
+        exec_result, None,
+        "EXEC should return nil when watched key modified"
+    );
 
     // Verify the key was NOT updated by the transaction (but was modified by connection 2)
     let final_value: String = redis::cmd("GET").arg("mykey").query(&mut conn2).unwrap();
-    assert_eq!(final_value, "modified", "Key should have value from connection 2");
+    assert_eq!(
+        final_value, "modified",
+        "Key should have value from connection 2"
+    );
 }
 
 #[test]
@@ -2393,28 +2917,56 @@ fn test_watch_multiple_keys() {
     let client1 = redis::Client::open("redis://127.0.0.1:17017").unwrap();
     let mut conn1 = client1.get_connection().unwrap();
 
-    redis::cmd("SET").arg("key1").arg("value1").execute(&mut conn1);
-    redis::cmd("SET").arg("key2").arg("value2").execute(&mut conn1);
-    redis::cmd("SET").arg("key3").arg("value3").execute(&mut conn1);
-    redis::cmd("WATCH").arg("key1").arg("key2").arg("key3").execute(&mut conn1);
+    redis::cmd("SET")
+        .arg("key1")
+        .arg("value1")
+        .execute(&mut conn1);
+    redis::cmd("SET")
+        .arg("key2")
+        .arg("value2")
+        .execute(&mut conn1);
+    redis::cmd("SET")
+        .arg("key3")
+        .arg("value3")
+        .execute(&mut conn1);
+    redis::cmd("WATCH")
+        .arg("key1")
+        .arg("key2")
+        .arg("key3")
+        .execute(&mut conn1);
     redis::cmd("MULTI").execute(&mut conn1);
-    redis::cmd("SET").arg("key1").arg("new1").execute(&mut conn1);
+    redis::cmd("SET")
+        .arg("key1")
+        .arg("new1")
+        .execute(&mut conn1);
 
     // Connection 2: Modify one of the watched keys from "outside" the transaction
     let client2 = redis::Client::open("redis://127.0.0.1:17017").unwrap();
     let mut conn2 = client2.get_connection().unwrap();
-    redis::cmd("SET").arg("key2").arg("modified").execute(&mut conn2);
+    redis::cmd("SET")
+        .arg("key2")
+        .arg("modified")
+        .execute(&mut conn2);
 
     // Connection 1: Try to EXEC - should return nil because one watched key was modified
     let exec_result: Option<Vec<String>> = redis::cmd("EXEC").query(&mut conn1).unwrap();
-    assert_eq!(exec_result, None, "EXEC should return nil when any watched key modified");
+    assert_eq!(
+        exec_result, None,
+        "EXEC should return nil when any watched key modified"
+    );
 
     // Verify key1 was NOT updated by transaction, key2 WAS modified by external command
     let key1_value: String = redis::cmd("GET").arg("key1").query(&mut conn2).unwrap();
-    assert_eq!(key1_value, "value1", "key1 should not be modified by rolled-back transaction");
+    assert_eq!(
+        key1_value, "value1",
+        "key1 should not be modified by rolled-back transaction"
+    );
 
     let key2_value: String = redis::cmd("GET").arg("key2").query(&mut conn2).unwrap();
-    assert_eq!(key2_value, "modified", "key2 should have the external modification");
+    assert_eq!(
+        key2_value, "modified",
+        "key2 should have the external modification"
+    );
 }
 
 #[test]
@@ -2428,20 +2980,32 @@ fn test_watch_nonexistent_key_created() {
 
     redis::cmd("WATCH").arg("newkey").execute(&mut conn1);
     redis::cmd("MULTI").execute(&mut conn1);
-    redis::cmd("SET").arg("newkey").arg("myvalue").execute(&mut conn1);
+    redis::cmd("SET")
+        .arg("newkey")
+        .arg("myvalue")
+        .execute(&mut conn1);
 
     // Connection 2: Create the watched key from "outside" the transaction
     let client2 = redis::Client::open("redis://127.0.0.1:17018").unwrap();
     let mut conn2 = client2.get_connection().unwrap();
-    redis::cmd("SET").arg("newkey").arg("external").execute(&mut conn2);
+    redis::cmd("SET")
+        .arg("newkey")
+        .arg("external")
+        .execute(&mut conn2);
 
     // Connection 1: Try to EXEC - should return nil because watched key was created
     let exec_result: Option<Vec<String>> = redis::cmd("EXEC").query(&mut conn1).unwrap();
-    assert_eq!(exec_result, None, "EXEC should return nil when watched non-existent key is created");
+    assert_eq!(
+        exec_result, None,
+        "EXEC should return nil when watched non-existent key is created"
+    );
 
     // Verify the key has the value from the external command
     let final_value: String = redis::cmd("GET").arg("newkey").query(&mut conn2).unwrap();
-    assert_eq!(final_value, "external", "Key should have value from external creation");
+    assert_eq!(
+        final_value, "external",
+        "Key should have value from external creation"
+    );
 }
 
 // --- LREM Tests ---
@@ -2451,7 +3015,10 @@ fn test_lrem_basic() {
     let _server = start_server(16450);
 
     // Create a list with duplicates
-    redis_cli(16450, &["RPUSH", "mylist", "hello", "hello", "foo", "hello"]);
+    redis_cli(
+        16450,
+        &["RPUSH", "mylist", "hello", "hello", "foo", "hello"],
+    );
 
     // Remove first 2 occurrences of "hello"
     let removed = redis_cli(16450, &["LREM", "mylist", "2", "hello"]);
@@ -2656,10 +3223,10 @@ fn test_client_getname_persistent() {
     let _server = start_server(16462);
 
     // SETNAME and GETNAME in same connection via pipeline
-    let results = redis_cli_pipeline(16462, &[
-        &["CLIENT", "SETNAME", "testclient"],
-        &["CLIENT", "GETNAME"],
-    ]);
+    let results = redis_cli_pipeline(
+        16462,
+        &[&["CLIENT", "SETNAME", "testclient"], &["CLIENT", "GETNAME"]],
+    );
     assert_eq!(results[0], "OK");
     assert_eq!(results[1], "testclient");
 }
@@ -2708,10 +3275,10 @@ fn test_client_list_shows_all_metadata() {
     let _server = start_server(16466);
 
     // Set a name first via pipeline to see it in the list
-    let results = redis_cli_pipeline(16466, &[
-        &["CLIENT", "SETNAME", "testclient"],
-        &["CLIENT", "LIST"],
-    ]);
+    let results = redis_cli_pipeline(
+        16466,
+        &[&["CLIENT", "SETNAME", "testclient"], &["CLIENT", "LIST"]],
+    );
 
     let list = &results[1];
     assert!(list.contains("id="));
@@ -2750,10 +3317,7 @@ fn test_client_list_id_filter() {
     let _server = start_server(16469);
 
     // Get our connection ID first
-    let results = redis_cli_pipeline(16469, &[
-        &["CLIENT", "ID"],
-        &["CLIENT", "LIST"],
-    ]);
+    let results = redis_cli_pipeline(16469, &[&["CLIENT", "ID"], &["CLIENT", "LIST"]]);
 
     let our_id = &results[0];
     let full_list = &results[1];
@@ -2814,12 +3378,15 @@ fn test_client_name_persistence() {
     let _server = start_server(16474);
 
     // Set a name and verify it persists within the same connection
-    let results = redis_cli_pipeline(16474, &[
-        &["CLIENT", "SETNAME", "myname"],
-        &["CLIENT", "GETNAME"],
-        &["PING"],
-        &["CLIENT", "GETNAME"],
-    ]);
+    let results = redis_cli_pipeline(
+        16474,
+        &[
+            &["CLIENT", "SETNAME", "myname"],
+            &["CLIENT", "GETNAME"],
+            &["PING"],
+            &["CLIENT", "GETNAME"],
+        ],
+    );
 
     assert_eq!(results[0], "OK");
     assert_eq!(results[1], "myname");
@@ -2843,10 +3410,7 @@ fn test_client_reply_stub() {
 
     // CLIENT REPLY is handled specially by redis-cli (it doesn't show output)
     // Just verify it doesn't error - use pipeline to check it works
-    let results = redis_cli_pipeline(16476, &[
-        &["CLIENT", "REPLY", "ON"],
-        &["PING"],
-    ]);
+    let results = redis_cli_pipeline(16476, &[&["CLIENT", "REPLY", "ON"], &["PING"]]);
 
     // Second command should work normally
     assert_eq!(results[1], "PONG");
@@ -2860,4 +3424,3 @@ fn test_client_noevict_stub() {
     let result = redis_cli(16477, &["CLIENT", "NO-EVICT", "ON"]);
     assert_eq!(result, "OK");
 }
-

@@ -6,7 +6,7 @@ Cross-SDK consistency testing framework. Ensures all Redlite SDKs produce identi
 
 The oracle testing system uses YAML specification files that define expected behavior for Redis commands. Each SDK has a runner that executes these specs and compares results.
 
-**Current Status**: 137 tests passing for both Python and TypeScript SDKs
+**Current Status**: 137 tests passing for Python, TypeScript SDKs, Rust core, and Go SDK (107 passing, 30 skipped)
 
 ```
 oracle/
@@ -19,7 +19,11 @@ oracle/
 │   └── zsets.yaml      # 26 tests
 ├── runners/        # SDK-specific test runners
 │   ├── python_runner.py
-│   └── ts_runner.js
+│   ├── ts_runner.ts / ts_runner.js
+│   ├── go_runner.go         # (requires CGO library setup)
+│   └── rust_runner/         # Rust baseline runner
+│       ├── Cargo.toml
+│       └── src/main.rs
 ├── Makefile
 └── README.md
 ```
@@ -27,17 +31,30 @@ oracle/
 ## Quick Start
 
 ```bash
-# Run all oracle tests
+# Run all oracle tests (Python + TypeScript)
 make test
+
+# Run all including Rust baseline and Go
+make test-all
 
 # Run Python SDK tests only
 make test-python
+
+# Run TypeScript SDK tests only
+make test-ts
+
+# Run Rust core tests (baseline reference)
+make test-rust
+
+# Run Go SDK tests
+make test-go
 
 # Run with verbose output
 make test-verbose
 
 # Run a single spec
-make test-spec SPEC=strings.yaml
+make test-spec-python SPEC=strings.yaml
+make test-spec-ts SPEC=strings.yaml
 ```
 
 ## Test Specification Format
@@ -112,6 +129,7 @@ See `python_runner.py` for reference implementation.
 ## Future Work
 
 - [x] TypeScript runner (`runners/ts_runner.js`)
-- [ ] Rust reference runner (baseline)
+- [x] Rust reference runner (baseline) - `runners/rust_runner/`
+- [x] Go SDK and runner - `runners/go_runner.go` (107/137 tests, 30 skipped for unsupported commands)
 - [ ] CI integration for PR checks
 - [ ] Additional spec files: scan.yaml (SCAN, HSCAN, SSCAN, ZSCAN)

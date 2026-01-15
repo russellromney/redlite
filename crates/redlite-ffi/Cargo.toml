@@ -1,0 +1,18 @@
+[package]
+name = "redlite-ffi"
+version = "0.1.0"
+edition = "2021"
+description = "C FFI bindings for redlite - enables embedding in Python, Go, and other languages"
+license = "Apache-2.0"
+
+[lib]
+name = "redlite_ffi"
+crate-type = ["cdylib", "rlib"]
+
+[dependencies]
+redlite = { path = "../redlite", features = ["full"] }
+libc = "0.2"
+tokio = { version = "1", features = ["rt-multi-thread"] }
+
+[build-dependencies]
+cbindgen = "0.26"

@@ -40,7 +40,10 @@ impl TestServer {
         // Wait for server to be ready
         thread::sleep(Duration::from_millis(300));
 
-        TestServer { process: child, port }
+        TestServer {
+            process: child,
+            port,
+        }
     }
 
     fn url(&self) -> String {
@@ -94,13 +97,28 @@ fn test_watch_multiple_connections_same_watched_key() {
 
     // Client1: MULTI, SET, attempt EXEC after modification
     redis::cmd("MULTI").execute(&mut conn1);
-    redis::cmd("SET").arg("key").arg("from1").execute(&mut conn1);
+    redis::cmd("SET")
+        .arg("key")
+        .arg("from1")
+        .execute(&mut conn1);
 
     // Client2-5: Modify the key
-    redis::cmd("SET").arg("key").arg("from2").execute(&mut conn2);
-    redis::cmd("SET").arg("key").arg("from3").execute(&mut conn3);
-    redis::cmd("SET").arg("key").arg("from4").execute(&mut conn4);
-    redis::cmd("SET").arg("key").arg("from5").execute(&mut conn5);
+    redis::cmd("SET")
+        .arg("key")
+        .arg("from2")
+        .execute(&mut conn2);
+    redis::cmd("SET")
+        .arg("key")
+        .arg("from3")
+        .execute(&mut conn3);
+    redis::cmd("SET")
+        .arg("key")
+        .arg("from4")
+        .execute(&mut conn4);
+    redis::cmd("SET")
+        .arg("key")
+        .arg("from5")
+        .execute(&mut conn5);
 
     // Client1: EXEC should return nil
     let exec_result: Option<Vec<String>> = redis::cmd("EXEC").query(&mut conn1).unwrap();
@@ -133,10 +151,16 @@ fn test_per_connection_isolation() {
 
     // Client1: MULTI, SET key1
     redis::cmd("MULTI").execute(&mut conn1);
-    redis::cmd("SET").arg("key1").arg("from1").execute(&mut conn1);
+    redis::cmd("SET")
+        .arg("key1")
+        .arg("from1")
+        .execute(&mut conn1);
 
     // Client2: Modify key1 (which it's watching)
-    redis::cmd("SET").arg("key1").arg("from2").execute(&mut conn2);
+    redis::cmd("SET")
+        .arg("key1")
+        .arg("from2")
+        .execute(&mut conn2);
 
     // Client1: EXEC should return nil (key1 was watched and modified)
     let exec_result: Option<Vec<String>> = redis::cmd("EXEC").query(&mut conn1).unwrap();
@@ -147,11 +171,17 @@ fn test_per_connection_isolation() {
     redis::cmd("SET").arg("key1").arg("val").execute(&mut conn2);
 
     // Client1: Modify key1 again
-    redis::cmd("SET").arg("key1").arg("other").execute(&mut conn1);
+    redis::cmd("SET")
+        .arg("key1")
+        .arg("other")
+        .execute(&mut conn1);
 
     // Client2: EXEC should return nil (key1 was modified while watched)
     let result: Option<Vec<String>> = redis::cmd("EXEC").query(&mut conn2).unwrap();
-    assert_eq!(result, None, "Client2 transaction should fail (watch isolation works)");
+    assert_eq!(
+        result, None,
+        "Client2 transaction should fail (watch isolation works)"
+    );
 }
 
 #[test]
@@ -173,12 +203,24 @@ fn test_unwatch_clears_all_watched_keys() {
 
     // Client1: Start transaction
     redis::cmd("MULTI").execute(&mut conn1);
-    redis::cmd("SET").arg("key1").arg("val1").execute(&mut conn1);
+    redis::cmd("SET")
+        .arg("key1")
+        .arg("val1")
+        .execute(&mut conn1);
 
     // Client2: Modify all the previously watched keys
-    redis::cmd("SET").arg("key1").arg("other1").execute(&mut conn2);
-    redis::cmd("SET").arg("key2").arg("other2").execute(&mut conn2);
-    redis::cmd("SET").arg("key3").arg("other3").execute(&mut conn2);
+    redis::cmd("SET")
+        .arg("key1")
+        .arg("other1")
+        .execute(&mut conn2);
+    redis::cmd("SET")
+        .arg("key2")
+        .arg("other2")
+        .execute(&mut conn2);
+    redis::cmd("SET")
+        .arg("key3")
+        .arg("other3")
+        .execute(&mut conn2);
 
     // Client1: EXEC should succeed (no watches active)
     let exec_result: Option<Vec<String>> = redis::cmd("EXEC").query(&mut conn1).unwrap();
@@ -213,7 +255,10 @@ fn test_watch_after_unwatch_same_key() {
 
     // Client1: EXEC should return nil (key is re-watched)
     let exec_result: Option<Vec<String>> = redis::cmd("EXEC").query(&mut conn1).unwrap();
-    assert_eq!(exec_result, None, "EXEC should return nil for re-watched key");
+    assert_eq!(
+        exec_result, None,
+        "EXEC should return nil for re-watched key"
+    );
 }
 
 #[test]
@@ -234,7 +279,10 @@ fn test_discard_preserves_watched_keys() {
     redis::cmd("SET").arg("key").arg("val2").execute(&mut conn1);
 
     // Client2: Modify the key
-    redis::cmd("SET").arg("key").arg("modified").execute(&mut conn2);
+    redis::cmd("SET")
+        .arg("key")
+        .arg("modified")
+        .execute(&mut conn2);
 
     // Client1: EXEC should return nil (watch persisted through DISCARD)
     let exec_result: Option<Vec<String>> = redis::cmd("EXEC").query(&mut conn1).unwrap();
@@ -272,7 +320,10 @@ fn test_watch_with_special_key_names() {
 
     // EXEC should fail
     let exec_result: Option<Vec<String>> = redis::cmd("EXEC").query(&mut conn1).unwrap();
-    assert_eq!(exec_result, None, "Special key names should work with WATCH");
+    assert_eq!(
+        exec_result, None,
+        "Special key names should work with WATCH"
+    );
 }
 
 #[test]
@@ -286,7 +337,10 @@ fn test_modification_window_between_watch_and_multi() {
     redis::cmd("WATCH").arg("key").execute(&mut conn1);
 
     // Client2: Modify key (between WATCH and MULTI)
-    redis::cmd("SET").arg("key").arg("modified").execute(&mut conn2);
+    redis::cmd("SET")
+        .arg("key")
+        .arg("modified")
+        .execute(&mut conn2);
 
     // Client1: MULTI should still work
     redis::cmd("MULTI").execute(&mut conn1);
@@ -308,13 +362,20 @@ fn test_watch_same_key_multiple_times() {
     let mut conn2 = server.connection();
 
     // Watch same key three times (idempotent)
-    redis::cmd("WATCH").arg("key").arg("key").arg("key").execute(&mut conn1);
+    redis::cmd("WATCH")
+        .arg("key")
+        .arg("key")
+        .arg("key")
+        .execute(&mut conn1);
 
     redis::cmd("MULTI").execute(&mut conn1);
     redis::cmd("SET").arg("key").arg("val").execute(&mut conn1);
 
     // Modify
-    redis::cmd("SET").arg("key").arg("other").execute(&mut conn2);
+    redis::cmd("SET")
+        .arg("key")
+        .arg("other")
+        .execute(&mut conn2);
 
     // EXEC should fail (once watched, modification matters)
     let exec_result: Option<Vec<String>> = redis::cmd("EXEC").query(&mut conn1).unwrap();
@@ -391,7 +452,10 @@ fn test_del_removes_watched_key() {
     let mut conn2 = server.connection();
 
     // Client1: Set initial value and WATCH
-    redis::cmd("SET").arg("key").arg("initial").execute(&mut conn1);
+    redis::cmd("SET")
+        .arg("key")
+        .arg("initial")
+        .execute(&mut conn1);
     redis::cmd("WATCH").arg("key").execute(&mut conn1);
     redis::cmd("MULTI").execute(&mut conn1);
     redis::cmd("SET").arg("key").arg("val").execute(&mut conn1);
@@ -412,7 +476,10 @@ fn test_incr_counts_as_modification() {
     let mut conn2 = server.connection();
 
     // Setup
-    redis::cmd("SET").arg("counter").arg("10").execute(&mut conn1);
+    redis::cmd("SET")
+        .arg("counter")
+        .arg("10")
+        .execute(&mut conn1);
 
     // Client1: WATCH counter
     redis::cmd("WATCH").arg("counter").execute(&mut conn1);
@@ -445,7 +512,10 @@ fn test_lpush_counts_as_modification() {
 
     // Client1: EXEC should return nil
     let exec_result: Option<Vec<String>> = redis::cmd("EXEC").query(&mut conn1).unwrap();
-    assert_eq!(exec_result, None, "LPUSH should be detected as modification");
+    assert_eq!(
+        exec_result, None,
+        "LPUSH should be detected as modification"
+    );
 }
 
 #[test]
@@ -486,7 +556,10 @@ fn test_type_change_counts_as_modification() {
     let mut conn2 = server.connection();
 
     // Setup: Create a string
-    redis::cmd("SET").arg("key").arg("string").execute(&mut conn1);
+    redis::cmd("SET")
+        .arg("key")
+        .arg("string")
+        .execute(&mut conn1);
 
     // Client1: WATCH key
     redis::cmd("WATCH").arg("key").execute(&mut conn1);
@@ -494,7 +567,10 @@ fn test_type_change_counts_as_modification() {
 
     // Client2: Change the type (string -> list)
     redis::cmd("DEL").arg("key").execute(&mut conn2);
-    redis::cmd("LPUSH").arg("key").arg("item").execute(&mut conn2);
+    redis::cmd("LPUSH")
+        .arg("key")
+        .arg("item")
+        .execute(&mut conn2);
 
     // Client1: EXEC should return nil
     let exec_result: Option<Vec<String>> = redis::cmd("EXEC").query(&mut conn1).unwrap();
@@ -509,7 +585,10 @@ fn test_get_does_not_count_as_modification() {
     let mut conn2 = server.connection();
 
     // Setup
-    redis::cmd("SET").arg("key").arg("value").execute(&mut conn1);
+    redis::cmd("SET")
+        .arg("key")
+        .arg("value")
+        .execute(&mut conn1);
 
     // Client1: WATCH key
     redis::cmd("WATCH").arg("key").execute(&mut conn1);
@@ -554,7 +633,10 @@ fn test_watch_10_keys_modify_one() {
     redis::cmd("SET").arg("key5").arg("new").execute(&mut conn1);
 
     // Client2: Modify only key5
-    redis::cmd("SET").arg("key5").arg("other").execute(&mut conn2);
+    redis::cmd("SET")
+        .arg("key5")
+        .arg("other")
+        .execute(&mut conn2);
 
     // Client1: EXEC should fail
     let exec_result: Option<Vec<String>> = redis::cmd("EXEC").query(&mut conn1).unwrap();
@@ -580,10 +662,16 @@ fn test_watch_10_keys_modify_different_per_client() {
     redis::cmd("MULTI").execute(&mut conn1);
 
     // Client2: Modify watched key2
-    redis::cmd("SET").arg("key2").arg("modified").execute(&mut conn2);
+    redis::cmd("SET")
+        .arg("key2")
+        .arg("modified")
+        .execute(&mut conn2);
 
     // Client3: Modify unwatched key7
-    redis::cmd("SET").arg("key7").arg("other").execute(&mut conn3);
+    redis::cmd("SET")
+        .arg("key7")
+        .arg("other")
+        .execute(&mut conn3);
 
     // Client1: EXEC should fail (key2 was watched)
     let exec_result: Option<Vec<String>> = redis::cmd("EXEC").query(&mut conn1).unwrap();
@@ -603,12 +691,18 @@ fn test_very_long_key_names() {
     // Create a very long key name (1000 chars)
     let long_key = "k".repeat(1000);
 
-    redis::cmd("SET").arg(&long_key).arg("val").execute(&mut conn1);
+    redis::cmd("SET")
+        .arg(&long_key)
+        .arg("val")
+        .execute(&mut conn1);
     redis::cmd("WATCH").arg(&long_key).execute(&mut conn1);
     redis::cmd("MULTI").execute(&mut conn1);
 
     // Modify it
-    redis::cmd("SET").arg(&long_key).arg("modified").execute(&mut conn2);
+    redis::cmd("SET")
+        .arg(&long_key)
+        .arg("modified")
+        .execute(&mut conn2);
 
     // EXEC should fail
     let exec_result: Option<Vec<String>> = redis::cmd("EXEC").query(&mut conn1).unwrap();
@@ -646,15 +740,24 @@ fn test_watch_overlapping_keys_multiple_clients() {
     let mut conn3 = server.connection();
 
     // Client1: WATCH key1, key2
-    redis::cmd("WATCH").arg("key1").arg("key2").execute(&mut conn1);
+    redis::cmd("WATCH")
+        .arg("key1")
+        .arg("key2")
+        .execute(&mut conn1);
     redis::cmd("MULTI").execute(&mut conn1);
 
     // Client2: WATCH key2, key3
-    redis::cmd("WATCH").arg("key2").arg("key3").execute(&mut conn2);
+    redis::cmd("WATCH")
+        .arg("key2")
+        .arg("key3")
+        .execute(&mut conn2);
     redis::cmd("MULTI").execute(&mut conn2);
 
     // Client3: Modify key2 (watched by both)
-    redis::cmd("SET").arg("key2").arg("modified").execute(&mut conn3);
+    redis::cmd("SET")
+        .arg("key2")
+        .arg("modified")
+        .execute(&mut conn3);
 
     // Both should fail
     let exec1: Option<Vec<String>> = redis::cmd("EXEC").query(&mut conn1).unwrap();
@@ -685,16 +788,22 @@ fn test_unwatch_then_modify_original_keys() {
     redis::cmd("SET").arg("key1").arg("val").execute(&mut conn1);
 
     // Client2: Modify all the keys that were being watched
-    redis::cmd("SET").arg("key1").arg("other").execute(&mut conn2);
-    redis::cmd("SET").arg("key2").arg("other").execute(&mut conn2);
-    redis::cmd("SET").arg("key3").arg("other").execute(&mut conn2);
+    redis::cmd("SET")
+        .arg("key1")
+        .arg("other")
+        .execute(&mut conn2);
+    redis::cmd("SET")
+        .arg("key2")
+        .arg("other")
+        .execute(&mut conn2);
+    redis::cmd("SET")
+        .arg("key3")
+        .arg("other")
+        .execute(&mut conn2);
 
     // Client1: EXEC should succeed (watches are cleared)
     let exec_result: Option<Vec<String>> = redis::cmd("EXEC").query(&mut conn1).unwrap();
-    assert!(
-        exec_result.is_some(),
-        "EXEC should succeed after UNWATCH"
-    );
+    assert!(exec_result.is_some(), "EXEC should succeed after UNWATCH");
 }
 
 // ============================================================================
@@ -712,7 +821,10 @@ fn test_exec_return_format_nil_when_watched() {
     redis::cmd("WATCH").arg("key").execute(&mut conn1);
     redis::cmd("MULTI").execute(&mut conn1);
 
-    redis::cmd("SET").arg("key").arg("other").execute(&mut conn2);
+    redis::cmd("SET")
+        .arg("key")
+        .arg("other")
+        .execute(&mut conn2);
 
     // EXEC should return Option::None (nil in RESP)
     let exec_result: Option<Vec<String>> = redis::cmd("EXEC").query(&mut conn1).unwrap();
@@ -749,7 +861,10 @@ fn test_discard_clears_queue_not_watch() {
     let mut conn1 = server.connection();
     let mut conn2 = server.connection();
 
-    redis::cmd("SET").arg("key").arg("initial").execute(&mut conn1);
+    redis::cmd("SET")
+        .arg("key")
+        .arg("initial")
+        .execute(&mut conn1);
 
     // Client1: WATCH key, MULTI, set, then DISCARD
     redis::cmd("WATCH").arg("key").execute(&mut conn1);
@@ -763,7 +878,10 @@ fn test_discard_clears_queue_not_watch() {
     redis::cmd("SET").arg("key").arg("val2").execute(&mut conn1);
 
     // Client2: Modify the key
-    redis::cmd("SET").arg("key").arg("modified").execute(&mut conn2);
+    redis::cmd("SET")
+        .arg("key")
+        .arg("modified")
+        .execute(&mut conn2);
 
     // Client1: EXEC should fail (watch still active from before DISCARD)
     let exec_result: Option<Vec<String>> = redis::cmd("EXEC").query(&mut conn1).unwrap();
@@ -799,11 +917,17 @@ fn test_pipelined_watch_multi_exec() {
         .unwrap();
 
     // Conn2: Modify
-    redis::cmd("SET").arg("key").arg("other").execute(&mut conn2);
+    redis::cmd("SET")
+        .arg("key")
+        .arg("other")
+        .execute(&mut conn2);
 
     // EXEC should fail
     let exec_result: Option<Vec<String>> = redis::cmd("EXEC").query(&mut conn1).unwrap();
-    assert_eq!(exec_result, None, "Pipelined commands should work correctly");
+    assert_eq!(
+        exec_result, None,
+        "Pipelined commands should work correctly"
+    );
 }
 
 #[test]
@@ -900,10 +1024,16 @@ fn test_1000_watched_keys_per_connection() {
     redis::cmd("WATCH").arg(&keys).execute(&mut conn1);
 
     redis::cmd("MULTI").execute(&mut conn1);
-    redis::cmd("SET").arg("key500").arg("val").execute(&mut conn1);
+    redis::cmd("SET")
+        .arg("key500")
+        .arg("val")
+        .execute(&mut conn1);
 
     // Modify key500
-    redis::cmd("SET").arg("key500").arg("other").execute(&mut conn2);
+    redis::cmd("SET")
+        .arg("key500")
+        .arg("other")
+        .execute(&mut conn2);
 
     // EXEC should fail
     let exec_result: Option<Vec<String>> = redis::cmd("EXEC").query(&mut conn1).unwrap();
@@ -932,7 +1062,10 @@ fn test_large_transaction_with_watch() {
     }
 
     // Modify watched key
-    redis::cmd("SET").arg("key").arg("modified").execute(&mut conn2);
+    redis::cmd("SET")
+        .arg("key")
+        .arg("modified")
+        .execute(&mut conn2);
 
     // EXEC should fail
     let exec_result: Option<Vec<String>> = redis::cmd("EXEC").query(&mut conn1).unwrap();
@@ -949,7 +1082,10 @@ fn test_watched_key_with_large_value() {
     // Create a large value (1MB)
     let large_val = "x".repeat(1_000_000);
 
-    redis::cmd("SET").arg("key").arg(&large_val).execute(&mut conn1);
+    redis::cmd("SET")
+        .arg("key")
+        .arg(&large_val)
+        .execute(&mut conn1);
     redis::cmd("WATCH").arg("key").execute(&mut conn1);
     redis::cmd("MULTI").execute(&mut conn1);
 
@@ -993,10 +1129,7 @@ fn test_watch_with_different_databases() {
 
     // Client1: EXEC should succeed (watched key in DB 0, modified in DB 1)
     let exec_result: Option<Vec<String>> = redis::cmd("EXEC").query(&mut conn1).unwrap();
-    assert!(
-        exec_result.is_some(),
-        "Watch should be DB-isolated"
-    );
+    assert!(exec_result.is_some(), "Watch should be DB-isolated");
 
     // Client2: Back to DB 0, modify the same key
     redis::cmd("SELECT").arg("0").execute(&mut conn2);
@@ -1005,7 +1138,10 @@ fn test_watch_with_different_databases() {
     redis::cmd("WATCH").arg("key").execute(&mut conn1);
     redis::cmd("MULTI").execute(&mut conn1);
 
-    redis::cmd("SET").arg("key").arg("modified_in_db0").execute(&mut conn2);
+    redis::cmd("SET")
+        .arg("key")
+        .arg("modified_in_db0")
+        .execute(&mut conn2);
 
     // Now EXEC should fail
     let exec_result: Option<Vec<String>> = redis::cmd("EXEC").query(&mut conn1).unwrap();
@@ -1024,7 +1160,10 @@ fn test_watch_with_expiration() {
 
     // Setup: Create a key that will expire
     redis::cmd("SET").arg("key").arg("val").execute(&mut conn1);
-    redis::cmd("EXPIRE").arg("key").arg("10").execute(&mut conn1);
+    redis::cmd("EXPIRE")
+        .arg("key")
+        .arg("10")
+        .execute(&mut conn1);
 
     // Client1: WATCH the key with TTL
     redis::cmd("WATCH").arg("key").execute(&mut conn1);
@@ -1032,7 +1171,10 @@ fn test_watch_with_expiration() {
 
     // Client2: Let the key expire naturally (not explicit DEL)
     // For this test, we'll just modify it instead
-    redis::cmd("SET").arg("key").arg("modified").execute(&mut conn2);
+    redis::cmd("SET")
+        .arg("key")
+        .arg("modified")
+        .execute(&mut conn2);
 
     // EXEC should fail (modification detected)
     let exec_result: Option<Vec<String>> = redis::cmd("EXEC").query(&mut conn1).unwrap();
@@ -1052,7 +1194,10 @@ fn test_sequential_transactions_same_connection() {
     redis::cmd("MULTI").execute(&mut conn1);
     redis::cmd("SET").arg("key1").arg("b").execute(&mut conn1);
 
-    redis::cmd("SET").arg("key1").arg("modified").execute(&mut conn2);
+    redis::cmd("SET")
+        .arg("key1")
+        .arg("modified")
+        .execute(&mut conn2);
 
     let result1: Option<Vec<String>> = redis::cmd("EXEC").query(&mut conn1).unwrap();
     assert_eq!(result1, None, "First transaction should fail");
@@ -1080,14 +1225,8 @@ fn test_watch_error_messages_match_redis() {
     // Test: MULTI then WATCH (should error)
     redis::cmd("MULTI").execute(&mut conn);
 
-    let result: redis::RedisResult<()> = redis::cmd("WATCH")
-        .arg("key")
-        .query(&mut conn);
+    let result: redis::RedisResult<()> = redis::cmd("WATCH").arg("key").query(&mut conn);
 
     // Should error
-    assert!(
-        result.is_err(),
-        "WATCH inside MULTI should error"
-    );
+    assert!(result.is_err(), "WATCH inside MULTI should error");
 }
-

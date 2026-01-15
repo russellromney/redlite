@@ -853,6 +853,120 @@ impl ExprValue {
     }
 }
 
+// ============================================================================
+// Levenshtein Distance Functions for Fuzzy Search Ranking
+// ============================================================================
+
+/// Calculate the Levenshtein (edit) distance between two strings.
+///
+/// Uses the Wagner-Fischer dynamic programming algorithm.
+/// Returns the minimum number of single-character edits (insertions, deletions,
+/// or substitutions) required to change one string into the other.
+///
+/// # Examples
+/// ```ignore
+/// assert_eq!(levenshtein_distance("hello", "hello"), 0);
+/// assert_eq!(levenshtein_distance("hello", "helo"), 1);  // deletion
+/// assert_eq!(levenshtein_distance("hello", "helllo"), 1); // insertion
+/// assert_eq!(levenshtein_distance("hello", "hallo"), 1);  // substitution
+/// ```
+pub fn levenshtein_distance(a: &str, b: &str) -> usize {
+    let a_chars: Vec<char> = a.chars().collect();
+    let b_chars: Vec<char> = b.chars().collect();
+    let m = a_chars.len();
+    let n = b_chars.len();
+
+    // Handle empty string edge cases
+    if m == 0 {
+        return n;
+    }
+    if n == 0 {
+        return m;
+    }
+
+    // Create DP table
+    let mut dp = vec![vec![0usize; n + 1]; m + 1];
+
+    // Initialize first row and column
+    for i in 0..=m {
+        dp[i][0] = i;
+    }
+    for j in 0..=n {
+        dp[0][j] = j;
+    }
+
+    // Fill DP table
+    for i in 1..=m {
+        for j in 1..=n {
+            let cost = if a_chars[i - 1] == b_chars[j - 1] {
+                0
+            } else {
+                1
+            };
+            dp[i][j] = (dp[i - 1][j] + 1) // deletion
+                .min(dp[i][j - 1] + 1) // insertion
+                .min(dp[i - 1][j - 1] + cost); // substitution
+        }
+    }
+
+    dp[m][n]
+}
+
+/// Calculate a normalized fuzzy match score between 0.0 and 1.0.
+///
+/// Higher scores indicate better matches:
+/// - 1.0 = exact match (distance = 0)
+/// - 0.0 = completely different (distance >= query length)
+///
+/// Returns `None` if the edit distance exceeds `max_distance`.
+///
+/// # Arguments
+/// * `query` - The search term to match against
+/// * `candidate` - The candidate string to score
+/// * `max_distance` - Maximum allowed edit distance (filter threshold)
+///
+/// # Examples
+/// ```ignore
+/// assert_eq!(fuzzy_score("hello", "hello", 2), Some(1.0));
+/// assert_eq!(fuzzy_score("hello", "helo", 2), Some(0.8));  // 1 edit / 5 chars
+/// assert_eq!(fuzzy_score("hello", "world", 2), None);       // 4 edits > 2
+/// ```
+pub fn fuzzy_score(query: &str, candidate: &str, max_distance: usize) -> Option<f64> {
+    let q_lower = query.to_lowercase();
+    let c_lower = candidate.to_lowercase();
+
+    let dist = levenshtein_distance(&q_lower, &c_lower);
+
+    if dist <= max_distance {
+        let query_len = query.chars().count().max(1);
+        Some(1.0 - (dist as f64 / query_len as f64))
+    } else {
+        None
+    }
+}
+
+/// Extract individual words from text for fuzzy matching against query terms.
+///
+/// Used to find the best matching word in a multi-word field value.
+pub fn best_fuzzy_match(query: &str, text: &str, max_distance: usize) -> Option<(String, f64)> {
+    let words: Vec<&str> = text.split_whitespace().collect();
+    let mut best: Option<(String, f64)> = None;
+
+    for word in words {
+        if let Some(score) = fuzzy_score(query, word, max_distance) {
+            match &best {
+                None => best = Some((word.to_string(), score)),
+                Some((_, best_score)) if score > *best_score => {
+                    best = Some((word.to_string(), score))
+                }
+                _ => {}
+            }
+        }
+    }
+
+    best
+}
+
 /// APPLY expression AST
 #[derive(Debug, Clone, PartialEq)]
 pub enum ApplyExpr {
@@ -2089,5 +2203,160 @@ mod tests {
         assert!(phrase_result.fts_query.unwrap().contains("\"hello world\""));
         // Terms should have AND
         assert!(terms_result.fts_query.unwrap().contains("AND"));
+    }
+
+    // ========================================================================
+    // Levenshtein Distance Tests
+    // ========================================================================
+
+    #[test]
+    fn test_levenshtein_identical() {
+        // Identical strings have distance 0
+        assert_eq!(super::levenshtein_distance("hello", "hello"), 0);
+        assert_eq!(super::levenshtein_distance("", ""), 0);
+        assert_eq!(super::levenshtein_distance("a", "a"), 0);
+        assert_eq!(super::levenshtein_distance("longer string here", "longer string here"), 0);
+    }
+
+    #[test]
+    fn test_levenshtein_deletion() {
+        // One character deleted
+        assert_eq!(super::levenshtein_distance("hello", "helo"), 1);
+        assert_eq!(super::levenshtein_distance("hello", "hell"), 1);
+        assert_eq!(super::levenshtein_distance("hello", "ello"), 1);
+        // Two deletions
+        assert_eq!(super::levenshtein_distance("hello", "hlo"), 2);
+    }
+
+    #[test]
+    fn test_levenshtein_insertion() {
+        // One character inserted
+        assert_eq!(super::levenshtein_distance("hello", "helllo"), 1);
+        assert_eq!(super::levenshtein_distance("hello", "hhello"), 1);
+        assert_eq!(super::levenshtein_distance("hello", "hellox"), 1);
+        // Two insertions
+        assert_eq!(super::levenshtein_distance("hello", "helloxx"), 2);
+    }
+
+    #[test]
+    fn test_levenshtein_substitution() {
+        // One character substituted
+        assert_eq!(super::levenshtein_distance("hello", "hallo"), 1);
+        assert_eq!(super::levenshtein_distance("hello", "jello"), 1);
+        assert_eq!(super::levenshtein_distance("hello", "hellp"), 1);
+        // Two substitutions
+        assert_eq!(super::levenshtein_distance("hello", "jallp"), 3);
+    }
+
+    #[test]
+    fn test_levenshtein_transposition() {
+        // Transposition (swap) requires 2 operations in standard Levenshtein
+        // (delete + insert, not Damerau-Levenshtein which has transposition as 1 op)
+        assert_eq!(super::levenshtein_distance("hello", "ehllo"), 2);
+        assert_eq!(super::levenshtein_distance("ab", "ba"), 2);
+    }
+
+    #[test]
+    fn test_levenshtein_empty_strings() {
+        // Empty string edge cases
+        assert_eq!(super::levenshtein_distance("", "hello"), 5);
+        assert_eq!(super::levenshtein_distance("hello", ""), 5);
+        assert_eq!(super::levenshtein_distance("", ""), 0);
+    }
+
+    #[test]
+    fn test_levenshtein_unicode() {
+        // Unicode characters (Japanese, emoji)
+        assert_eq!(super::levenshtein_distance("こんにちは", "こんにちは"), 0);
+        assert_eq!(super::levenshtein_distance("こんにちは", "こんにち"), 1);
+        assert_eq!(super::levenshtein_distance("🎉🎊", "🎉🎊"), 0);
+        assert_eq!(super::levenshtein_distance("🎉🎊", "🎉"), 1);
+        // Mixed Unicode and ASCII
+        assert_eq!(super::levenshtein_distance("hello世界", "hello世界"), 0);
+        assert_eq!(super::levenshtein_distance("hello世界", "hello世"), 1);
+    }
+
+    #[test]
+    fn test_levenshtein_completely_different() {
+        // Completely different strings
+        assert_eq!(super::levenshtein_distance("hello", "world"), 4);
+        assert_eq!(super::levenshtein_distance("abc", "xyz"), 3);
+    }
+
+    // ========================================================================
+    // Fuzzy Score Tests
+    // ========================================================================
+
+    #[test]
+    fn test_fuzzy_score_exact_match() {
+        // Exact match = score 1.0
+        assert_eq!(super::fuzzy_score("hello", "hello", 2), Some(1.0));
+        assert_eq!(super::fuzzy_score("HELLO", "hello", 2), Some(1.0)); // case insensitive
+    }
+
+    #[test]
+    fn test_fuzzy_score_one_edit() {
+        // One edit on 5-char word = 0.8 score
+        let score = super::fuzzy_score("hello", "helo", 2).unwrap();
+        assert!((score - 0.8).abs() < 0.001);
+
+        let score = super::fuzzy_score("hello", "helllo", 2).unwrap();
+        assert!((score - 0.8).abs() < 0.001);
+    }
+
+    #[test]
+    fn test_fuzzy_score_threshold() {
+        // Within threshold
+        assert!(super::fuzzy_score("hello", "helo", 2).is_some());
+        assert!(super::fuzzy_score("hello", "hlo", 2).is_some());
+
+        // Exceeds threshold
+        assert!(super::fuzzy_score("hello", "world", 2).is_none()); // 4 edits > 2
+        assert!(super::fuzzy_score("hello", "xxxxx", 3).is_none()); // 5 edits > 3
+    }
+
+    #[test]
+    fn test_fuzzy_score_case_insensitive() {
+        // Case differences shouldn't count as edits
+        assert_eq!(super::fuzzy_score("Hello", "HELLO", 0), Some(1.0));
+        assert_eq!(super::fuzzy_score("HeLLo", "hEllO", 0), Some(1.0));
+    }
+
+    // ========================================================================
+    // Best Fuzzy Match Tests
+    // ========================================================================
+
+    #[test]
+    fn test_best_fuzzy_match_exact_word() {
+        let result = super::best_fuzzy_match("hello", "say hello world", 2);
+        assert!(result.is_some());
+        let (word, score) = result.unwrap();
+        assert_eq!(word, "hello");
+        assert_eq!(score, 1.0);
+    }
+
+    #[test]
+    fn test_best_fuzzy_match_typo() {
+        let result = super::best_fuzzy_match("helo", "say hello world", 2);
+        assert!(result.is_some());
+        let (word, score) = result.unwrap();
+        assert_eq!(word, "hello"); // Found best match despite typo
+        assert!(score > 0.7); // 1 edit on 4-char query
+    }
+
+    #[test]
+    fn test_best_fuzzy_match_no_match() {
+        let result = super::best_fuzzy_match("xyz", "hello world foo bar", 1);
+        assert!(result.is_none()); // No word within 1 edit
+    }
+
+    #[test]
+    fn test_best_fuzzy_match_picks_closest() {
+        // Should pick "hello" over "hallo" when searching for "hello"
+        let result = super::best_fuzzy_match("hello", "hallo hello hillo", 2);
+        assert!(result.is_some());
+        let (word, score) = result.unwrap();
+        assert_eq!(word, "hello");
+        assert_eq!(score, 1.0);
     }
 }

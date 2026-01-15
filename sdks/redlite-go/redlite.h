@@ -203,6 +203,18 @@ int64_t redlite_decrby(struct RedliteDb *db, const char *key, int64_t decrement)
 char *redlite_incrbyfloat(struct RedliteDb *db, const char *key, double increment);
 
 /**
+ * MGET key [key ...]
+ */
+struct RedliteBytesArray redlite_mget(struct RedliteDb *db,
+                                      const char *const *keys,
+                                      size_t keys_len);
+
+/**
+ * MSET key value [key value ...]
+ */
+int redlite_mset(struct RedliteDb *db, const struct RedliteKV *pairs, size_t pairs_len);
+
+/**
  * DEL key [key ...]
  * Returns number of keys deleted
  */
@@ -336,6 +348,20 @@ int64_t redlite_hincrby(struct RedliteDb *db,
                         int64_t increment);
 
 /**
+ * HGETALL key
+ * Returns alternating field-value pairs
+ */
+struct RedliteBytesArray redlite_hgetall(struct RedliteDb *db, const char *key);
+
+/**
+ * HMGET key field [field ...]
+ */
+struct RedliteBytesArray redlite_hmget(struct RedliteDb *db,
+                                       const char *key,
+                                       const char *const *fields,
+                                       size_t fields_len);
+
+/**
  * LPUSH key value [value ...]
  */
 int64_t redlite_lpush(struct RedliteDb *db,
@@ -456,6 +482,26 @@ double redlite_zincrby(struct RedliteDb *db,
                        double increment,
                        const uint8_t *member,
                        size_t member_len);
+
+/**
+ * ZRANGE key start stop [withscores]
+ * If withscores is true, returns alternating member-score pairs
+ */
+struct RedliteBytesArray redlite_zrange(struct RedliteDb *db,
+                                        const char *key,
+                                        int64_t start,
+                                        int64_t stop,
+                                        int with_scores);
+
+/**
+ * ZREVRANGE key start stop [withscores]
+ * If withscores is true, returns alternating member-score pairs
+ */
+struct RedliteBytesArray redlite_zrevrange(struct RedliteDb *db,
+                                           const char *key,
+                                           int64_t start,
+                                           int64_t stop,
+                                           int with_scores);
 
 /**
  * VACUUM - compact the database

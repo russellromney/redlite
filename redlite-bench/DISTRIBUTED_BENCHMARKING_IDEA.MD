@@ -1,4 +1,4 @@
-redlite-bench/ - Fly.io Distributed Benchmarking System
+# redlite-bench/ - Fly.io Distributed Benchmarking System
 
 GOAL: Run matrix-style benchmarks on Fly.io infrastructure with multiple deployment modes to measure real-world performance characteristics.
 

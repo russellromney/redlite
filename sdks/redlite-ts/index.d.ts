@@ -59,6 +59,10 @@ export declare class RedliteDb {
   decrby(key: string, decrement: number): number
   /** Increment the float value of a key by amount */
   incrbyfloat(key: string, increment: number): number
+  /** Get values of multiple keys */
+  mget(keys: Array<string>): Array<Buffer | undefined | null>
+  /** Set multiple key-value pairs atomically */
+  mset(pairs: Array<Array<Buffer>>): boolean
   /** Delete one or more keys */
   del(keys: Array<string>): number
   /** Check if keys exist */
@@ -107,6 +111,10 @@ export declare class RedliteDb {
   hvals(key: string): Array<Buffer>
   /** Increment hash field by integer */
   hincrby(key: string, field: string, increment: number): number
+  /** Get all fields and values in a hash */
+  hgetall(key: string): Array<Array<Buffer>>
+  /** Get values of multiple hash fields */
+  hmget(key: string, fields: Array<string>): Array<Buffer | undefined | null>
   /** Push values to the left of a list */
   lpush(key: string, values: Array<Buffer>): number
   /** Push values to the right of a list */
@@ -143,6 +151,10 @@ export declare class RedliteDb {
   zcount(key: string, min: number, max: number): number
   /** Increment score of a member in a sorted set */
   zincrby(key: string, increment: number, member: Buffer): number
+  /** Get a range of members from a sorted set by index */
+  zrange(key: string, start: number, stop: number, withScores?: boolean | undefined | null): Array<Buffer>
+  /** Get a range of members from a sorted set by index, in reverse order */
+  zrevrange(key: string, start: number, stop: number, withScores?: boolean | undefined | null): Array<Buffer>
   /** Run SQLite VACUUM to reclaim space */
   vacuum(): number
 }
