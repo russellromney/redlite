@@ -1,5 +1,153 @@
 # Changelog
 
+## Session 31.5: Fuzzy Search Planning
+
+### Added - Fuzzy Search Implementation Plan
+- Comprehensive roadmap for Session 32: Fuzzy Search & Spell Correction
+- **Phase 1**: Trigram tokenizer for approximate matching (~15 tests)
+- **Phase 2**: Levenshtein distance for precise ranking (~10 tests)
+- **Phase 3**: FT.SPELLCHECK with spellfix1 extension (~10 tests)
+- Feature flags: `fuzzy` and `spellcheck` with integration into `full` feature set
+
+### Documentation Updates
+- Added [Session 32 plan](ROADMAP.md#L559-L755) with implementation details
+- Updated feature flags to include fuzzy search in `full` feature
+- References to FTS5 custom tokenizers, Wagner-Fischer algorithm, SQLite spellfix1
+
+### Next Steps
+- Session 32.1: Implement trigram tokenizer with FTS5 C API bindings
+- Session 32.2: Add Levenshtein distance post-filtering and ranking
+- Session 32.3: Integrate spellfix1 for dictionary-based spell correction
+
+---
+
+## Session 31: FT.AGGREGATE Test Expansion (14 → 41 tests)
+
+### Added - 27 New FT.AGGREGATE Tests
+
+**Test Coverage Expansion**: Comprehensive testing of all FT.AGGREGATE features to ensure production-readiness.
+
+#### REDUCE Functions (8 tests)
+- `test_ft_aggregate_reduce_sum` - SUM reducer aggregating numeric values
+- `test_ft_aggregate_reduce_avg` - AVG reducer calculating mean
+- `test_ft_aggregate_reduce_min_max` - MIN and MAX reducers in same aggregation
+- `test_ft_aggregate_reduce_stddev` - STDDEV for statistical variance analysis
+- `test_ft_aggregate_reduce_count_distinct` - COUNT_DISTINCT for unique value counts
+- `test_ft_aggregate_reduce_count_distinctish` - Approximate unique count (HyperLogLog-style)
+- `test_ft_aggregate_reduce_tolist` - TOLIST collecting values into arrays
+- `test_ft_aggregate_reduce_first_value` - FIRST_VALUE from each group
+
+#### SORTBY Variations (5 tests)
+- `test_ft_aggregate_sortby_desc` - Descending sort order
+- `test_ft_aggregate_sortby_multiple_fields` - Multi-field sorting with tiebreakers
+- `test_ft_aggregate_sortby_with_max` - SORTBY MAX for top-N queries
+- `test_ft_aggregate_sortby_on_original_field` - Sort on original fields (no APPLY needed)
+- `test_ft_aggregate_sortby_numeric_vs_string` - Numeric vs lexical sorting behavior
+
+#### GROUPBY Variations (3 tests)
+- `test_ft_aggregate_groupby_multiple_fields` - Group by 2+ fields (category + status)
+- `test_ft_aggregate_groupby_multiple_reducers` - Multiple REDUCE functions in one GROUPBY
+- `test_ft_aggregate_groupby_missing_fields` - Graceful handling of missing group fields
+
+#### LOAD, LIMIT, and Pipeline Tests (6 tests)
+- `test_ft_aggregate_load_specific_fields` - LOAD only requested fields
+- `test_ft_aggregate_load_with_groupby` - LOAD with aggregations
+- `test_ft_aggregate_limit_offset` - Pagination with LIMIT offset num
+- `test_ft_aggregate_limit_edge_cases` - Edge cases (LIMIT 0, out-of-bounds offset)
+- `test_ft_aggregate_full_pipeline` - Complete pipeline: LOAD + GROUPBY + REDUCE + APPLY + FILTER + SORTBY + LIMIT
+- `test_ft_aggregate_complex_ecommerce` - Real-world e-commerce analytics scenario
+
+#### Query Integration (3 tests)
+- `test_ft_aggregate_with_text_query` - Aggregation with FTS text queries
+- `test_ft_aggregate_with_field_query` - Field-scoped queries with aggregation
+- `test_ft_aggregate_with_numeric_range` - Numeric range queries (baseline for future enhancement)
+
+#### Edge Cases (2 tests)
+- `test_ft_aggregate_empty_results` - Aggregation when query matches zero documents
+- `test_ft_aggregate_single_document` - Aggregation with single document (StdDev edge case)
+
+### Test Results
+- **41 total FT.AGGREGATE tests** (14 existing + 27 new)
+- **566 total tests** with `--features geo` (41 FT.AGGREGATE + 17 geo + 508 other)
+- **All tests passing** in 0.35 seconds
+- **Zero test failures**
+
+### Coverage Summary
+Now testing:
+- ✅ All 12 REDUCE functions (COUNT, COUNT_DISTINCT, SUM, AVG, MIN, MAX, STDDEV, TOLIST, FIRST_VALUE, QUANTILE, RANDOM_SAMPLE, COUNT_DISTINCTISH)
+- ✅ SORTBY ASC/DESC with single and multiple fields
+- ✅ SORTBY MAX for top-N queries
+- ✅ GROUPBY with 1-N fields and 1-N reducers
+- ✅ LOAD feature for field selection
+- ✅ LIMIT with offset for pagination
+- ✅ APPLY expressions (arithmetic, string functions)
+- ✅ FILTER expressions (comparison operators, logical AND/OR)
+- ✅ Full pipeline combinations
+- ✅ Query integration (text search + aggregation)
+- ✅ Edge cases (empty results, single document, missing fields)
+
+**Production Readiness**: FT.AGGREGATE is now comprehensively tested and ready for production use.
+
+---
+
+## Session 30: Documentation Audit & Roadmap Synchronization
+
+### Documentation Updates
+- **Reviewed Session 28** keyset pagination implementation
+  - Verified all 16 scan tests passing
+  - Confirmed cursor format changes working correctly
+  - Noted WASM SDK uses separate SQLite implementation (acceptable)
+- **Discovered FT.AGGREGATE is complete**
+  - Phase 3 was marked as "Next" but fully implemented
+  - All 14 FT.AGGREGATE tests passing
+  - Complete feature set: LOAD, GROUPBY, REDUCE, SORTBY, APPLY, FILTER, LIMIT
+- **Updated ROADMAP.md**
+  - Added Session 29 completion summary
+  - Marked Phase 3: RediSearch Aggregations as COMPLETE
+  - Updated "In Progress" section to "Completed Major Features"
+  - Documented all REDUCE functions and APPLY/FILTER support
+
+### Test Status
+- **539 total tests** across all features
+- **16 scan tests** (keyset pagination)
+- **14 FT.AGGREGATE tests** (all REDUCE functions, APPLY, FILTER, SORTBY)
+- **509 other tests** (strings, lists, hashes, sets, sorted sets, streams, FTS, geo, vectors)
+- **Zero test failures**
+
+### Key Findings
+- FT.AGGREGATE implementation is production-ready
+- Keyset pagination improves SCAN performance from O(n) to O(log n + k)
+- Standard Redis clients work correctly with string cursors
+- Documentation now accurately reflects implementation status
+
+---
+
+## Session 29: Oracle Test Expansion (66 → 85 tests)
+
+### Added - 19 New Oracle Tests
+- **Stream commands**: `xrange`, `xrevrange`, `xdel`, `xinfo_stream`
+- **Sorted sets**: `zremrangebyscore`
+- **Keys**: `scan_iteration` (proper cursor iteration test)
+- **String options**: `set_options_nx_xx`, `set_options_ex_px`
+- **Type mismatch tests**: `string_on_list`, `list_on_string`, `hash_on_set`, `zset_on_hash`
+- **Edge cases**: `empty_value`, `large_value` (1MB strings)
+- **Empty operations**: `lists_empty`, `hashes_empty`, `sets_empty`, `zsets_empty`
+- **Server**: `ping_echo`
+
+### Updated - ROADMAP.md Checklist
+- Comprehensive command coverage checklist added
+- Tracked ~100 Redis-compatible commands
+- 85 tests now cover: strings, keys, hashes, lists, sets, sorted sets, streams
+- Remaining: blocking commands (BLPOP/BRPOP), transactions, GEO
+
+### Test Coverage Summary
+- **85 oracle tests** (up from 66)
+- **Zero divergences** across all data types
+- **Type mismatch errors** (WRONGTYPE) verified against Redis
+- **Edge cases** tested (empty values, 1MB strings, non-existent keys)
+
+---
+
 ## Session 28: Keyset Pagination for SCAN Commands
 
 ### Performance Optimization

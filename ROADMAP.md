@@ -12,15 +12,89 @@ See [CHANGELOG.md](./CHANGELOG.md) for completed features.
 - [x] Update server handlers for string cursor format
 - [x] All 16 scan-related unit tests passing
 
+### Session 30: Documentation Audit & Roadmap Sync
+- [x] Review Session 28 keyset pagination implementation
+- [x] Verify SDK compatibility with string cursors (WASM uses separate SQLite, standard clients work)
+- [x] Discover FT.AGGREGATE is complete (Phase 3 was already implemented)
+- [x] Update ROADMAP to reflect actual implementation status
+- [x] Update CHANGELOG with Session 30 summary
+- [x] All tests verified (16 scan tests + 14 FT.AGGREGATE tests + 509 others = 539 total)
+
+**Key Finding**: FT.AGGREGATE is fully implemented with all REDUCE functions, APPLY expressions, FILTER, SORTBY, LIMIT. The feature was marked as "Next" in ROADMAP but is actually production-ready with comprehensive test coverage.
+
+### Session 31: FT.AGGREGATE Test Expansion (14 → 41 tests) - ✅ COMPLETE
+
+**Goal**: Comprehensive test coverage for all FT.AGGREGATE features to ensure production-readiness.
+
+**Result**: 41 FT.AGGREGATE tests passing (14 existing + 27 new), 566 total tests with `--features geo`
+
+#### Completed Test Categories:
+
+**1. REDUCE Functions (8 tests)** - ✅ COMPLETE
+- [x] `test_ft_aggregate_reduce_sum` - SUM reducer on numeric field
+- [x] `test_ft_aggregate_reduce_avg` - AVG reducer calculating mean
+- [x] `test_ft_aggregate_reduce_min_max` - MIN and MAX reducers in same query
+- [x] `test_ft_aggregate_reduce_stddev` - STDDEV for variance analysis
+- [x] `test_ft_aggregate_reduce_count_distinct` - COUNT_DISTINCT for unique values
+- [x] `test_ft_aggregate_reduce_count_distinctish` - Approximate unique count
+- [x] `test_ft_aggregate_reduce_tolist` - TOLIST collecting values
+- [x] `test_ft_aggregate_reduce_first_value` - FIRST_VALUE from group
+
+**2. SORTBY Variations (5 tests)** - ✅ COMPLETE
+- [x] `test_ft_aggregate_sortby_desc` - Descending sort order
+- [x] `test_ft_aggregate_sortby_multiple_fields` - Sort by 2+ fields
+- [x] `test_ft_aggregate_sortby_with_max` - SORTBY MAX to limit results
+- [x] `test_ft_aggregate_sortby_on_original_field` - Sort without APPLY
+- [x] `test_ft_aggregate_sortby_numeric_vs_string` - Numeric vs lexical sorting
+
+**3. GROUPBY Variations (3 tests)** - ✅ COMPLETE
+- [x] `test_ft_aggregate_groupby_multiple_fields` - Group by category + status
+- [x] `test_ft_aggregate_groupby_multiple_reducers` - Multiple REDUCE in one GROUPBY
+- [x] `test_ft_aggregate_groupby_missing_fields` - Handle docs without group field
+
+**4. LOAD Feature (2 tests)** - ✅ COMPLETE
+- [x] `test_ft_aggregate_load_specific_fields` - LOAD only requested fields
+- [x] `test_ft_aggregate_load_with_groupby` - LOAD additional fields with GROUPBY
+
+**5. LIMIT with Offset (2 tests)** - ✅ COMPLETE
+- [x] `test_ft_aggregate_limit_offset` - Pagination with LIMIT offset num
+- [x] `test_ft_aggregate_limit_edge_cases` - LIMIT 0, out of bounds offset
+
+**6. Query Integration (3 tests)** - ✅ COMPLETE
+- [x] `test_ft_aggregate_with_text_query` - Non-wildcard FTS query
+- [x] `test_ft_aggregate_with_field_query` - @field:value aggregation
+- [x] `test_ft_aggregate_with_numeric_range` - @price:[10 100] aggregation
+
+**7. Full Pipeline (2 tests)** - ✅ COMPLETE
+- [x] `test_ft_aggregate_full_pipeline` - LOAD + GROUPBY + REDUCE + SORTBY + FILTER + LIMIT
+- [x] `test_ft_aggregate_complex_ecommerce` - Real-world e-commerce analytics scenario
+
+**8. Edge Cases (2 tests)** - ✅ COMPLETE
+- [x] `test_ft_aggregate_empty_results` - Query matches zero documents
+- [x] `test_ft_aggregate_single_document` - Aggregation with 1 match
+
+**Test Summary**:
+- **27 new tests added** to `crates/redlite/src/db.rs`
+- **41 total FT.AGGREGATE tests** (14 existing + 27 new)
+- **All tests passing** in 0.35s
+- **Coverage**: All REDUCE functions, SORTBY variations, GROUPBY combinations, LOAD, LIMIT, query integration, full pipelines, edge cases
+
+### Session 29: Oracle Test Expansion (66 → 85 tests)
+- [x] Added 19 new Redis oracle comparison tests
+- [x] Expanded coverage to streams, sorted sets, keys, string options
+- [x] Added type mismatch tests and edge case tests
+- [x] Zero divergences across all data types
+- [x] See CHANGELOG.md for details
+
 ---
 
-## In Progress
+## Completed Major Features
 
-### Sessions 23-24: Search & Vectors Implementation
+### Sessions 23-24: Search & Vectors Implementation - COMPLETE
 
 **See [IMPLEMENTATION_PLAN.md](./IMPLEMENTATION_PLAN.md) for full details.**
 
-Currently implementing RediSearch-compatible FT.* and Redis 8-compatible V* commands.
+RediSearch-compatible FT.* and Redis 8-compatible V* commands are fully implemented.
 
 #### Phase 1: RediSearch Core (Session 23.1) - COMPLETE
 - [x] Create `src/schema_ft.sql` with RediSearch tables
@@ -47,8 +121,14 @@ Currently implementing RediSearch-compatible FT.* and Redis 8-compatible V* comm
 - [x] Fix NOT operator FTS5 syntax (A NOT B instead of A AND NOT B)
 - [x] Add 50 FT.* unit tests (was 26, now comprehensive)
 
-#### Phase 3: RediSearch Aggregations (Next)
-- [ ] Implement FT.AGGREGATE with LOAD, GROUPBY, REDUCE, SORTBY, APPLY, FILTER, LIMIT
+#### Phase 3: RediSearch Aggregations - COMPLETE
+- [x] Implement FT.AGGREGATE with LOAD, GROUPBY, REDUCE, SORTBY, APPLY, FILTER, LIMIT
+- [x] All REDUCE functions: COUNT, COUNT_DISTINCT, SUM, AVG, MIN, MAX, STDDEV, TOLIST, FIRST_VALUE, QUANTILE, RANDOM_SAMPLE
+- [x] APPLY expressions with arithmetic operations and string functions (upper/lower)
+- [x] FILTER expressions with comparison operators (>, <, ==, !=, AND, OR)
+- [x] SORTBY with ASC/DESC and MAX limit
+- [x] Full command parser in server/mod.rs
+- [x] 14 comprehensive unit tests passing
 
 ---
 
@@ -319,15 +399,80 @@ Inspired by [sled](https://sled.rs/simulation.html), [TigerBeetle VOPR](https://
 - [ ] Verify: `cargo +nightly fuzz run resp_parser` (10 min no crash)
 - [ ] Verify: `cargo +nightly miri test` (no UB in unsafe blocks)
 
-#### Phase 2: Redis Oracle (Session 27.2) - COMPLETE
+#### Phase 2: Redis Oracle (Session 27.2) - IN PROGRESS
 - [x] Add `redis` crate as dev dependency
-- [x] Create `tests/oracle.rs` with 66 comprehensive tests
+- [x] Create `tests/oracle.rs` with 85 comprehensive tests
 - [x] Test groups: Strings, Lists, Hashes, Sets, Sorted Sets, Keys, Streams, Bitmaps
 - [x] Assert identical results for identical operation sequences
 - [x] Verify: `redis-server & cargo test --test oracle -- --test-threads=1`
 - [x] Tests: Basic operations, random operations, comprehensive mixed operations
-- [x] All 66 oracle tests passing with zero divergences
-- [ ] TODO: Expand to cover all 121 commands with type mismatch tests
+- [x] All 85 oracle tests passing with zero divergences
+
+##### Oracle Test Expansion Checklist
+
+**Target: 200+ tests covering all Redis-compatible commands**
+
+**Strings (22 commands - all tested)**
+- [x] GET, SET, INCR, DECR, INCRBY, DECRBY, INCRBYFLOAT
+- [x] MGET, MSET, APPEND, STRLEN, GETRANGE, SETRANGE
+- [x] GETEX, GETDEL, SETEX, PSETEX
+- [x] SETBIT, GETBIT, BITCOUNT, BITOP
+- [x] SET with options (NX/XX/EX/PX tested)
+- [x] Empty value and large value edge cases
+
+**Keys (14 commands - all tested)**
+- [x] DEL, EXISTS, EXPIRE, PEXPIRE, EXPIREAT, PEXPIREAT, PERSIST
+- [x] TTL, PTTL, TYPE, RENAME, RENAMENX, KEYS
+- [x] SCAN (proper cursor iteration test)
+
+**Hashes (13 commands - all tested)**
+- [x] HSET, HGET, HMGET, HGETALL, HDEL, HEXISTS
+- [x] HKEYS, HVALS, HLEN, HINCRBY, HINCRBYFLOAT, HSETNX, HSCAN
+- [x] Empty hash edge cases
+
+**Lists (17 commands - 15 tested)**
+- [x] LPUSH, RPUSH, LPOP, RPOP, LLEN, LRANGE, LINDEX
+- [x] LSET, LTRIM, LREM, LINSERT, LPUSHX, RPUSHX, LPOS, LMOVE
+- [x] Empty list edge cases
+- [ ] BLPOP (blocking - async test needed)
+- [ ] BRPOP (blocking - async test needed)
+
+**Sets (15 commands - all tested)**
+- [x] SADD, SREM, SMEMBERS, SISMEMBER, SCARD, SPOP, SRANDMEMBER
+- [x] SDIFF, SINTER, SUNION, SMOVE, SDIFFSTORE, SINTERSTORE, SUNIONSTORE, SSCAN
+- [x] Empty set edge cases
+
+**Sorted Sets (16 commands - all tested)**
+- [x] ZADD, ZREM, ZSCORE, ZRANK, ZREVRANK, ZCARD
+- [x] ZRANGE, ZREVRANGE, ZRANGEBYSCORE, ZCOUNT, ZINCRBY
+- [x] ZREMRANGEBYRANK, ZREMRANGEBYSCORE, ZINTERSTORE, ZUNIONSTORE, ZSCAN
+- [x] Empty sorted set edge cases
+
+**Streams (13 commands - 7 tested)**
+- [x] XADD, XLEN, XTRIM
+- [x] XRANGE, XREVRANGE, XDEL, XINFO STREAM
+- [ ] XGROUP (CREATE, DESTROY, SETID, CREATECONSUMER, DELCONSUMER)
+- [ ] XREAD (async/blocking)
+- [ ] XREADGROUP (async/blocking)
+- [ ] XACK, XPENDING, XCLAIM
+
+**Transactions (5 commands - 0 tested)**
+- [ ] MULTI, EXEC, DISCARD
+- [ ] WATCH, UNWATCH
+
+**GEO (6 commands - requires --features geo)**
+- [ ] GEOADD, GEOPOS, GEODIST, GEOHASH, GEOSEARCH, GEOSEARCHSTORE
+
+**Server/Connection (tested via integration)**
+- [x] DBSIZE, FLUSHDB, PING, ECHO
+
+**Additional Test Categories**
+- [x] Type mismatch tests (WRONGTYPE errors - 4 tests covering all type combinations)
+- [x] Edge case tests (empty values, large values - 1MB strings)
+- [ ] Expiration edge cases (keys that just expired, negative TTL)
+- [ ] Error response format matching (error messages match Redis exactly)
+
+**Summary: ~100 commands, 85 tests, remaining: blocking commands, transactions, GEO**
 
 #### Phase 3: MadSim Integration (Session 27.3) - ✅ COMPLETE
 - [x] Add `madsim`, `madsim-tokio` dependencies (cfg-gated)
@@ -410,6 +555,204 @@ Inspired by [sled](https://sled.rs/simulation.html), [TigerBeetle VOPR](https://
 - Background expiration daemon
 
 ## Planned
+
+### Session 32: Fuzzy Search & Spell Correction
+
+Approximate string matching for typo-tolerant search. **Optional feature** via `--features fuzzy`.
+
+**Goal**: Enable fuzzy search in FT.SEARCH and FT.SUGGET with Levenshtein distance for typo tolerance.
+
+#### Phase 1: Trigram Tokenizer (Session 32.1)
+
+**Approach**: Custom FTS5 tokenizer that generates character trigrams for approximate matching.
+
+**How Trigrams Work**:
+- "hello" → ["hel", "ell", "llo"] (3-character sliding window)
+- "helo" (typo) → ["hel", "elo"] (2/3 match with "hello" = similarity)
+- Jaccard similarity: `|intersection| / |union|` for matching
+
+**Implementation**:
+```rust
+// src/tokenizers/trigram.rs (~150 lines)
+pub struct TrigramTokenizer;
+
+impl Fts5Tokenizer for TrigramTokenizer {
+    fn tokenize(&self, text: &str, callback: impl FnMut(&str, usize, usize)) {
+        // Generate sliding window of 3 chars
+        for i in 0..text.len().saturating_sub(2) {
+            let trigram = &text[i..i+3];
+            callback(trigram, i, i+3);
+        }
+    }
+}
+```
+
+**FT.CREATE integration**:
+```bash
+FT.CREATE idx ON HASH PREFIX 1 doc:
+  SCHEMA title TEXT FUZZY   # Enable trigram tokenizer for this field
+         body TEXT           # Regular porter tokenizer
+```
+
+**Query syntax**:
+```bash
+# Exact match (default)
+FT.SEARCH idx "hello world"
+
+# Fuzzy match with edit distance threshold
+FT.SEARCH idx "%helo% %wrld%" DISTANCE 2    # Up to 2 character edits
+
+# Or via query operator
+FT.SEARCH idx "~hello ~world"  # ~ prefix = fuzzy match
+```
+
+**Schema Changes**:
+```sql
+-- Add tokenizer field to ft_fields table
+ALTER TABLE ft_fields ADD COLUMN tokenizer TEXT DEFAULT 'porter';
+-- Options: 'porter' (default), 'trigram', 'unicode61', 'ascii'
+```
+
+**Files to Create**:
+- `src/tokenizers/mod.rs` - Tokenizer registry
+- `src/tokenizers/trigram.rs` - Trigram implementation
+- `src/tokenizers/fts5_api.rs` - FTS5 C API bindings for custom tokenizers
+
+**Tests** (~15 tests):
+- [ ] Trigram generation for ASCII strings
+- [ ] Trigram generation for Unicode strings
+- [ ] Fuzzy match with 1-char typo
+- [ ] Fuzzy match with 2-char typos
+- [ ] Fuzzy match with transposition (hello → ehllo)
+- [ ] Fuzzy match with insertion (hello → helllo)
+- [ ] Fuzzy match with deletion (hello → helo)
+- [ ] Distance threshold filtering
+- [ ] Performance: fuzzy search on 10K documents
+
+#### Phase 2: Levenshtein Distance (Session 32.2)
+
+**Approach**: Post-filter FTS5 results with actual Levenshtein distance for precise ranking.
+
+**Why Both Trigrams + Levenshtein**:
+- Trigrams = Fast pre-filter (uses FTS5 index)
+- Levenshtein = Precise ranking (edit distance scoring)
+
+**Implementation**:
+```rust
+// src/search/levenshtein.rs (~80 lines)
+pub fn levenshtein_distance(a: &str, b: &str) -> usize {
+    // Wagner-Fischer algorithm
+    // Returns minimum edit operations to transform a → b
+}
+
+pub fn fuzzy_score(query: &str, result: &str, max_distance: usize) -> Option<f64> {
+    let dist = levenshtein_distance(query, result);
+    if dist <= max_distance {
+        Some(1.0 - (dist as f64 / query.len() as f64))
+    } else {
+        None
+    }
+}
+```
+
+**FT.SEARCH with fuzzy scoring**:
+```bash
+# Trigrams find candidates, Levenshtein ranks them
+FT.SEARCH idx "%helo%" DISTANCE 2 WITHSCORES SORTBY score DESC
+```
+
+**Result**:
+```
+1) "doc:1"
+2) "0.95"  # 1 edit distance, 4-char word = 0.95 similarity
+3) 1) "title"
+   2) "hello world"
+```
+
+**Tests** (~10 tests):
+- [ ] Levenshtein("hello", "hello") = 0
+- [ ] Levenshtein("hello", "helo") = 1 (deletion)
+- [ ] Levenshtein("hello", "helllo") = 1 (insertion)
+- [ ] Levenshtein("hello", "ehllo") = 1 (transposition via swap)
+- [ ] Levenshtein("hello", "world") = 4 (all substitutions)
+- [ ] Fuzzy scoring with max_distance filter
+- [ ] Combined trigram + Levenshtein ranking
+- [ ] Unicode string distances (emoji, CJK)
+
+#### Phase 3: FT.SPELLCHECK (Session 32.3) - Optional
+
+**Approach**: Use SQLite's built-in spellfix1 extension for dictionary-based spell correction.
+
+**Commands**:
+```bash
+FT.SPELLCHECK index query [DISTANCE n] [TERMS INCLUDE dict] [TERMS EXCLUDE dict]
+
+# Example
+FT.SPELLCHECK idx "helo wrld"
+1) "helo"
+2) 1) 0.8
+   2) "hello"
+3) "wrld"
+4) 1) 0.75
+   2) "world"
+```
+
+**FT.DICTADD/DEL**:
+```bash
+FT.DICTADD dict term [term ...]   # Add words to custom dictionary
+FT.DICTDEL dict term [term ...]   # Remove words
+FT.DICTDUMP dict                   # List all words in dictionary
+```
+
+**Schema** (using spellfix1 extension):
+```sql
+-- Spellfix1 virtual table for each FTS index
+CREATE VIRTUAL TABLE spellfix_idx USING spellfix1;
+
+-- Auto-populate from FTS5 vocabulary
+INSERT INTO spellfix_idx(word)
+  SELECT term FROM idx_vocab WHERE col='*';
+```
+
+**Implementation**:
+- Enable spellfix1 extension (~50KB)
+- Auto-sync FTS5 vocab → spellfix1 on HSET/DEL
+- Query spellfix1 for suggestions with edit distance
+
+**Tests** (~10 tests):
+- [ ] FT.SPELLCHECK with single typo
+- [ ] FT.SPELLCHECK with multiple typos
+- [ ] FT.DICTADD custom dictionary
+- [ ] TERMS INCLUDE/EXCLUDE filters
+- [ ] Auto-sync vocab on document updates
+- [ ] Spelling suggestions ranking
+
+#### Feature Flag
+
+```toml
+[features]
+fuzzy = []        # Trigram tokenizer + Levenshtein distance
+spellcheck = []   # FT.SPELLCHECK, FT.DICT* (requires spellfix1 extension ~50KB)
+full = ["vectors", "geo", "fuzzy"]  # Add fuzzy to full feature set
+```
+
+#### Success Criteria
+
+- [ ] Trigram tokenizer integrated with FTS5
+- [ ] Fuzzy queries with `~term` syntax work
+- [ ] Levenshtein distance ranking implemented
+- [ ] 25+ tests passing (trigrams + levenshtein + spellcheck)
+- [ ] Performance: <100ms for fuzzy search on 10K documents
+- [ ] Documentation in README and docs site
+
+#### References
+
+- [FTS5 Extension Architecture](https://www.sqlite.org/fts5.html#custom_tokenizers)
+- [Wagner-Fischer Algorithm](https://en.wikipedia.org/wiki/Wagner%E2%80%93Fischer_algorithm)
+- [SQLite spellfix1](https://www.sqlite.org/spellfix1.html)
+- [Trigram Matching in PostgreSQL](https://www.postgresql.org/docs/current/pgtrgm.html)
+
+---
 
 ### HyperLogLog (Probabilistic Cardinality)
 
@@ -830,12 +1173,12 @@ Basic functionality is covered. Need comprehensive edge case and integration tes
 [features]
 geo = []          # GEO* commands — uses SQLite's built-in R*Tree (no extra deps)
 vectors = []      # V* commands — adds sqlite-vector (~500KB)
-fuzzy = []        # Trigram tokenizer for approximate matching
+fuzzy = []        # Trigram tokenizer + Levenshtein distance for fuzzy search
 spellcheck = []   # FT.SPELLCHECK, FT.DICT* — adds spellfix1 (~50KB)
 languages = []    # Non-English stemmers — adds Snowball (~200KB)
 geoshape = []     # GEOSHAPE field type — enables Geopoly
 
-full = ["vectors", "geo"]  # Currently: vectors + geo
+full = ["vectors", "geo", "fuzzy"]  # Production-ready features
 ```
 
 **Installation:**
