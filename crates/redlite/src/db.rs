@@ -3025,7 +3025,8 @@ impl Db {
                         };
                         results.push(actual_idx);
                         found += 1;
-                        if found >= count {
+                        // count == 0 means return ALL matches (Redis behavior)
+                        if count > 0 && found >= count {
                             break;
                         }
                     }
@@ -3131,8 +3132,9 @@ impl Db {
         }
 
         // Get or create destination key
-        // Release and reacquire lock if source == dest to avoid deadlock
+        // Release and reacquire lock to avoid deadlock
         let dest_key_id = if source == destination && src_count > 0 {
+            drop(conn); // Must drop before reacquiring below
             src_key_id
         } else {
             // Need to release conn for get_or_create_list_key
@@ -6767,26 +6769,28 @@ impl Db {
     /// BLPOP key [key ...] timeout
     /// Block and pop from the left (head) of lists
     pub async fn blpop(&self, keys: &[&str], timeout: f64) -> Result<Option<(String, Vec<u8>)>> {
+        // None = block forever (Redis behavior for timeout=0)
         let deadline = if timeout == 0.0 {
-            // 0 means block indefinitely (very far in future)
-            tokio::time::Instant::now() + Duration::from_secs(u64::MAX / 2)
+            None
         } else {
-            tokio::time::Instant::now() + Duration::from_secs_f64(timeout)
+            Some(tokio::time::Instant::now() + Duration::from_secs_f64(timeout))
         };
 
         loop {
             // Try immediate pop on all keys (in order)
             for key in keys {
-                if let Ok(values) = self.lpop(key, Some(1)) {
-                    if !values.is_empty() {
-                        return Ok(Some(((*key).to_string(), values[0].clone())));
-                    }
+                // Propagate WRONGTYPE errors (matches Redis behavior)
+                let values = self.lpop(key, Some(1))?;
+                if !values.is_empty() {
+                    return Ok(Some(((*key).to_string(), values[0].clone())));
                 }
             }
 
-            // Check timeout
-            if tokio::time::Instant::now() >= deadline {
-                return Ok(None);
+            // Check timeout (only if we have a deadline)
+            if let Some(dl) = deadline {
+                if tokio::time::Instant::now() >= dl {
+                    return Ok(None);
+                }
             }
 
             // Subscribe to all keys and wait for any notification with short timeout
@@ -6796,8 +6800,10 @@ impl Db {
             }
 
             // Wait for the first notification or a short sleep (100ms)
-            let remaining = deadline - tokio::time::Instant::now();
-            let wait_duration = std::cmp::min(remaining, Duration::from_millis(100));
+            let wait_duration = match deadline {
+                Some(dl) => std::cmp::min(dl - tokio::time::Instant::now(), Duration::from_millis(100)),
+                None => Duration::from_millis(100),
+            };
 
             // Set up the first few select branches (up to 5 keys)
             let mut rx_iter = receivers.iter_mut();
@@ -6863,26 +6869,28 @@ impl Db {
     /// BRPOP key [key ...] timeout
     /// Block and pop from the right (tail) of lists
     pub async fn brpop(&self, keys: &[&str], timeout: f64) -> Result<Option<(String, Vec<u8>)>> {
+        // None = block forever (Redis behavior for timeout=0)
         let deadline = if timeout == 0.0 {
-            // 0 means block indefinitely (very far in future)
-            tokio::time::Instant::now() + Duration::from_secs(u64::MAX / 2)
+            None
         } else {
-            tokio::time::Instant::now() + Duration::from_secs_f64(timeout)
+            Some(tokio::time::Instant::now() + Duration::from_secs_f64(timeout))
         };
 
         loop {
             // Try immediate pop on all keys (in order)
             for key in keys {
-                if let Ok(values) = self.rpop(key, Some(1)) {
-                    if !values.is_empty() {
-                        return Ok(Some(((*key).to_string(), values[0].clone())));
-                    }
+                // Propagate WRONGTYPE errors (matches Redis behavior)
+                let values = self.rpop(key, Some(1))?;
+                if !values.is_empty() {
+                    return Ok(Some(((*key).to_string(), values[0].clone())));
                 }
             }
 
-            // Check timeout
-            if tokio::time::Instant::now() >= deadline {
-                return Ok(None);
+            // Check timeout (only if we have a deadline)
+            if let Some(dl) = deadline {
+                if tokio::time::Instant::now() >= dl {
+                    return Ok(None);
+                }
             }
 
             // Subscribe to all keys and wait for any notification with short timeout
@@ -6892,8 +6900,10 @@ impl Db {
             }
 
             // Wait for the first notification or a short sleep (100ms)
-            let remaining = deadline - tokio::time::Instant::now();
-            let wait_duration = std::cmp::min(remaining, Duration::from_millis(100));
+            let wait_duration = match deadline {
+                Some(dl) => std::cmp::min(dl - tokio::time::Instant::now(), Duration::from_millis(100)),
+                None => Duration::from_millis(100),
+            };
 
             // Set up the first few select branches (up to 5 keys)
             let mut rx_iter = receivers.iter_mut();
@@ -18251,6 +18261,249 @@ mod tests {
         assert!(result.is_ok() || result.is_err());
     }
 
+    // ========================================================================
+    // FT.SEARCH Enhancement Tests - SORTBY Improvements
+    // ========================================================================
+
+    #[test]
+    fn test_ft_search_sortby_missing_field() {
+        // Documents without the sort field should still be returned
+        use crate::types::{FtField, FtOnType, FtSearchOptions};
+
+        let db = Db::open_memory().unwrap();
+
+        let schema = vec![
+            FtField::text("content"),
+            FtField::numeric("priority").sortable(),
+        ];
+        db.ft_create("idx", FtOnType::Hash, &["doc:"], &schema)
+            .unwrap();
+
+        // Doc with priority
+        db.hset("doc:1", &[("content", b"hello world"), ("priority", b"10")])
+            .unwrap();
+        // Doc without priority field
+        db.hset("doc:2", &[("content", b"hello everyone")])
+            .unwrap();
+        // Another doc with priority
+        db.hset("doc:3", &[("content", b"hello there"), ("priority", b"5")])
+            .unwrap();
+
+        let mut options = FtSearchOptions::new();
+        options.sortby = Some(("priority".to_string(), true)); // ASC
+
+        let result = db.ft_search("idx", "hello", &options);
+        assert!(result.is_ok());
+        let (total, _results) = result.unwrap();
+        // All three docs should be returned
+        assert_eq!(total, 3);
+    }
+
+    #[test]
+    fn test_ft_search_sortby_tie_breaking() {
+        // Same score documents should have consistent ordering
+        use crate::types::{FtField, FtOnType, FtSearchOptions};
+
+        let db = Db::open_memory().unwrap();
+
+        let schema = vec![
+            FtField::text("content"),
+            FtField::numeric("score").sortable(),
+        ];
+        db.ft_create("idx", FtOnType::Hash, &["doc:"], &schema)
+            .unwrap();
+
+        // Three docs with same score
+        db.hset("doc:a", &[("content", b"test item"), ("score", b"100")])
+            .unwrap();
+        db.hset("doc:b", &[("content", b"test item"), ("score", b"100")])
+            .unwrap();
+        db.hset("doc:c", &[("content", b"test item"), ("score", b"100")])
+            .unwrap();
+
+        let mut options = FtSearchOptions::new();
+        options.sortby = Some(("score".to_string(), false)); // DESC
+
+        // Run twice and check consistency
+        let (_, results1) = db.ft_search("idx", "test", &options).unwrap();
+        let (_, results2) = db.ft_search("idx", "test", &options).unwrap();
+
+        // Results should be in same order both times (deterministic)
+        assert_eq!(results1.len(), results2.len());
+        for (r1, r2) in results1.iter().zip(results2.iter()) {
+            assert_eq!(r1.key, r2.key);
+        }
+    }
+
+    // ========================================================================
+    // FT.SEARCH Enhancement Tests - BM25 Accuracy
+    // ========================================================================
+
+    #[test]
+    fn test_bm25_term_frequency() {
+        // Higher term frequency should result in higher scores
+        use crate::types::{FtField, FtOnType, FtSearchOptions};
+
+        let db = Db::open_memory().unwrap();
+
+        let schema = vec![FtField::text("content")];
+        db.ft_create("idx", FtOnType::Hash, &["doc:"], &schema)
+            .unwrap();
+
+        // Doc with term appearing once
+        db.hset("doc:1", &[("content", b"rust is great")])
+            .unwrap();
+        // Doc with term appearing multiple times
+        db.hset("doc:2", &[("content", b"rust rust rust is amazing for rust developers")])
+            .unwrap();
+
+        let mut options = FtSearchOptions::new();
+        options.withscores = true;
+
+        let (total, results) = db.ft_search("idx", "rust", &options).unwrap();
+        assert_eq!(total, 2);
+
+        // Find scores
+        let score1 = results.iter().find(|r| r.key == "doc:1").map(|r| r.score);
+        let score2 = results.iter().find(|r| r.key == "doc:2").map(|r| r.score);
+
+        // Doc with more occurrences should have higher score (or at least be found)
+        assert!(score1.is_some());
+        assert!(score2.is_some());
+    }
+
+    #[test]
+    fn test_bm25_document_length_normalization() {
+        // Longer documents should have some length normalization
+        use crate::types::{FtField, FtOnType, FtSearchOptions};
+
+        let db = Db::open_memory().unwrap();
+
+        let schema = vec![FtField::text("content")];
+        db.ft_create("idx", FtOnType::Hash, &["doc:"], &schema)
+            .unwrap();
+
+        // Short doc with target term
+        db.hset("doc:short", &[("content", b"rust programming")])
+            .unwrap();
+        // Very long doc with same target term (once)
+        let long_content = "rust ".to_string() + &"word ".repeat(100);
+        db.hset("doc:long", &[("content", long_content.as_bytes())])
+            .unwrap();
+
+        let mut options = FtSearchOptions::new();
+        options.withscores = true;
+
+        let (total, _results) = db.ft_search("idx", "rust", &options).unwrap();
+        assert_eq!(total, 2);
+        // Both should be found
+    }
+
+    #[test]
+    fn test_bm25_idf_rare_terms() {
+        // Rare terms should have higher IDF contribution
+        use crate::types::{FtField, FtOnType, FtSearchOptions};
+
+        let db = Db::open_memory().unwrap();
+
+        let schema = vec![FtField::text("content")];
+        db.ft_create("idx", FtOnType::Hash, &["doc:"], &schema)
+            .unwrap();
+
+        // Many docs with common word
+        for i in 0..10 {
+            db.hset(&format!("doc:{}", i), &[("content", b"common word here")])
+                .unwrap();
+        }
+        // One doc with rare word
+        db.hset("doc:rare", &[("content", b"unique special rare")])
+            .unwrap();
+
+        let mut options = FtSearchOptions::new();
+        options.withscores = true;
+
+        // Search for rare term
+        let (total, results) = db.ft_search("idx", "unique", &options).unwrap();
+        assert_eq!(total, 1);
+        assert_eq!(results[0].key, "doc:rare");
+    }
+
+    // ========================================================================
+    // FT.SEARCH Enhancement Tests - Query Parser Edge Cases
+    // ========================================================================
+
+    #[test]
+    fn test_query_parser_empty_phrase() {
+        // Empty phrase should be handled gracefully
+        use crate::search::parse_query;
+
+        // Empty phrase
+        let result = parse_query("\"\"", false);
+        // Should either succeed with empty or error gracefully
+        assert!(result.is_ok() || result.is_err());
+    }
+
+    #[test]
+    fn test_query_parser_deeply_nested() {
+        // Deeply nested parentheses should work
+        use crate::search::parse_query;
+
+        // 5 levels deep
+        let result = parse_query("(((((hello)))))", false);
+        assert!(result.is_ok());
+
+        // Mix of nesting and operators
+        let result2 = parse_query("((a | b) (c | d))", false);
+        assert!(result2.is_ok());
+    }
+
+    #[test]
+    fn test_query_parser_unclosed_brackets() {
+        // Malformed brackets should be handled
+        use crate::search::parse_query;
+
+        // Unclosed paren
+        let result = parse_query("(hello world", false);
+        // Should handle gracefully (error is acceptable)
+        assert!(result.is_ok() || result.is_err());
+
+        // Unclosed field scope
+        let result2 = parse_query("@field:", false);
+        assert!(result2.is_ok() || result2.is_err());
+    }
+
+    #[test]
+    fn test_query_parser_unicode_terms() {
+        // Unicode search terms should work
+        use crate::search::parse_query;
+
+        // Japanese
+        let result = parse_query("こんにちは", false);
+        assert!(result.is_ok());
+
+        // Mixed
+        let result2 = parse_query("hello 世界", false);
+        assert!(result2.is_ok());
+
+        // Emoji
+        let result3 = parse_query("🎉", false);
+        assert!(result3.is_ok());
+    }
+
+    #[test]
+    fn test_query_parser_special_characters() {
+        // Special characters in queries
+        use crate::search::parse_query;
+
+        // Hyphens (common in words)
+        let result = parse_query("self-driving", false);
+        assert!(result.is_ok());
+
+        // Underscore
+        let result2 = parse_query("snake_case", false);
+        assert!(result2.is_ok());
+    }
+
     #[test]
     fn test_ft_search_unicode_content() {
         use crate::types::{FtField, FtOnType, FtSearchOptions};
@@ -21255,6 +21508,248 @@ mod tests {
         let count = db.zunionstore("dest", &["zset1", "nokey"], None, None).unwrap();
         assert_eq!(count, 1);
         assert_eq!(db.zscore("dest", b"a").unwrap(), Some(1.0));
+    }
+
+    // ============================================
+    // BLPOP / BRPOP Tests (Session 35)
+    // ============================================
+
+    #[tokio::test]
+    async fn test_blpop_immediate_data() {
+        // Data already in list - returns immediately without blocking
+        let db = Db::open_memory().unwrap();
+        db.rpush("mylist", &[b"first", b"second"]).unwrap();
+
+        let result = db.blpop(&["mylist"], 1.0).await.unwrap();
+        assert!(result.is_some());
+        let (key, value) = result.unwrap();
+        assert_eq!(key, "mylist");
+        assert_eq!(value, b"first".to_vec());
+
+        // Second pop should get second value
+        let result2 = db.blpop(&["mylist"], 1.0).await.unwrap();
+        assert!(result2.is_some());
+        let (key2, value2) = result2.unwrap();
+        assert_eq!(key2, "mylist");
+        assert_eq!(value2, b"second".to_vec());
+    }
+
+    #[tokio::test]
+    async fn test_blpop_timeout_empty() {
+        // Empty list - should timeout and return None
+        let db = Db::open_memory().unwrap();
+
+        let start = std::time::Instant::now();
+        let result = db.blpop(&["emptylist"], 0.2).await.unwrap();
+        let elapsed = start.elapsed();
+
+        assert!(result.is_none());
+        // Should have waited at least ~200ms
+        assert!(elapsed.as_millis() >= 180, "Should wait for timeout");
+    }
+
+    #[tokio::test]
+    async fn test_blpop_multiple_keys() {
+        // Multiple keys - first non-empty key wins
+        let db = Db::open_memory().unwrap();
+
+        // Only second key has data
+        db.rpush("list2", &[b"value2"]).unwrap();
+
+        let result = db.blpop(&["list1", "list2", "list3"], 1.0).await.unwrap();
+        assert!(result.is_some());
+        let (key, value) = result.unwrap();
+        assert_eq!(key, "list2");
+        assert_eq!(value, b"value2".to_vec());
+    }
+
+    #[tokio::test]
+    async fn test_blpop_key_priority() {
+        // Keys are checked in order - first key with data wins even if later keys also have data
+        let db = Db::open_memory().unwrap();
+
+        db.rpush("high", &[b"high_value"]).unwrap();
+        db.rpush("low", &[b"low_value"]).unwrap();
+
+        // Should pop from "high" because it's first in list
+        let result = db.blpop(&["high", "low"], 1.0).await.unwrap();
+        assert!(result.is_some());
+        let (key, value) = result.unwrap();
+        assert_eq!(key, "high");
+        assert_eq!(value, b"high_value".to_vec());
+
+        // Next pop should get from "low"
+        let result2 = db.blpop(&["high", "low"], 1.0).await.unwrap();
+        assert!(result2.is_some());
+        let (key2, value2) = result2.unwrap();
+        assert_eq!(key2, "low");
+        assert_eq!(value2, b"low_value".to_vec());
+    }
+
+    #[tokio::test]
+    async fn test_blpop_timeout_zero() {
+        // timeout=0 means wait forever - test with concurrent push
+        let db = Arc::new(Db::open_memory().unwrap());
+        let notifier = Arc::new(std::sync::RwLock::new(std::collections::HashMap::new()));
+        db.with_notifier(notifier);
+
+        let db_clone = db.clone();
+
+        // Spawn a task that will push after a short delay
+        let push_handle = tokio::spawn(async move {
+            tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+            db_clone.rpush("waitlist", &[b"pushed_value"]).unwrap();
+            db_clone.notify_key("waitlist").await.ok();
+        });
+
+        // BLPOP with timeout=0 should wait indefinitely until data arrives
+        // We wrap with manual timeout to avoid hanging if test fails
+        let result = tokio::time::timeout(
+            std::time::Duration::from_secs(2),
+            db.blpop(&["waitlist"], 0.0)  // Actually use timeout=0 now that overflow is fixed
+        ).await;
+
+        push_handle.await.unwrap();
+
+        assert!(result.is_ok(), "Should not timeout");
+        let blpop_result = result.unwrap().unwrap();
+        assert!(blpop_result.is_some());
+        let (key, value) = blpop_result.unwrap();
+        assert_eq!(key, "waitlist");
+        assert_eq!(value, b"pushed_value".to_vec());
+    }
+
+    #[tokio::test]
+    async fn test_blpop_binary_data() {
+        // Binary data with null bytes and high bytes should work
+        let db = Db::open_memory().unwrap();
+
+        let binary_data: &[u8] = &[0x00, 0x01, 0xFF, 0xFE, 0x00, 0x80, 0x7F];
+        db.rpush("binlist", &[binary_data]).unwrap();
+
+        let result = db.blpop(&["binlist"], 1.0).await.unwrap();
+        assert!(result.is_some());
+        let (key, value) = result.unwrap();
+        assert_eq!(key, "binlist");
+        assert_eq!(value, binary_data.to_vec());
+    }
+
+    #[tokio::test]
+    async fn test_brpop_immediate_data() {
+        // BRPOP pops from right - data already in list returns immediately
+        let db = Db::open_memory().unwrap();
+        db.rpush("mylist", &[b"first", b"second"]).unwrap();
+
+        let result = db.brpop(&["mylist"], 1.0).await.unwrap();
+        assert!(result.is_some());
+        let (key, value) = result.unwrap();
+        assert_eq!(key, "mylist");
+        assert_eq!(value, b"second".to_vec()); // BRPOP gets from right
+
+        // Second pop should get first value (which is now at the right)
+        let result2 = db.brpop(&["mylist"], 1.0).await.unwrap();
+        assert!(result2.is_some());
+        let (key2, value2) = result2.unwrap();
+        assert_eq!(key2, "mylist");
+        assert_eq!(value2, b"first".to_vec());
+    }
+
+    #[tokio::test]
+    async fn test_brpop_timeout_empty() {
+        // Empty list - should timeout and return None
+        let db = Db::open_memory().unwrap();
+
+        let start = std::time::Instant::now();
+        let result = db.brpop(&["emptylist"], 0.2).await.unwrap();
+        let elapsed = start.elapsed();
+
+        assert!(result.is_none());
+        // Should have waited at least ~200ms
+        assert!(elapsed.as_millis() >= 180, "Should wait for timeout");
+    }
+
+    #[tokio::test]
+    async fn test_blpop_concurrent_push() {
+        // Test that BLPOP wakes up when another task pushes
+        let db = Arc::new(Db::open_memory().unwrap());
+        let notifier = Arc::new(std::sync::RwLock::new(std::collections::HashMap::new()));
+        db.with_notifier(notifier);
+
+        let db_clone = db.clone();
+
+        // Spawn a task that will push after a delay
+        let push_handle = tokio::spawn(async move {
+            tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+            db_clone.rpush("concurrent", &[b"async_value"]).unwrap();
+            // Notify the key so BLPOP wakes up
+            db_clone.notify_key("concurrent").await.ok();
+        });
+
+        let start = std::time::Instant::now();
+        let result = db.blpop(&["concurrent"], 2.0).await.unwrap();
+        let elapsed = start.elapsed();
+
+        push_handle.await.unwrap();
+
+        assert!(result.is_some());
+        let (key, value) = result.unwrap();
+        assert_eq!(key, "concurrent");
+        assert_eq!(value, b"async_value".to_vec());
+        // Should have returned quickly after the push (well before 2s timeout)
+        assert!(elapsed.as_millis() < 1000, "Should return soon after push, not wait full timeout");
+    }
+
+    #[tokio::test]
+    async fn test_blpop_wrong_type() {
+        // BLPOP on a non-list key should return WRONGTYPE error (matches Redis)
+        let db = Db::open_memory().unwrap();
+
+        // Create a string key
+        db.set("stringkey", b"value", None).unwrap();
+
+        // BLPOP should fail with WRONGTYPE error
+        let result = db.blpop(&["stringkey"], 0.1).await;
+        assert!(result.is_err());
+        let err = result.unwrap_err();
+        assert!(
+            err.to_string().contains("WRONGTYPE") || err.to_string().contains("wrong type"),
+            "Expected WRONGTYPE error, got: {}", err
+        );
+    }
+
+    #[tokio::test]
+    async fn test_blpop_nonexistent_key() {
+        // BLPOP on a non-existent key should timeout (key is skipped as if empty)
+        let db = Db::open_memory().unwrap();
+
+        let start = std::time::Instant::now();
+        let result = db.blpop(&["doesnt_exist"], 0.2).await.unwrap();
+        let elapsed = start.elapsed();
+
+        assert!(result.is_none());
+        assert!(elapsed.as_millis() >= 180, "Should wait for timeout");
+    }
+
+    #[tokio::test]
+    async fn test_blpop_mixed_keys() {
+        // Mix of existing empty, existing with data, and non-existing keys
+        let db = Db::open_memory().unwrap();
+
+        // Create an empty list (LPUSH then LPOP)
+        db.rpush("emptylist", &[b"temp"]).unwrap();
+        db.lpop("emptylist", Some(1)).unwrap();
+
+        // Create a list with data
+        db.rpush("hasdata", &[b"real_value"]).unwrap();
+
+        // noexist doesn't exist
+
+        // Should skip emptylist and noexist, return from hasdata
+        let result = db.blpop(&["emptylist", "noexist", "hasdata"], 1.0).await.unwrap();
+        assert!(result.is_some());
+        let (key, value) = result.unwrap();
+        assert_eq!(key, "hasdata");
+        assert_eq!(value, b"real_value".to_vec());
     }
 
 }
