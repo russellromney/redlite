@@ -4,6 +4,175 @@ See [CHANGELOG.md](./CHANGELOG.md) for completed features.
 
 ## Recently Completed
 
+### Session 35: Blocking Operations (BLPOP/BRPOP) - PLANNED
+
+**Goal**: Implement BLPOP and BRPOP with adaptive polling for both embedded and server modes.
+
+**Rationale**: SQLite with warm page cache returns queries in microseconds. In file mode, other processes can connect and push data. Polling at 250μs-1ms intervals is efficient and provides near-instant response when data becomes available.
+
+#### Implementation
+
+**Adaptive Polling Strategy**:
+- Start at 250μs polling interval
+- After 100 iterations with no data, increase to 1ms
+- Cap at 1ms for long waits
+- SQLite cached reads are ~1μs, so polling overhead is minimal
+
+```rust
+pub fn blpop(&self, keys: &[&str], timeout: f64) -> Result<Option<(String, Vec<u8>)>> {
+    let deadline = if timeout > 0.0 {
+        Some(Instant::now() + Duration::from_secs_f64(timeout))
+    } else {
+        None // timeout=0 means wait forever (Redis behavior)
+    };
+
+    let mut poll_interval = Duration::from_micros(250);
+    let mut iterations = 0;
+
+    loop {
+        // Try each key in priority order
+        for key in keys {
+            if let Some(value) = self.lpop(key, Some(1))?.pop() {
+                return Ok(Some((key.to_string(), value)));
+            }
+        }
+
+        // Check timeout
+        if let Some(d) = deadline {
+            if Instant::now() >= d {
+                return Ok(None);
+            }
+        }
+
+        // Adaptive backoff
+        iterations += 1;
+        if iterations > 100 && poll_interval < Duration::from_millis(1) {
+            poll_interval = Duration::from_millis(1);
+        }
+
+        std::thread::sleep(poll_interval);
+    }
+}
+```
+
+**Commands**:
+- `BLPOP key [key ...] timeout` - Blocking left pop
+- `BRPOP key [key ...] timeout` - Blocking right pop
+
+**Tests** (~12 scenarios):
+- [ ] `test_blpop_immediate_data` - Data already in list, returns immediately
+- [ ] `test_blpop_timeout_empty` - Empty list, timeout returns nil
+- [ ] `test_blpop_multiple_keys` - First non-empty key wins
+- [ ] `test_blpop_key_priority` - Keys checked in order
+- [ ] `test_blpop_timeout_zero` - Infinite wait (test with concurrent push)
+- [ ] `test_blpop_binary_data` - Binary values work correctly
+- [ ] `test_brpop_immediate_data` - Right pop variant
+- [ ] `test_brpop_timeout_empty` - Right pop timeout
+- [ ] `test_blpop_concurrent_push` - Another thread pushes during wait
+- [ ] `test_blpop_wrong_type` - Error on non-list key
+- [ ] `test_blpop_nonexistent_key` - Non-existent keys skipped
+- [ ] `test_blpop_mixed_keys` - Mix of existing/non-existing keys
+
+**Server Mode**:
+- Same polling implementation works
+- RESP handler converts timeout from seconds to Duration
+
+#### Success Criteria
+- [ ] BLPOP/BRPOP implemented with adaptive 250μs→1ms polling
+- [ ] All 12 oracle tests passing
+- [ ] Works in both embedded and server modes
+- [ ] Timeout=0 works correctly (infinite wait)
+- [ ] Multi-key priority ordering matches Redis
+
+---
+
+### Session 33: Fuzzy Search with Built-in Trigram Tokenizer - IN PROGRESS
+
+**Goal**: Enable fuzzy/substring matching in FT.SEARCH using SQLite FTS5's built-in trigram tokenizer.
+
+**Rationale**: FTS5 has included a built-in `trigram` tokenizer since SQLite 3.34.0 (Dec 2020). This enables:
+- Substring matching (like SQL LIKE '%pattern%' but indexed)
+- GLOB/LIKE queries that use the FTS5 index
+- Typo-tolerant search via trigram overlap
+- No custom C code or external extensions required
+
+**Reference**: [SQLite FTS5 Trigram Tokenizer](https://sqlite.org/fts5.html#the_trigram_tokenizer)
+
+#### Phase 1: Trigram Index Support (~6 tests)
+
+**Implementation**:
+1. Add `TOKENIZE trigram` option to FT.CREATE
+2. Update schema to track tokenizer type per field
+3. Generate trigram-tokenized FTS5 tables
+
+```bash
+# Create index with trigram tokenizer for fuzzy matching
+FT.CREATE idx ON HASH PREFIX 1 doc:
+  SCHEMA title TEXT TOKENIZE trigram   # Enables substring/fuzzy
+         body TEXT                      # Default porter stemming
+```
+
+**Tests**:
+- [ ] `test_ft_create_with_trigram_tokenizer` - Create index with TOKENIZE trigram
+- [ ] `test_ft_search_trigram_substring` - Find "hello" in "say hello world"
+- [ ] `test_ft_search_trigram_prefix` - Prefix match with trigrams
+- [ ] `test_ft_search_trigram_suffix` - Suffix match (unlike standard FTS5)
+- [ ] `test_ft_search_trigram_case_insensitive` - Case handling
+- [ ] `test_ft_info_shows_tokenizer` - FT.INFO displays tokenizer type
+
+#### Phase 2: Fuzzy Query Syntax (~8 tests)
+
+**Implementation**:
+1. Add `%%term%%` syntax for fuzzy substring matching
+2. Map to FTS5 LIKE/GLOB when trigram index exists
+3. Fall back to standard MATCH for non-trigram indexes
+
+```bash
+# Fuzzy substring search (requires trigram tokenizer)
+FT.SEARCH idx "%%helo%%"              # Matches "hello", "helo", etc.
+FT.SEARCH idx "@title:%%wrld%%"       # Field-scoped fuzzy
+```
+
+**Tests**:
+- [ ] `test_ft_search_fuzzy_syntax` - Basic %%term%% query
+- [ ] `test_ft_search_fuzzy_typo_single` - 1-char typo matches
+- [ ] `test_ft_search_fuzzy_typo_double` - 2-char typo matches (lower rank)
+- [ ] `test_ft_search_fuzzy_field_scoped` - @field:%%term%%
+- [ ] `test_ft_search_fuzzy_mixed_query` - Fuzzy + exact in same query
+- [ ] `test_ft_search_fuzzy_on_non_trigram` - Graceful fallback or error
+- [ ] `test_ft_search_fuzzy_unicode` - Unicode fuzzy matching
+- [ ] `test_ft_search_fuzzy_short_terms` - 1-2 char terms (edge case)
+
+#### Phase 3: Levenshtein Ranking (Optional, ~6 tests)
+
+**Implementation**:
+1. Add pure Rust Levenshtein distance function (~50 lines)
+2. Post-filter trigram results with edit distance for precision
+3. Add DISTANCE parameter for max edit threshold
+
+```bash
+# Fuzzy with edit distance limit
+FT.SEARCH idx "%%helo%%" DISTANCE 2   # Max 2 edits allowed
+```
+
+**Tests**:
+- [ ] `test_ft_search_levenshtein_basic` - Edit distance calculation
+- [ ] `test_ft_search_levenshtein_insertion` - "helo" → "hello" (1 edit)
+- [ ] `test_ft_search_levenshtein_deletion` - "helllo" → "hello" (1 edit)
+- [ ] `test_ft_search_levenshtein_substitution` - "jello" → "hello" (1 edit)
+- [ ] `test_ft_search_levenshtein_distance_filter` - DISTANCE param works
+- [ ] `test_ft_search_levenshtein_ranking` - Closer matches rank higher
+
+#### Success Criteria
+- [ ] FT.CREATE supports TOKENIZE trigram option
+- [ ] Substring matching works on trigram indexes
+- [ ] %%term%% fuzzy syntax implemented
+- [ ] 20+ new fuzzy search tests passing
+- [ ] All existing tests continue to pass
+- [ ] Performance: <100ms fuzzy search on 10K documents
+
+---
+
 ### Session 28: Keyset Pagination (Performance)
 - [x] Refactor SCAN to use `WHERE key > last_seen` instead of OFFSET
 - [x] Refactor HSCAN to use `WHERE field > last_seen`
