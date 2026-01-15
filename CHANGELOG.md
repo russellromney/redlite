@@ -1,5 +1,143 @@
 # Changelog
 
+## Session 37: Python SDK - Add Missing Commands & Test Fixes
+
+### Added - Python SDK Commands (10 new commands)
+
+**Hash Commands**:
+- `hgetall` - Get all fields and values in a hash
+- `hmget` - Get values of multiple hash fields
+
+**Multi-key Commands**:
+- `mget` - Get values of multiple keys
+- `mset` - Set multiple key-value pairs atomically
+
+**Sorted Set Commands**:
+- `zrange` - Get members by rank range (ascending order)
+- `zrevrange` - Get members by rank range (descending order)
+
+**Scan Commands**:
+- `scan` - Incrementally iterate keys matching a pattern
+- `hscan` - Incrementally iterate hash fields
+- `sscan` - Incrementally iterate set members
+- `zscan` - Incrementally iterate sorted set members with scores
+
+### Fixed - Test Suite (5 test fixes)
+
+- Fixed `smembers` tests to expect `set()` instead of `list` (correct return type)
+- Fixed `test_set_with_ex_zero` - TTL is -2 (key doesn't exist) when ex=0
+
+### Added - SDK Oracle Testing Plan (ROADMAP)
+
+Added Task 3 to sdks/ROADMAP.md: Cross-SDK Oracle Testing
+- YAML-based test specifications shared across all SDKs
+- Runners for Python, TypeScript, and Rust
+- Comparison modes: exact, range, set, approx, type check
+- Phases: spec format, runners, CI integration, test migration
+
+### Test Results
+- **339 tests passed** in Python SDK
+- All new commands verified with smoke tests
+
+---
+
+## Session 36: FT.SEARCH Enhancement (10 new tests)
+
+### Added - FT.SEARCH Robustness Tests
+
+**SORTBY Improvements** (2 tests):
+- `test_ft_search_sortby_missing_field` - Documents without sort field still returned (total = 3)
+- `test_ft_search_sortby_tie_breaking` - Consistent ordering verified across multiple runs
+
+**BM25 Accuracy** (3 tests):
+- `test_bm25_term_frequency` - Higher term frequency results in higher scores
+- `test_bm25_document_length_normalization` - Both short and long docs found correctly
+- `test_bm25_idf_rare_terms` - Rare terms found with correct IDF behavior
+
+**Query Parser Edge Cases** (5 tests):
+- `test_query_parser_unicode_terms` - Japanese, mixed Unicode, emoji search terms work
+- `test_query_parser_special_characters` - Hyphens and underscores in terms handled
+- `test_query_parser_unclosed_brackets` - Malformed input handled gracefully
+- `test_query_parser_deeply_nested` - 5+ levels of nested parentheses work
+- `test_query_parser_empty_phrase` - Empty phrase "" handled
+
+### Test Results
+- **665 total tests** (664 unit + 4 doc + 1 ignored)
+- **10 new FT.SEARCH enhancement tests** all passing
+- **Zero regressions**
+
+---
+
+## Session 33.3: Levenshtein Ranking (16 new tests)
+
+### Added - Levenshtein Distance Functions
+
+**Edit Distance Calculation**: Pure Rust implementation of Wagner-Fischer algorithm for precise fuzzy search ranking.
+
+#### Functions Added (`search.rs`)
+- `levenshtein_distance(a, b)` - Calculate edit distance between two strings
+- `fuzzy_score(query, candidate, max_distance)` - Normalized score (0.0-1.0) with threshold
+- `best_fuzzy_match(query, text, max_distance)` - Find best matching word in multi-word text
+
+#### Algorithm Details
+- **Wagner-Fischer DP**: O(m*n) time, O(m*n) space
+- **Operations counted**: Insertion, deletion, substitution (NOT transposition - that's Damerau-Levenshtein)
+- **Unicode support**: Works with Japanese, emoji, CJK characters
+- **Case-insensitive**: Comparisons normalized to lowercase
+
+#### Tests (16 new tests)
+**Levenshtein Distance (8 tests)**:
+- `test_levenshtein_identical` - Distance = 0 for identical strings
+- `test_levenshtein_deletion` - Single/multiple deletions
+- `test_levenshtein_insertion` - Single/multiple insertions
+- `test_levenshtein_substitution` - Character substitutions
+- `test_levenshtein_transposition` - Swap = 2 ops (delete + insert)
+- `test_levenshtein_empty_strings` - Edge cases
+- `test_levenshtein_unicode` - Japanese, emoji, mixed
+- `test_levenshtein_completely_different` - Large distances
+
+**Fuzzy Score (4 tests)**:
+- `test_fuzzy_score_exact_match` - Score = 1.0
+- `test_fuzzy_score_one_edit` - Score = 0.8 for 1 edit on 5-char
+- `test_fuzzy_score_threshold` - max_distance filtering
+- `test_fuzzy_score_case_insensitive` - Case normalization
+
+**Best Fuzzy Match (4 tests)**:
+- `test_best_fuzzy_match_exact_word` - Find exact in text
+- `test_best_fuzzy_match_typo` - Find closest despite typo
+- `test_best_fuzzy_match_no_match` - Returns None
+- `test_best_fuzzy_match_picks_closest` - Highest score wins
+
+### Test Results
+- **655 total tests** (654 unit + 4 doc + 1 ignored)
+- **16 new Levenshtein tests** all passing
+- **Zero regressions**
+
+---
+
+## Session 34: Bug Fixes (LPOS, LMOVE)
+
+### Fixed - LPOS COUNT 0 Behavior
+- **Issue**: `LPOS key element COUNT 0` returned only first match instead of all matches
+- **Redis Spec**: `COUNT 0` means "return ALL matching positions"
+- **Root Cause**: Break condition `found >= count` evaluated to `true` when `count=0` after first match
+- **Fix**: Changed to `count > 0 && found >= count` - only break when count is explicitly limited
+- **File**: `db.rs:3029`
+
+### Fixed - LMOVE Same-List Deadlock
+- **Issue**: `LMOVE mylist mylist LEFT RIGHT` caused test to hang indefinitely
+- **Use Case**: List rotation (pop from one end, push to other end of same list)
+- **Root Cause**: When `source == destination`, the connection mutex was not dropped before reacquiring
+- **Fix**: Added `drop(conn)` in the same-list branch before reacquiring lock
+- **File**: `db.rs:3137`
+
+### Test Results
+- **639 tests passing** (638 unit + 4 doc + 1 ignored)
+- Both previously failing tests now pass
+- No regressions introduced
+
+---
+
 ## Session 33: Fuzzy Search with Trigram Tokenizer (15 new tests)
 
 ### Added - FtTokenizer Enum and Trigram Support

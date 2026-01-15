@@ -593,7 +593,7 @@ class TestSets:
         """Test SREM."""
         db.sadd("set", "a", "b", "c")
         assert db.srem("set", "a", "b") == 2
-        assert db.smembers("set") == [b"c"]
+        assert db.smembers("set") == {b"c"}
 
         # Remove non-existent
         assert db.srem("set", "nonexistent") == 0
@@ -854,7 +854,7 @@ class TestEdgeCases:
         db.sadd("set", "single")
         assert db.scard("set") == 1
         assert db.sismember("set", "single") is True
-        assert db.smembers("set") == [b"single"]
+        assert db.smembers("set") == {b"single"}
 
     def test_zset_negative_scores(self, db):
         """Test sorted set with negative scores."""

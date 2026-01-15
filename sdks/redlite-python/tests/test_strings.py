@@ -76,8 +76,9 @@ class TestSet:
 
     def test_set_with_ex_zero(self, db):
         db.set("key", "value", ex=0)
-        # ex=0 should be treated as no expiration
-        assert db.ttl("key") == -1
+        # ex=0 means immediate expiration, key should not exist
+        # TTL returns -2 for non-existent keys
+        assert db.ttl("key") == -2
 
     # SET with PX (milliseconds)
     def test_set_with_px(self, db):

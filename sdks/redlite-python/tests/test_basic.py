@@ -243,7 +243,7 @@ class TestSets:
         """Test SREM."""
         db.sadd("set", "a", "b", "c")
         assert db.srem("set", "a", "b") == 2
-        assert db.smembers("set") == [b"c"]
+        assert db.smembers("set") == {b"c"}
 
     def test_sismember(self, db):
         """Test SISMEMBER."""

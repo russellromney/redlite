@@ -409,7 +409,7 @@ class TestSmembers:
         assert set(members) == {b"a", b"b", b"c"}
 
     def test_smembers_empty(self, db):
-        assert db.smembers("nonexistent") == []
+        assert db.smembers("nonexistent") == set()
 
 
 class TestSismember:

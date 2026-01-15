@@ -3,7 +3,7 @@ Redlite - Redis API + SQLite durability.
 
 Embedded Redis-compatible database with optional server mode.
 
-**Embedded mode** (FFI, no network, microsecond latency):
+**Embedded mode** (PyO3 native bindings, no network, microsecond latency):
     >>> db = Redlite(":memory:")
     >>> db = Redlite("/path/to/db.db")
 
@@ -25,7 +25,31 @@ With context manager:
 """
 
 from .client import Redlite, FTSNamespace, VectorNamespace, GeoNamespace
-from ._ffi import RedliteError
 
-__all__ = ["Redlite", "RedliteError", "FTSNamespace", "VectorNamespace", "GeoNamespace"]
+
+class RedliteError(Exception):
+    """Error from redlite library."""
+
+    pass
+
+
+# Export native module types for advanced usage
+try:
+    from ._native import EmbeddedDb, SetOptions, ZMember
+except ImportError:
+    # Native module not available (maturin build needed)
+    EmbeddedDb = None
+    SetOptions = None
+    ZMember = None
+
+__all__ = [
+    "Redlite",
+    "RedliteError",
+    "FTSNamespace",
+    "VectorNamespace",
+    "GeoNamespace",
+    "EmbeddedDb",
+    "SetOptions",
+    "ZMember",
+]
 __version__ = "0.1.0"

@@ -1,6 +1,6 @@
 [build-system]
-requires = ["setuptools>=61.0", "cffi>=1.0.0"]
-build-backend = "setuptools.build_meta"
+requires = ["maturin>=1.5,<2.0"]
+build-backend = "maturin"
 
 [project]
 name = "redlite"
@@ -22,19 +22,21 @@ classifiers = [
     "Programming Language :: Python :: 3.10",
     "Programming Language :: Python :: 3.11",
     "Programming Language :: Python :: 3.12",
+    "Programming Language :: Rust",
     "Topic :: Database",
     "Topic :: Software Development :: Libraries :: Python Modules",
 ]
 
-dependencies = [
-    "cffi>=1.0.0",
-]
+# No dependencies for embedded mode!
+# redis-py only needed for server mode
+dependencies = []
 
 [project.optional-dependencies]
 redis = ["redis>=4.0.0"]
 dev = [
     "pytest>=7.0.0",
     "pytest-cov>=4.0.0",
+    "maturin>=1.5,<2.0",
 ]
 
 [project.urls]
@@ -42,11 +44,13 @@ Homepage = "https://github.com/russellromney/redlite"
 Documentation = "https://github.com/russellromney/redlite"
 Repository = "https://github.com/russellromney/redlite"
 
-[tool.setuptools.packages.find]
-where = ["src"]
-
-[tool.setuptools.package-data]
-redlite = ["*.so", "*.dylib", "*.dll", "*.h"]
+[tool.maturin]
+# Python source directory
+python-source = "src"
+# The native module will be placed at redlite._native
+module-name = "redlite._native"
+# Enable extension-module feature for PyO3
+features = ["pyo3/extension-module"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

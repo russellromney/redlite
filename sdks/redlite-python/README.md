@@ -17,7 +17,7 @@ pip install redlite[redis]
 from redlite import Redlite
 
 # Auto-detects mode from URL
-db = Redlite(":memory:")              # Embedded (FFI)
+db = Redlite(":memory:")              # Embedded (PyO3 native)
 db = Redlite("/path/to/db.db")        # Embedded file
 db = Redlite("redis://localhost:6379") # Server mode (wraps redis-py)
 
@@ -40,6 +40,29 @@ with Redlite("/data/cache.db", cache_mb=1000) as db:
     db.lpush("queue", "job1", "job2")
 ```
 
+## Supported Commands
+
+### Strings
+`get`, `set`, `setex`, `psetex`, `getdel`, `append`, `strlen`, `getrange`, `setrange`, `incr`, `decr`, `incrby`, `decrby`, `incrbyfloat`, `mget`, `mset`
+
+### Keys
+`delete`, `exists`, `type`, `ttl`, `pttl`, `expire`, `pexpire`, `expireat`, `pexpireat`, `persist`, `rename`, `renamenx`, `keys`, `dbsize`, `flushdb`, `select`
+
+### Hashes
+`hset`, `hget`, `hdel`, `hexists`, `hlen`, `hkeys`, `hvals`, `hincrby`, `hgetall`, `hmget`
+
+### Lists
+`lpush`, `rpush`, `lpop`, `rpop`, `llen`, `lrange`, `lindex`
+
+### Sets
+`sadd`, `srem`, `smembers`, `sismember`, `scard`
+
+### Sorted Sets
+`zadd`, `zrem`, `zscore`, `zcard`, `zcount`, `zincrby`, `zrange`, `zrevrange`
+
+### Scan Commands
+`scan`, `hscan`, `sscan`, `zscan`
+
 ### Redlite-Specific Features
 
 ```python
@@ -58,14 +81,13 @@ db.geo.search("locations", -122.4, 37.8, 100, unit="km")
 
 ## Build
 
-Requires the native library for embedded mode:
+Requires maturin for embedded mode:
 
 ```bash
-# Build FFI library
-cd crates/redlite-ffi && cargo build --release
-
-# Set library path
-export REDLITE_LIB_PATH=/path/to/target/release/libredlite_ffi.dylib
+cd sdks/redlite-python
+pip install maturin
+maturin develop          # Development build
+maturin build --release  # Release wheel
 ```
 
 ## Test
@@ -73,3 +95,13 @@ export REDLITE_LIB_PATH=/path/to/target/release/libredlite_ffi.dylib
 ```bash
 uv run pytest tests/ -v
 ```
+
+## Architecture
+
+The SDK uses PyO3 for direct Rust bindings (1 layer):
+
+```
+Python -> PyO3 native module -> Rust core
+```
+
+This provides microsecond latency for embedded mode operations.

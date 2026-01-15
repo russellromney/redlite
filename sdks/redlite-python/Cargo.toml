@@ -1,0 +1,23 @@
+[package]
+name = "redlite-python"
+version = "0.1.0"
+edition = "2021"
+license = "Apache-2.0"
+description = "Python native bindings for Redlite - Redis API with SQLite durability"
+
+[lib]
+name = "_native"
+crate-type = ["cdylib"]
+path = "rust/lib.rs"
+
+[dependencies]
+pyo3 = { version = "0.22", features = ["extension-module"] }
+# Reference the main redlite crate
+redlite = { path = "../../crates/redlite" }
+
+[build-dependencies]
+pyo3-build-config = "0.22"
+
+[profile.release]
+lto = true
+strip = "symbols"

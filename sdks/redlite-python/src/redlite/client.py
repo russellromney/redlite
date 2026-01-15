@@ -1,7 +1,7 @@
 """
 Redlite client - unified API for embedded and server modes.
 
-Embedded mode: Direct FFI to libredlite_ffi (no network, microsecond latency)
+Embedded mode: Direct PyO3 native bindings (no network, microsecond latency)
 Server mode: Wraps redis-py (connect to redlite or Redis server)
 """
 
@@ -9,8 +9,6 @@ from __future__ import annotations
 
 import math
 from typing import Any, Dict, List, Optional, Set, Union
-
-from . import _ffi
 
 
 class FTSNamespace:
@@ -119,6 +117,7 @@ class VectorNamespace:
         args.append(element)
         if attributes:
             import json
+
             args.extend(["SETATTR", json.dumps(attributes)])
         self._client._execute(*args)
         return True
@@ -161,9 +160,7 @@ class GeoNamespace:
     def __init__(self, client: "Redlite"):
         self._client = client
 
-    def add(
-        self, key: str, *members: tuple
-    ) -> int:
+    def add(self, key: str, *members: tuple) -> int:
         """
         Add geospatial items.
 
@@ -201,9 +198,14 @@ class GeoNamespace:
             withcoord: Include coordinates
         """
         args = [
-            "GEOSEARCH", key,
-            "FROMLONLAT", str(longitude), str(latitude),
-            "BYRADIUS", str(radius), unit.upper(),
+            "GEOSEARCH",
+            key,
+            "FROMLONLAT",
+            str(longitude),
+            str(latitude),
+            "BYRADIUS",
+            str(radius),
+            unit.upper(),
         ]
         if count:
             args.extend(["COUNT", str(count)])
@@ -218,7 +220,7 @@ class Redlite:
     """
     Unified Redlite client supporting both embedded and server modes.
 
-    **Embedded mode** (FFI, no network):
+    **Embedded mode** (PyO3 native bindings, no network):
         db = Redlite(":memory:")
         db = Redlite("/path/to/db.db")
 
@@ -247,10 +249,8 @@ class Redlite:
         """
         self._url = url
         self._mode: str
-        self._handle = None
+        self._native = None
         self._redis = None
-        self._lib = None
-        self._ffi_obj = None
 
         if url.startswith(("redis://", "rediss://")):
             # Server mode - use redis-py
@@ -263,21 +263,19 @@ class Redlite:
                 )
             self._redis = redis.from_url(url)
         else:
-            # Embedded mode - use FFI
+            # Embedded mode - use PyO3 native module
             self._mode = "embedded"
-            self._lib = _ffi.get_lib()
-            self._ffi_obj = _ffi.get_ffi()
-
-            if url == ":memory:":
-                self._handle = self._lib.redlite_open_memory()
-            else:
-                self._handle = self._lib.redlite_open_with_cache(
-                    url.encode("utf-8"), cache_mb
+            try:
+                from ._native import EmbeddedDb
+            except ImportError:
+                raise ImportError(
+                    "Native module not found. Run 'maturin develop' to build it."
                 )
 
-            if self._handle == self._ffi_obj.NULL:
-                _ffi.check_error()
-                raise _ffi.RedliteError("Failed to open database")
+            if url == ":memory:":
+                self._native = EmbeddedDb.open_memory()
+            else:
+                self._native = EmbeddedDb.open_with_cache(url, cache_mb)
 
         # Namespaces for Redlite-specific commands
         self.fts = FTSNamespace(self)
@@ -311,9 +309,9 @@ class Redlite:
 
     def close(self) -> None:
         """Close the database connection."""
-        if self._mode == "embedded" and self._handle is not None:
-            self._lib.redlite_close(self._handle)
-            self._handle = None
+        if self._mode == "embedded" and self._native is not None:
+            # EmbeddedDb doesn't have a close method - it's handled by Python GC
+            self._native = None
         elif self._mode == "server" and self._redis is not None:
             self._redis.close()
             self._redis = None
@@ -328,10 +326,12 @@ class Redlite:
         self.close()
 
     def _check_open(self) -> None:
-        if self._mode == "embedded" and self._handle is None:
-            raise _ffi.RedliteError("Database is closed")
+        from . import RedliteError
+
+        if self._mode == "embedded" and self._native is None:
+            raise RedliteError("Database is closed")
         if self._mode == "server" and self._redis is None:
-            raise _ffi.RedliteError("Connection is closed")
+            raise RedliteError("Connection is closed")
 
     def _execute(self, *args) -> Any:
         """Execute a raw command (for Redlite-specific commands)."""
@@ -363,8 +363,7 @@ class Redlite:
         self._check_open()
         if self._mode == "server":
             return self._redis.get(key)
-        result = self._lib.redlite_get(self._handle, key.encode("utf-8"))
-        return _ffi.bytes_to_python(result)
+        return self._native.get(key)
 
     def set(
         self,
@@ -381,17 +380,16 @@ class Redlite:
             return self._redis.set(key, value, ex=ex, px=px, nx=nx, xx=xx)
 
         value_bytes = self._encode_value(value)
-        ttl = ex if ex is not None else (px // 1000 if px is not None else 0)
-        result = self._lib.redlite_set(
-            self._handle,
-            key.encode("utf-8"),
-            value_bytes,
-            len(value_bytes),
-            ttl,
-        )
-        if result < 0:
-            _ffi.check_error()
-        return result == 0
+
+        if nx or xx or px:
+            # Use set_opts for advanced options
+            from ._native import SetOptions
+
+            opts = SetOptions(ex=ex, px=px, nx=nx, xx=xx)
+            return self._native.set_opts(key, value_bytes, opts)
+        else:
+            # Simple set with optional TTL
+            return self._native.set(key, value_bytes, ex)
 
     def setex(self, key: str, seconds: int, value: Union[str, bytes]) -> bool:
         """Set key with expiration in seconds."""
@@ -399,12 +397,7 @@ class Redlite:
         if self._mode == "server":
             return self._redis.setex(key, seconds, value)
         value_bytes = self._encode_value(value)
-        result = self._lib.redlite_setex(
-            self._handle, key.encode("utf-8"), seconds, value_bytes, len(value_bytes)
-        )
-        if result < 0:
-            _ffi.check_error()
-        return result == 0
+        return self._native.setex(key, seconds, value_bytes)
 
     def psetex(self, key: str, milliseconds: int, value: Union[str, bytes]) -> bool:
         """Set key with expiration in milliseconds."""
@@ -412,20 +405,14 @@ class Redlite:
         if self._mode == "server":
             return self._redis.psetex(key, milliseconds, value)
         value_bytes = self._encode_value(value)
-        result = self._lib.redlite_psetex(
-            self._handle, key.encode("utf-8"), milliseconds, value_bytes, len(value_bytes)
-        )
-        if result < 0:
-            _ffi.check_error()
-        return result == 0
+        return self._native.psetex(key, milliseconds, value_bytes)
 
     def getdel(self, key: str) -> Optional[bytes]:
         """Get and delete a key."""
         self._check_open()
         if self._mode == "server":
             return self._redis.getdel(key)
-        result = self._lib.redlite_getdel(self._handle, key.encode("utf-8"))
-        return _ffi.bytes_to_python(result)
+        return self._native.getdel(key)
 
     def append(self, key: str, value: Union[str, bytes]) -> int:
         """Append value to key, return new length."""
@@ -433,31 +420,22 @@ class Redlite:
         if self._mode == "server":
             return self._redis.append(key, value)
         value_bytes = self._encode_value(value)
-        result = self._lib.redlite_append(
-            self._handle, key.encode("utf-8"), value_bytes, len(value_bytes)
-        )
-        if result < 0:
-            _ffi.check_error()
-        return result
+        return self._native.append(key, value_bytes)
 
     def strlen(self, key: str) -> int:
         """Get the length of the value stored at key."""
         self._check_open()
         if self._mode == "server":
             return self._redis.strlen(key)
-        result = self._lib.redlite_strlen(self._handle, key.encode("utf-8"))
-        if result < 0:
-            _ffi.check_error()
-        return result
+        return self._native.strlen(key)
 
     def getrange(self, key: str, start: int, end: int) -> bytes:
         """Get a substring of the value stored at key."""
         self._check_open()
         if self._mode == "server":
             return self._redis.getrange(key, start, end)
-        result = self._lib.redlite_getrange(self._handle, key.encode("utf-8"), start, end)
-        data = _ffi.bytes_to_python(result)
-        return data if data is not None else b""
+        result = self._native.getrange(key, start, end)
+        return result if result is not None else b""
 
     def setrange(self, key: str, offset: int, value: Union[str, bytes]) -> int:
         """Overwrite part of a string at key starting at offset."""
@@ -465,89 +443,46 @@ class Redlite:
         if self._mode == "server":
             return self._redis.setrange(key, offset, value)
         value_bytes = self._encode_value(value)
-        result = self._lib.redlite_setrange(
-            self._handle, key.encode("utf-8"), offset, value_bytes, len(value_bytes)
-        )
-        if result < 0:
-            _ffi.check_error()
-        return result
+        return self._native.setrange(key, offset, value_bytes)
 
     def incr(self, key: str) -> int:
         """Increment the integer value of a key by one."""
         self._check_open()
         if self._mode == "server":
             return self._redis.incr(key)
-        result = self._lib.redlite_incr(self._handle, key.encode("utf-8"))
-        if result == -9223372036854775808:
-            _ffi.check_error()
-        return result
+        return self._native.incr(key)
 
     def decr(self, key: str) -> int:
         """Decrement the integer value of a key by one."""
         self._check_open()
         if self._mode == "server":
             return self._redis.decr(key)
-        result = self._lib.redlite_decr(self._handle, key.encode("utf-8"))
-        if result == -9223372036854775808:
-            _ffi.check_error()
-        return result
+        return self._native.decr(key)
 
     def incrby(self, key: str, amount: int) -> int:
         """Increment the integer value of a key by amount."""
         self._check_open()
         if self._mode == "server":
             return self._redis.incrby(key, amount)
-        result = self._lib.redlite_incrby(self._handle, key.encode("utf-8"), amount)
-        if result == -9223372036854775808:
-            _ffi.check_error()
-        return result
+        return self._native.incrby(key, amount)
 
     def decrby(self, key: str, amount: int) -> int:
         """Decrement the integer value of a key by amount."""
         self._check_open()
         if self._mode == "server":
             return self._redis.decrby(key, amount)
-        result = self._lib.redlite_decrby(self._handle, key.encode("utf-8"), amount)
-        if result == -9223372036854775808:
-            _ffi.check_error()
-        return result
+        return self._native.decrby(key, amount)
 
     def incrbyfloat(self, key: str, amount: float) -> float:
         """Increment the float value of a key by amount."""
         self._check_open()
         if self._mode == "server":
             return float(self._redis.incrbyfloat(key, amount))
-        result = self._lib.redlite_incrbyfloat(self._handle, key.encode("utf-8"), amount)
-        if result == self._ffi_obj.NULL:
-            _ffi.check_error()
-            raise _ffi.RedliteError("INCRBYFLOAT failed")
-        value = self._ffi_obj.string(result).decode("utf-8")
-        self._lib.redlite_free_string(result)
-        return float(value)
+        return self._native.incrbyfloat(key, amount)
 
     # =========================================================================
     # Key Commands
     # =========================================================================
-
-    def _make_string_array(self, strings):
-        """Create a char*[] array from Python strings."""
-        c_strings = [self._ffi_obj.new("char[]", s.encode("utf-8")) for s in strings]
-        array = self._ffi_obj.new("char*[]", c_strings)
-        return array, c_strings
-
-    def _make_bytes_array(self, byte_values):
-        """Create a RedliteBytes[] array from Python bytes."""
-        buffers = []
-        items = []
-        for b in byte_values:
-            if b:
-                buf = self._ffi_obj.new("uint8_t[]", b)
-                buffers.append(buf)
-                items.append({"data": buf, "len": len(b)})
-            else:
-                items.append({"data": self._ffi_obj.NULL, "len": 0})
-        array = self._ffi_obj.new("RedliteBytes[]", items)
-        return array, buffers
 
     def delete(self, *keys: str) -> int:
         """Delete one or more keys."""
@@ -556,11 +491,7 @@ class Redlite:
             return 0
         if self._mode == "server":
             return self._redis.delete(*keys)
-        keys_array, _refs = self._make_string_array(keys)
-        result = self._lib.redlite_del(self._handle, keys_array, len(keys))
-        if result < 0:
-            _ffi.check_error()
-        return result
+        return self._native.delete(list(keys))
 
     def exists(self, *keys: str) -> int:
         """Check if keys exist, return count of existing keys."""
@@ -569,162 +500,116 @@ class Redlite:
             return 0
         if self._mode == "server":
             return self._redis.exists(*keys)
-        keys_array, _refs = self._make_string_array(keys)
-        result = self._lib.redlite_exists(self._handle, keys_array, len(keys))
-        if result < 0:
-            _ffi.check_error()
-        return result
+        return self._native.exists(list(keys))
 
     def type(self, key: str) -> str:
         """Get the type of a key."""
         self._check_open()
         if self._mode == "server":
             return self._redis.type(key)
-        result = self._lib.redlite_type(self._handle, key.encode("utf-8"))
-        if result == self._ffi_obj.NULL:
-            _ffi.check_error()
-            return "none"
-        value = self._ffi_obj.string(result).decode("utf-8")
-        self._lib.redlite_free_string(result)
-        return value
+        return self._native.key_type(key)
 
     def ttl(self, key: str) -> int:
         """Get the TTL of a key in seconds."""
         self._check_open()
         if self._mode == "server":
             return self._redis.ttl(key)
-        result = self._lib.redlite_ttl(self._handle, key.encode("utf-8"))
-        if result == -3:
-            _ffi.check_error()
-        return result
+        return self._native.ttl(key)
 
     def pttl(self, key: str) -> int:
         """Get the TTL of a key in milliseconds."""
         self._check_open()
         if self._mode == "server":
             return self._redis.pttl(key)
-        result = self._lib.redlite_pttl(self._handle, key.encode("utf-8"))
-        if result == -3:
-            _ffi.check_error()
-        return result
+        return self._native.pttl(key)
 
     def expire(self, key: str, seconds: int) -> bool:
         """Set a timeout on key in seconds."""
         self._check_open()
         if self._mode == "server":
             return self._redis.expire(key, seconds)
-        result = self._lib.redlite_expire(self._handle, key.encode("utf-8"), seconds)
-        if result < 0:
-            _ffi.check_error()
-        return result == 1
+        return self._native.expire(key, seconds)
 
     def pexpire(self, key: str, milliseconds: int) -> bool:
         """Set a timeout on key in milliseconds."""
         self._check_open()
         if self._mode == "server":
             return self._redis.pexpire(key, milliseconds)
-        result = self._lib.redlite_pexpire(self._handle, key.encode("utf-8"), milliseconds)
-        if result < 0:
-            _ffi.check_error()
-        return result == 1
+        return self._native.pexpire(key, milliseconds)
 
     def expireat(self, key: str, unix_time: int) -> bool:
         """Set an expiration time as Unix timestamp (seconds)."""
         self._check_open()
         if self._mode == "server":
             return self._redis.expireat(key, unix_time)
-        result = self._lib.redlite_expireat(self._handle, key.encode("utf-8"), unix_time)
-        if result < 0:
-            _ffi.check_error()
-        return result == 1
+        return self._native.expireat(key, unix_time)
 
     def pexpireat(self, key: str, unix_time_ms: int) -> bool:
         """Set an expiration time as Unix timestamp (milliseconds)."""
         self._check_open()
         if self._mode == "server":
             return self._redis.pexpireat(key, unix_time_ms)
-        result = self._lib.redlite_pexpireat(self._handle, key.encode("utf-8"), unix_time_ms)
-        if result < 0:
-            _ffi.check_error()
-        return result == 1
+        return self._native.pexpireat(key, unix_time_ms)
 
     def persist(self, key: str) -> bool:
         """Remove the timeout on key."""
         self._check_open()
         if self._mode == "server":
             return self._redis.persist(key)
-        result = self._lib.redlite_persist(self._handle, key.encode("utf-8"))
-        if result < 0:
-            _ffi.check_error()
-        return result == 1
+        return self._native.persist(key)
 
     def rename(self, src: str, dst: str) -> bool:
         """Rename a key."""
         self._check_open()
         if self._mode == "server":
             return self._redis.rename(src, dst)
-        result = self._lib.redlite_rename(
-            self._handle, src.encode("utf-8"), dst.encode("utf-8")
-        )
-        if result < 0:
-            _ffi.check_error()
-        return result == 0
+        return self._native.rename(src, dst)
 
     def renamenx(self, src: str, dst: str) -> bool:
         """Rename a key only if the new key doesn't exist."""
         self._check_open()
         if self._mode == "server":
             return self._redis.renamenx(src, dst)
-        result = self._lib.redlite_renamenx(
-            self._handle, src.encode("utf-8"), dst.encode("utf-8")
-        )
-        if result < 0:
-            _ffi.check_error()
-        return result == 1
+        return self._native.renamenx(src, dst)
 
     def keys(self, pattern: str = "*") -> List[str]:
         """Find all keys matching a pattern."""
         self._check_open()
         if self._mode == "server":
-            return [k.decode() if isinstance(k, bytes) else k for k in self._redis.keys(pattern)]
-        result = self._lib.redlite_keys(self._handle, pattern.encode("utf-8"))
-        return _ffi.string_array_to_python(result)
+            return [
+                k.decode() if isinstance(k, bytes) else k
+                for k in self._redis.keys(pattern)
+            ]
+        return self._native.keys(pattern)
 
     def dbsize(self) -> int:
         """Return the number of keys in the database."""
         self._check_open()
         if self._mode == "server":
             return self._redis.dbsize()
-        result = self._lib.redlite_dbsize(self._handle)
-        if result < 0:
-            _ffi.check_error()
-        return result
+        return self._native.dbsize()
 
     def flushdb(self) -> bool:
         """Delete all keys in the current database."""
         self._check_open()
         if self._mode == "server":
             return self._redis.flushdb()
-        result = self._lib.redlite_flushdb(self._handle)
-        if result < 0:
-            _ffi.check_error()
-        return result == 0
+        return self._native.flushdb()
 
     def select(self, db: int) -> bool:
         """Select the database to use."""
         self._check_open()
         if self._mode == "server":
             return self._redis.select(db)
-        result = self._lib.redlite_select(self._handle, db)
-        if result < 0:
-            _ffi.check_error()
-        return result == 0
+        return self._native.select(db)
 
     # =========================================================================
     # Hash Commands
     # =========================================================================
 
-    def hset(self, key: str, mapping: Dict[str, Union[str, bytes]] = None, **kwargs) -> int:
+    def hset(
+        self, key: str, mapping: Dict[str, Union[str, bytes]] = None, **kwargs
+    ) -> int:
         """Set hash field(s)."""
         self._check_open()
         items = {}
@@ -737,27 +622,19 @@ class Redlite:
         if self._mode == "server":
             return self._redis.hset(key, mapping=items)
 
-        fields = list(items.keys())
-        values = [self._encode_value(v) for v in items.values()]
-        fields_array, _field_refs = self._make_string_array(fields)
-        values_array, _value_refs = self._make_bytes_array(values)
-
-        result = self._lib.redlite_hset(
-            self._handle, key.encode("utf-8"), fields_array, values_array, len(items)
-        )
-        if result < 0:
-            _ffi.check_error()
-        return result
+        # For embedded mode, set each field
+        count = 0
+        for field, value in items.items():
+            value_bytes = self._encode_value(value)
+            count += self._native.hset(key, field, value_bytes)
+        return count
 
     def hget(self, key: str, field: str) -> Optional[bytes]:
         """Get the value of a hash field."""
         self._check_open()
         if self._mode == "server":
             return self._redis.hget(key, field)
-        result = self._lib.redlite_hget(
-            self._handle, key.encode("utf-8"), field.encode("utf-8")
-        )
-        return _ffi.bytes_to_python(result)
+        return self._native.hget(key, field)
 
     def hdel(self, key: str, *fields: str) -> int:
         """Delete hash field(s)."""
@@ -766,63 +643,62 @@ class Redlite:
             return 0
         if self._mode == "server":
             return self._redis.hdel(key, *fields)
-        fields_array, _refs = self._make_string_array(fields)
-        result = self._lib.redlite_hdel(
-            self._handle, key.encode("utf-8"), fields_array, len(fields)
-        )
-        if result < 0:
-            _ffi.check_error()
-        return result
+        return self._native.hdel(key, list(fields))
 
     def hexists(self, key: str, field: str) -> bool:
         """Check if a hash field exists."""
         self._check_open()
         if self._mode == "server":
             return self._redis.hexists(key, field)
-        result = self._lib.redlite_hexists(
-            self._handle, key.encode("utf-8"), field.encode("utf-8")
-        )
-        if result < 0:
-            _ffi.check_error()
-        return result == 1
+        return self._native.hexists(key, field)
 
     def hlen(self, key: str) -> int:
         """Get the number of fields in a hash."""
         self._check_open()
         if self._mode == "server":
             return self._redis.hlen(key)
-        result = self._lib.redlite_hlen(self._handle, key.encode("utf-8"))
-        if result < 0:
-            _ffi.check_error()
-        return result
+        return self._native.hlen(key)
 
     def hkeys(self, key: str) -> List[str]:
         """Get all field names in a hash."""
         self._check_open()
         if self._mode == "server":
-            return [k.decode() if isinstance(k, bytes) else k for k in self._redis.hkeys(key)]
-        result = self._lib.redlite_hkeys(self._handle, key.encode("utf-8"))
-        return _ffi.string_array_to_python(result)
+            return [
+                k.decode() if isinstance(k, bytes) else k
+                for k in self._redis.hkeys(key)
+            ]
+        return self._native.hkeys(key)
 
     def hvals(self, key: str) -> List[bytes]:
         """Get all values in a hash."""
         self._check_open()
         if self._mode == "server":
             return list(self._redis.hvals(key))
-        result = self._lib.redlite_hvals(self._handle, key.encode("utf-8"))
-        return _ffi.bytes_array_to_python(result)
+        return list(self._native.hvals(key))
 
     def hincrby(self, key: str, field: str, amount: int) -> int:
         """Increment a hash field by amount."""
         self._check_open()
         if self._mode == "server":
             return self._redis.hincrby(key, field, amount)
-        result = self._lib.redlite_hincrby(
-            self._handle, key.encode("utf-8"), field.encode("utf-8"), amount
-        )
-        if result == -9223372036854775808:
-            _ffi.check_error()
-        return result
+        return self._native.hincrby(key, field, amount)
+
+    def hgetall(self, key: str) -> Dict[str, bytes]:
+        """Get all fields and values in a hash."""
+        self._check_open()
+        if self._mode == "server":
+            return self._redis.hgetall(key)
+        result = self._native.hgetall(key)
+        return {field: value for field, value in result}
+
+    def hmget(self, key: str, *fields: str) -> List[Optional[bytes]]:
+        """Get values of multiple hash fields."""
+        self._check_open()
+        if not fields:
+            return []
+        if self._mode == "server":
+            return list(self._redis.hmget(key, *fields))
+        return list(self._native.hmget(key, list(fields)))
 
     # =========================================================================
     # List Commands
@@ -836,13 +712,7 @@ class Redlite:
         if self._mode == "server":
             return self._redis.lpush(key, *values)
         encoded = [self._encode_value(v) for v in values]
-        values_array, _refs = self._make_bytes_array(encoded)
-        result = self._lib.redlite_lpush(
-            self._handle, key.encode("utf-8"), values_array, len(values)
-        )
-        if result < 0:
-            _ffi.check_error()
-        return result
+        return self._native.lpush(key, encoded)
 
     def rpush(self, key: str, *values: Union[str, bytes]) -> int:
         """Push values to the tail of a list."""
@@ -852,13 +722,7 @@ class Redlite:
         if self._mode == "server":
             return self._redis.rpush(key, *values)
         encoded = [self._encode_value(v) for v in values]
-        values_array, _refs = self._make_bytes_array(encoded)
-        result = self._lib.redlite_rpush(
-            self._handle, key.encode("utf-8"), values_array, len(values)
-        )
-        if result < 0:
-            _ffi.check_error()
-        return result
+        return self._native.rpush(key, encoded)
 
     def lpop(self, key: str, count: int = 1) -> Union[Optional[bytes], List[bytes]]:
         """Pop values from the head of a list."""
@@ -867,11 +731,10 @@ class Redlite:
             if count == 1:
                 return self._redis.lpop(key)
             return self._redis.lpop(key, count)
-        result = self._lib.redlite_lpop(self._handle, key.encode("utf-8"), count)
-        items = _ffi.bytes_array_to_python(result)
+        items = self._native.lpop(key, count)
         if count == 1:
             return items[0] if items else None
-        return items
+        return list(items)
 
     def rpop(self, key: str, count: int = 1) -> Union[Optional[bytes], List[bytes]]:
         """Pop values from the tail of a list."""
@@ -880,37 +743,31 @@ class Redlite:
             if count == 1:
                 return self._redis.rpop(key)
             return self._redis.rpop(key, count)
-        result = self._lib.redlite_rpop(self._handle, key.encode("utf-8"), count)
-        items = _ffi.bytes_array_to_python(result)
+        items = self._native.rpop(key, count)
         if count == 1:
             return items[0] if items else None
-        return items
+        return list(items)
 
     def llen(self, key: str) -> int:
         """Get the length of a list."""
         self._check_open()
         if self._mode == "server":
             return self._redis.llen(key)
-        result = self._lib.redlite_llen(self._handle, key.encode("utf-8"))
-        if result < 0:
-            _ffi.check_error()
-        return result
+        return self._native.llen(key)
 
     def lrange(self, key: str, start: int, stop: int) -> List[bytes]:
         """Get a range of elements from a list."""
         self._check_open()
         if self._mode == "server":
             return list(self._redis.lrange(key, start, stop))
-        result = self._lib.redlite_lrange(self._handle, key.encode("utf-8"), start, stop)
-        return _ffi.bytes_array_to_python(result)
+        return list(self._native.lrange(key, start, stop))
 
     def lindex(self, key: str, index: int) -> Optional[bytes]:
         """Get an element from a list by index."""
         self._check_open()
         if self._mode == "server":
             return self._redis.lindex(key, index)
-        result = self._lib.redlite_lindex(self._handle, key.encode("utf-8"), index)
-        return _ffi.bytes_to_python(result)
+        return self._native.lindex(key, index)
 
     # =========================================================================
     # Set Commands
@@ -924,13 +781,7 @@ class Redlite:
         if self._mode == "server":
             return self._redis.sadd(key, *members)
         encoded = [self._encode_value(m) for m in members]
-        members_array, _refs = self._make_bytes_array(encoded)
-        result = self._lib.redlite_sadd(
-            self._handle, key.encode("utf-8"), members_array, len(members)
-        )
-        if result < 0:
-            _ffi.check_error()
-        return result
+        return self._native.sadd(key, encoded)
 
     def srem(self, key: str, *members: Union[str, bytes]) -> int:
         """Remove members from a set."""
@@ -940,21 +791,14 @@ class Redlite:
         if self._mode == "server":
             return self._redis.srem(key, *members)
         encoded = [self._encode_value(m) for m in members]
-        members_array, _refs = self._make_bytes_array(encoded)
-        result = self._lib.redlite_srem(
-            self._handle, key.encode("utf-8"), members_array, len(members)
-        )
-        if result < 0:
-            _ffi.check_error()
-        return result
+        return self._native.srem(key, encoded)
 
     def smembers(self, key: str) -> Set[bytes]:
         """Get all members of a set."""
         self._check_open()
         if self._mode == "server":
             return self._redis.smembers(key)
-        result = self._lib.redlite_smembers(self._handle, key.encode("utf-8"))
-        return set(_ffi.bytes_array_to_python(result))
+        return set(self._native.smembers(key))
 
     def sismember(self, key: str, member: Union[str, bytes]) -> bool:
         """Check if a value is a member of a set."""
@@ -962,22 +806,14 @@ class Redlite:
         if self._mode == "server":
             return self._redis.sismember(key, member)
         member_bytes = self._encode_value(member)
-        result = self._lib.redlite_sismember(
-            self._handle, key.encode("utf-8"), member_bytes, len(member_bytes)
-        )
-        if result < 0:
-            _ffi.check_error()
-        return result == 1
+        return self._native.sismember(key, member_bytes)
 
     def scard(self, key: str) -> int:
         """Get the number of members in a set."""
         self._check_open()
         if self._mode == "server":
             return self._redis.scard(key)
-        result = self._lib.redlite_scard(self._handle, key.encode("utf-8"))
-        if result < 0:
-            _ffi.check_error()
-        return result
+        return self._native.scard(key)
 
     # =========================================================================
     # Sorted Set Commands
@@ -998,22 +834,12 @@ class Redlite:
         if self._mode == "server":
             return self._redis.zadd(key, items)
 
-        member_bufs = []
-        members_array = self._ffi_obj.new("RedliteZMember[]", len(items))
-        for i, (member, score) in enumerate(items.items()):
+        # Convert to list of (score, member) tuples
+        members = []
+        for member, score in items.items():
             member_bytes = self._encode_value(member)
-            member_buf = self._ffi_obj.new("uint8_t[]", member_bytes)
-            member_bufs.append(member_buf)
-            members_array[i].score = float(score)
-            members_array[i].member = member_buf
-            members_array[i].member_len = len(member_bytes)
-
-        result = self._lib.redlite_zadd(
-            self._handle, key.encode("utf-8"), members_array, len(items)
-        )
-        if result < 0:
-            _ffi.check_error()
-        return result
+            members.append((float(score), member_bytes))
+        return self._native.zadd(key, members)
 
     def zrem(self, key: str, *members: Union[str, bytes]) -> int:
         """Remove members from a sorted set."""
@@ -1023,13 +849,7 @@ class Redlite:
         if self._mode == "server":
             return self._redis.zrem(key, *members)
         encoded = [self._encode_value(m) for m in members]
-        members_array, _refs = self._make_bytes_array(encoded)
-        result = self._lib.redlite_zrem(
-            self._handle, key.encode("utf-8"), members_array, len(members)
-        )
-        if result < 0:
-            _ffi.check_error()
-        return result
+        return self._native.zrem(key, encoded)
 
     def zscore(self, key: str, member: Union[str, bytes]) -> Optional[float]:
         """Get the score of a member in a sorted set."""
@@ -1037,10 +857,8 @@ class Redlite:
         if self._mode == "server":
             return self._redis.zscore(key, member)
         member_bytes = self._encode_value(member)
-        result = self._lib.redlite_zscore(
-            self._handle, key.encode("utf-8"), member_bytes, len(member_bytes)
-        )
-        if math.isnan(result):
+        result = self._native.zscore(key, member_bytes)
+        if result is not None and math.isnan(result):
             return None
         return result
 
@@ -1049,22 +867,14 @@ class Redlite:
         self._check_open()
         if self._mode == "server":
             return self._redis.zcard(key)
-        result = self._lib.redlite_zcard(self._handle, key.encode("utf-8"))
-        if result < 0:
-            _ffi.check_error()
-        return result
+        return self._native.zcard(key)
 
     def zcount(self, key: str, min_score: float, max_score: float) -> int:
         """Count members with scores in the given range."""
         self._check_open()
         if self._mode == "server":
             return self._redis.zcount(key, min_score, max_score)
-        result = self._lib.redlite_zcount(
-            self._handle, key.encode("utf-8"), min_score, max_score
-        )
-        if result < 0:
-            _ffi.check_error()
-        return result
+        return self._native.zcount(key, min_score, max_score)
 
     def zincrby(self, key: str, amount: float, member: Union[str, bytes]) -> float:
         """Increment the score of a member in a sorted set."""
@@ -1072,12 +882,103 @@ class Redlite:
         if self._mode == "server":
             return self._redis.zincrby(key, amount, member)
         member_bytes = self._encode_value(member)
-        result = self._lib.redlite_zincrby(
-            self._handle, key.encode("utf-8"), amount, member_bytes, len(member_bytes)
-        )
-        if math.isnan(result):
-            _ffi.check_error()
-        return result
+        return self._native.zincrby(key, amount, member_bytes)
+
+    def zrange(
+        self, key: str, start: int, stop: int, withscores: bool = False
+    ) -> Union[List[bytes], List[tuple]]:
+        """Get members by rank range (ascending order)."""
+        self._check_open()
+        if self._mode == "server":
+            return self._redis.zrange(key, start, stop, withscores=withscores)
+        result = self._native.zrange(key, start, stop, withscores)
+        if withscores:
+            return [(member, score) for member, score in result]
+        return [member for member, _ in result]
+
+    def zrevrange(
+        self, key: str, start: int, stop: int, withscores: bool = False
+    ) -> Union[List[bytes], List[tuple]]:
+        """Get members by rank range (descending order)."""
+        self._check_open()
+        if self._mode == "server":
+            return self._redis.zrevrange(key, start, stop, withscores=withscores)
+        result = self._native.zrevrange(key, start, stop, withscores)
+        if withscores:
+            return [(member, score) for member, score in result]
+        return [member for member, _ in result]
+
+    # =========================================================================
+    # Multi-key Commands
+    # =========================================================================
+
+    def mget(self, *keys: str) -> List[Optional[bytes]]:
+        """Get values of multiple keys."""
+        self._check_open()
+        if not keys:
+            return []
+        if self._mode == "server":
+            return list(self._redis.mget(*keys))
+        return list(self._native.mget(list(keys)))
+
+    def mset(self, mapping: Dict[str, Union[str, bytes]] = None, **kwargs) -> bool:
+        """Set multiple key-value pairs atomically."""
+        self._check_open()
+        items = {}
+        if mapping:
+            items.update(mapping)
+        items.update(kwargs)
+        if not items:
+            return True
+
+        if self._mode == "server":
+            return self._redis.mset(items)
+
+        pairs = [(k, self._encode_value(v)) for k, v in items.items()]
+        return self._native.mset(pairs)
+
+    # =========================================================================
+    # Scan Commands
+    # =========================================================================
+
+    def scan(
+        self, cursor: str = "0", match: Optional[str] = None, count: int = 10
+    ) -> tuple:
+        """Incrementally iterate keys matching a pattern."""
+        self._check_open()
+        if self._mode == "server":
+            return self._redis.scan(cursor=int(cursor), match=match, count=count)
+        return self._native.scan(cursor, match, count)
+
+    def hscan(
+        self, key: str, cursor: str = "0", match: Optional[str] = None, count: int = 10
+    ) -> tuple:
+        """Incrementally iterate hash fields."""
+        self._check_open()
+        if self._mode == "server":
+            return self._redis.hscan(key, cursor=int(cursor), match=match, count=count)
+        next_cursor, items = self._native.hscan(key, cursor, match, count)
+        return (next_cursor, {field: value for field, value in items})
+
+    def sscan(
+        self, key: str, cursor: str = "0", match: Optional[str] = None, count: int = 10
+    ) -> tuple:
+        """Incrementally iterate set members."""
+        self._check_open()
+        if self._mode == "server":
+            return self._redis.sscan(key, cursor=int(cursor), match=match, count=count)
+        next_cursor, members = self._native.sscan(key, cursor, match, count)
+        return (next_cursor, list(members))
+
+    def zscan(
+        self, key: str, cursor: str = "0", match: Optional[str] = None, count: int = 10
+    ) -> tuple:
+        """Incrementally iterate sorted set members with scores."""
+        self._check_open()
+        if self._mode == "server":
+            return self._redis.zscan(key, cursor=int(cursor), match=match, count=count)
+        next_cursor, members = self._native.zscan(key, cursor, match, count)
+        return (next_cursor, [(member, score) for member, score in members])
 
     # =========================================================================
     # Server Commands
@@ -1088,17 +989,9 @@ class Redlite:
         self._check_open()
         if self._mode == "server":
             return self._execute("VACUUM")
-        result = self._lib.redlite_vacuum(self._handle)
-        if result < 0:
-            _ffi.check_error()
-        return result
+        return self._native.vacuum()
 
     @staticmethod
     def version() -> str:
         """Get the redlite library version."""
-        lib = _ffi.get_lib()
-        ffi = _ffi.get_ffi()
-        result = lib.redlite_version()
-        version = ffi.string(result).decode("utf-8")
-        lib.redlite_free_string(result)
-        return version
+        return "0.1.0"  # TODO: Get from native module
