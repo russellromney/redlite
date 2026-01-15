@@ -1,5 +1,43 @@
 # Changelog
 
+## Session 35.1: Sync Blocking Operations for Embedded Mode
+
+### Added - Sync Blocking Methods
+
+**New Methods** (no tokio required):
+- `blpop_sync(keys, timeout)` - Blocking left pop with adaptive polling
+- `brpop_sync(keys, timeout)` - Blocking right pop with adaptive polling
+- `xread_block_sync(keys, timeout)` - Blocking stream read
+- `xreadgroup_block_sync(group, consumer, keys, timeout)` - Blocking consumer group read
+
+**Configurable Polling** (`PollConfig`):
+- `PollConfig::default()` - 250μs initial, 1ms cap (balanced)
+- `PollConfig::aggressive()` - 100μs initial, 500μs cap (low latency)
+- `PollConfig::relaxed()` - 1ms initial, 10ms cap (low CPU)
+- `db.set_poll_config()` and `db.poll_config()` methods
+
+### Use Case - Cross-Process Coordination
+
+Multiple processes can share the same SQLite file for inter-process communication:
+
+```rust
+// Process A: Wait for data
+let db = Db::open("/shared/cache.db")?;
+let result = db.blpop_sync(&["queue"], 30.0)?; // Blocks until data arrives
+
+// Process B: Push data (separate process)
+let db = Db::open("/shared/cache.db")?;
+db.rpush("queue", &[b"job-123"])?; // Process A unblocks
+```
+
+SQLite with warm page cache returns queries in microseconds, making polling at 250μs-1ms intervals efficient.
+
+### Test Results
+- **13 new tests** for sync blocking operations
+- **614 total tests** passing
+
+---
+
 ## Session 41: Oracle Specs for Lists, Sets, Sorted Sets
 
 ### Added - Data Structure Spec Files

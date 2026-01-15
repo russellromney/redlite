@@ -8,8 +8,8 @@ use tokio::sync::broadcast;
 use crate::error::{KvError, Result};
 use crate::types::{
     ConsumerGroupInfo, ConsumerInfo, FtsLevel, FtsResult, FtsStats, GetExOption, HistoryEntry,
-    HistoryStats, KeyInfo, KeyType, ListDirection, PendingEntry, PendingSummary, RetentionType,
-    SetOptions, StreamEntry, StreamId, StreamInfo, ZMember,
+    HistoryStats, KeyInfo, KeyType, ListDirection, PendingEntry, PendingSummary, PollConfig,
+    RetentionType, SetOptions, StreamEntry, StreamId, StreamInfo, ZMember,
 };
 #[cfg(feature = "vectors")]
 use crate::types::{VectorInput, VectorQuantization, VectorSetInfo, VectorSimResult};
@@ -48,6 +48,8 @@ struct DbCore {
     /// Maps key name to broadcast sender for notifications
     /// Uses RwLock to allow updating after creation (for server mode attachment)
     notifier: RwLock<Option<Arc<RwLock<HashMap<String, broadcast::Sender<()>>>>>>,
+    /// Polling configuration for sync blocking operations (blpop_sync, xreadgroup_block_sync, etc.)
+    poll_config: RwLock<PollConfig>,
 }
 
 /// Database session with per-instance selected database.
@@ -176,6 +178,7 @@ impl Db {
             last_cleanup: AtomicI64::new(0),
             autovacuum_interval_ms: AtomicI64::new(DEFAULT_AUTOVACUUM_INTERVAL_MS),
             notifier: RwLock::new(None),
+            poll_config: RwLock::new(PollConfig::default()),
         });
 
         let db = Self {
@@ -238,6 +241,7 @@ impl Db {
             last_cleanup: AtomicI64::new(0),
             autovacuum_interval_ms: AtomicI64::new(DEFAULT_AUTOVACUUM_INTERVAL_MS),
             notifier: RwLock::new(None),
+            poll_config: RwLock::new(PollConfig::default()),
         });
 
         let db = Self {
@@ -358,6 +362,17 @@ impl Db {
     /// Get current autovacuum interval in milliseconds
     pub fn autovacuum_interval(&self) -> i64 {
         self.core.autovacuum_interval_ms.load(Ordering::Relaxed)
+    }
+
+    /// Set polling configuration for sync blocking operations
+    /// (blpop_sync, brpop_sync, xread_block_sync, xreadgroup_block_sync)
+    pub fn set_poll_config(&self, config: PollConfig) {
+        *self.core.poll_config.write().unwrap() = config;
+    }
+
+    /// Get current polling configuration
+    pub fn poll_config(&self) -> PollConfig {
+        *self.core.poll_config.read().unwrap()
     }
 
     /// Maybe run autovacuum if enabled and interval has passed.
@@ -516,8 +531,8 @@ impl Db {
         // Release connection before recording history
         drop(conn);
 
-        // Record history for SET operation
-        let _ = self.record_history(db, key, "SET", None);
+        // Record history for SET operation with data snapshot
+        let _ = self.record_history(db, key, "SET", Some(value.to_vec()));
 
         // Index for FTS if enabled
         let _ = self.fts_index(key, value);
@@ -6966,6 +6981,102 @@ impl Db {
         }
     }
 
+    /// BLPOP key [key ...] timeout (synchronous version)
+    /// Block and pop from the left (head) of lists - for embedded mode without tokio
+    /// Uses adaptive polling to check for data, enabling cross-process coordination.
+    /// Configure polling intervals with `set_poll_config()`.
+    pub fn blpop_sync(&self, keys: &[&str], timeout: f64) -> Result<Option<(String, Vec<u8>)>> {
+        use std::time::Instant;
+
+        // Get polling config
+        let config = self.poll_config();
+
+        // None = block forever (Redis behavior for timeout=0)
+        let deadline = if timeout == 0.0 {
+            None
+        } else {
+            Some(Instant::now() + Duration::from_secs_f64(timeout))
+        };
+
+        // Adaptive polling: start fast, slow down over time
+        let mut poll_interval = config.initial_interval;
+
+        loop {
+            // Try immediate pop on all keys (in order)
+            for key in keys {
+                // Propagate WRONGTYPE errors (matches Redis behavior)
+                let values = self.lpop(key, Some(1))?;
+                if !values.is_empty() {
+                    return Ok(Some(((*key).to_string(), values[0].clone())));
+                }
+            }
+
+            // Check timeout (only if we have a deadline)
+            if let Some(dl) = deadline {
+                if Instant::now() >= dl {
+                    return Ok(None);
+                }
+            }
+
+            // Sleep with adaptive polling - no notifications in sync mode
+            // This works for cross-process because we re-poll the SQLite file
+            std::thread::sleep(poll_interval);
+
+            // Gradually increase poll interval to reduce CPU usage
+            if poll_interval < config.max_interval {
+                poll_interval = std::cmp::min(poll_interval + config.ramp_step, config.max_interval);
+            }
+        }
+    }
+
+    /// BRPOP key [key ...] timeout (synchronous version)
+    /// Block and pop from the right (tail) of lists - for embedded mode without tokio
+    /// Uses adaptive polling to check for data, enabling cross-process coordination.
+    /// Configure polling intervals with `set_poll_config()`.
+    pub fn brpop_sync(&self, keys: &[&str], timeout: f64) -> Result<Option<(String, Vec<u8>)>> {
+        use std::time::Instant;
+
+        // Get polling config
+        let config = self.poll_config();
+
+        // None = block forever (Redis behavior for timeout=0)
+        let deadline = if timeout == 0.0 {
+            None
+        } else {
+            Some(Instant::now() + Duration::from_secs_f64(timeout))
+        };
+
+        // Adaptive polling: start fast, slow down over time
+        let mut poll_interval = config.initial_interval;
+
+        loop {
+            // Try immediate pop on all keys (in order)
+            for key in keys {
+                // Propagate WRONGTYPE errors (matches Redis behavior)
+                let values = self.rpop(key, Some(1))?;
+                if !values.is_empty() {
+                    return Ok(Some(((*key).to_string(), values[0].clone())));
+                }
+            }
+
+            // Check timeout (only if we have a deadline)
+            if let Some(dl) = deadline {
+                if Instant::now() >= dl {
+                    return Ok(None);
+                }
+            }
+
+            // Sleep with adaptive polling - no notifications in sync mode
+            // This works for cross-process because we re-poll the SQLite file
+            std::thread::sleep(poll_interval);
+
+            // Gradually increase poll interval to reduce CPU usage
+            if poll_interval < config.max_interval {
+                poll_interval = std::cmp::min(poll_interval + config.ramp_step, config.max_interval);
+            }
+        }
+    }
+
     /// XREAD BLOCK timeout [COUNT count] STREAMS key [key ...] id [id ...]
     /// Block and read from streams
     pub async fn xread_block(
@@ -7169,6 +7280,109 @@ impl Db {
         }
     }
 
+    /// XREAD BLOCK timeout STREAMS key [key ...] id [id ...] (synchronous version)
+    /// Block and read from streams - for embedded mode without tokio
+    /// Uses adaptive polling to check for data, enabling cross-process coordination.
+    /// Configure polling intervals with `set_poll_config()`.
+    pub fn xread_block_sync(
+        &self,
+        keys: &[&str],
+        ids: &[StreamId],
+        count: Option<i64>,
+        timeout_ms: i64,
+    ) -> Result<Vec<(String, Vec<StreamEntry>)>> {
+        use std::time::Instant;
+
+        // Get polling config
+        let config = self.poll_config();
+
+        // None = block forever (Redis behavior for timeout=0)
+        let deadline = if timeout_ms == 0 {
+            None
+        } else {
+            Some(Instant::now() + Duration::from_millis(timeout_ms as u64))
+        };
+
+        // Adaptive polling: start fast, slow down over time
+        let mut poll_interval = config.initial_interval;
+
+        loop {
+            // Try immediate read
+            let results = self.xread(keys, ids, count)?;
+            if !results.is_empty() {
+                return Ok(results);
+            }
+
+            // Check timeout (only if we have a deadline)
+            if let Some(dl) = deadline {
+                if Instant::now() >= dl {
+                    return Ok(vec![]);
+                }
+            }
+
+            // Sleep with adaptive polling
+            std::thread::sleep(poll_interval);
+
+            // Gradually increase poll interval to reduce CPU usage
+            if poll_interval < config.max_interval {
+                poll_interval = std::cmp::min(poll_interval + config.ramp_step, config.max_interval);
+            }
+        }
+    }
+
+    /// XREADGROUP BLOCK timeout GROUP group consumer STREAMS key [key ...] id [id ...] (synchronous version)
+    /// Block and read from streams with consumer groups - for embedded mode without tokio
+    /// Uses adaptive polling to check for data, enabling cross-process coordination.
+    /// Configure polling intervals with `set_poll_config()`.
+    pub fn xreadgroup_block_sync(
+        &self,
+        group: &str,
+        consumer: &str,
+        keys: &[&str],
+        ids: &[&str],
+        count: Option<i64>,
+        noack: bool,
+        timeout_ms: i64,
+    ) -> Result<Vec<(String, Vec<StreamEntry>)>> {
+        use std::time::Instant;
+
+        // Get polling config
+        let config = self.poll_config();
+
+        // None = block forever (Redis behavior for timeout=0)
+        let deadline = if timeout_ms == 0 {
+            None
+        } else {
+            Some(Instant::now() + Duration::from_millis(timeout_ms as u64))
+        };
+
+        // Adaptive polling: start fast, slow down over time
+        let mut poll_interval = config.initial_interval;
+
+        loop {
+            // Try immediate read
+            let results = self.xreadgroup(group, consumer, keys, ids, count, noack)?;
+            if !results.is_empty() {
+                return Ok(results);
+            }
+
+            // Check timeout (only if we have a deadline)
+            if let Some(dl) = deadline {
+                if Instant::now() >= dl {
+                    return Ok(vec![]);
+                }
+            }
+
+            // Sleep with adaptive polling
+            std::thread::sleep(poll_interval);
+
+            // Gradually increase poll interval to reduce CPU usage
+            if poll_interval < config.max_interval {
+                poll_interval = std::cmp::min(poll_interval + config.ramp_step, config.max_interval);
+            }
+        }
+    }
+
     // ===== Session 17.2: Configuration Methods =====
 
     /// Enable history tracking globally for all databases
@@ -7336,15 +7550,14 @@ impl Db {
     /// Get the next version number for a key
     fn increment_version(&self, key_id: i64) -> Result<i64> {
         let conn = self.core.conn.lock().unwrap_or_else(|e| e.into_inner());
-        let version: Option<i64> = conn
-            .query_row(
-                "SELECT MAX(version_num) FROM key_history WHERE key_id = ?",
-                params![key_id],
-                |row| row.get(0),
-            )
-            .optional()?;
+        // Use COALESCE to handle NULL when there are no history entries
+        let version: i64 = conn.query_row(
+            "SELECT COALESCE(MAX(version_num), 0) FROM key_history WHERE key_id = ?",
+            params![key_id],
+            |row| row.get(0),
+        )?;
 
-        Ok(version.unwrap_or(0) + 1)
+        Ok(version + 1)
     }
 
     /// Record a history entry for an operation
@@ -7360,27 +7573,31 @@ impl Db {
             return Ok(());
         }
 
-        let conn = self.core.conn.lock().unwrap_or_else(|e| e.into_inner());
+        // Get key_id and version BEFORE acquiring the main lock to avoid deadlock
         let key_id = self.get_or_create_key_id(db, key)?;
         let version = self.increment_version(key_id)?;
         let timestamp_ms = Self::now_ms();
 
-        // Get current key type from the keys table
-        let key_type: i32 = conn
-            .query_row(
-                "SELECT type FROM keys WHERE id = ?",
-                params![key_id],
-                |row| row.get(0),
-            )
-            .unwrap_or(0);
+        {
+            let conn = self.core.conn.lock().unwrap_or_else(|e| e.into_inner());
 
-        conn.execute(
-            "INSERT INTO key_history (key_id, db, key, key_type, version_num, operation, timestamp_ms, data_snapshot)
-             VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
-            params![key_id, db, key, key_type, version, operation, timestamp_ms, data_snapshot],
-        )?;
+            // Get current key type from the keys table
+            let key_type: i32 = conn
+                .query_row(
+                    "SELECT type FROM keys WHERE id = ?",
+                    params![key_id],
+                    |row| row.get(0),
+                )
+                .unwrap_or(0);
 
-        // Apply retention policy
+            conn.execute(
+                "INSERT INTO key_history (key_id, db, key, key_type, version_num, operation, timestamp_ms, data_snapshot)
+                 VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+                params![key_id, db, key, key_type, version, operation, timestamp_ms, data_snapshot],
+            )?;
+        }
+
+        // Apply retention policy (needs its own lock scope)
         self.apply_retention_policy(db, key)?;
 
         Ok(())
@@ -7520,56 +7737,56 @@ impl Db {
                 let mut stmt = conn.prepare(
                     "SELECT id, key_id, db, key, key_type, version_num, operation, timestamp_ms, data_snapshot, expire_at
                      FROM key_history WHERE db = ? AND key = ? AND timestamp_ms >= ? AND timestamp_ms <= ?
-                     ORDER BY timestamp_ms DESC LIMIT ?")?;
+                     ORDER BY timestamp_ms ASC LIMIT ?")?;
                 Self::query_to_history_entries(&mut stmt, params![self.selected_db, key, s, u, l])
             }
             (Some(s), Some(u), None) => {
                 let mut stmt = conn.prepare(
                     "SELECT id, key_id, db, key, key_type, version_num, operation, timestamp_ms, data_snapshot, expire_at
                      FROM key_history WHERE db = ? AND key = ? AND timestamp_ms >= ? AND timestamp_ms <= ?
-                     ORDER BY timestamp_ms DESC")?;
+                     ORDER BY timestamp_ms ASC")?;
                 Self::query_to_history_entries(&mut stmt, params![self.selected_db, key, s, u])
             }
             (Some(s), None, Some(l)) => {
                 let mut stmt = conn.prepare(
                     "SELECT id, key_id, db, key, key_type, version_num, operation, timestamp_ms, data_snapshot, expire_at
                      FROM key_history WHERE db = ? AND key = ? AND timestamp_ms >= ?
-                     ORDER BY timestamp_ms DESC LIMIT ?")?;
+                     ORDER BY timestamp_ms ASC LIMIT ?")?;
                 Self::query_to_history_entries(&mut stmt, params![self.selected_db, key, s, l])
             }
             (Some(s), None, None) => {
                 let mut stmt = conn.prepare(
                     "SELECT id, key_id, db, key, key_type, version_num, operation, timestamp_ms, data_snapshot, expire_at
                      FROM key_history WHERE db = ? AND key = ? AND timestamp_ms >= ?
-                     ORDER BY timestamp_ms DESC")?;
+                     ORDER BY timestamp_ms ASC")?;
                 Self::query_to_history_entries(&mut stmt, params![self.selected_db, key, s])
             }
             (None, Some(u), Some(l)) => {
                 let mut stmt = conn.prepare(
                     "SELECT id, key_id, db, key, key_type, version_num, operation, timestamp_ms, data_snapshot, expire_at
                      FROM key_history WHERE db = ? AND key = ? AND timestamp_ms <= ?
-                     ORDER BY timestamp_ms DESC LIMIT ?")?;
+                     ORDER BY timestamp_ms ASC LIMIT ?")?;
                 Self::query_to_history_entries(&mut stmt, params![self.selected_db, key, u, l])
             }
             (None, Some(u), None) => {
                 let mut stmt = conn.prepare(
                     "SELECT id, key_id, db, key, key_type, version_num, operation, timestamp_ms, data_snapshot, expire_at
                      FROM key_history WHERE db = ? AND key = ? AND timestamp_ms <= ?
-                     ORDER BY timestamp_ms DESC")?;
+                     ORDER BY timestamp_ms ASC")?;
                 Self::query_to_history_entries(&mut stmt, params![self.selected_db, key, u])
             }
             (None, None, Some(l)) => {
                 let mut stmt = conn.prepare(
                     "SELECT id, key_id, db, key, key_type, version_num, operation, timestamp_ms, data_snapshot, expire_at
                      FROM key_history WHERE db = ? AND key = ?
-                     ORDER BY timestamp_ms DESC LIMIT ?")?;
+                     ORDER BY timestamp_ms ASC LIMIT ?")?;
                 Self::query_to_history_entries(&mut stmt, params![self.selected_db, key, l])
             }
             (None, None, None) => {
                 let mut stmt = conn.prepare(
                     "SELECT id, key_id, db, key, key_type, version_num, operation, timestamp_ms, data_snapshot, expire_at
                      FROM key_history WHERE db = ? AND key = ?
-                     ORDER BY timestamp_ms DESC")?;
+                     ORDER BY timestamp_ms ASC")?;
                 Self::query_to_history_entries(&mut stmt, params![self.selected_db, key])
             }
         }
@@ -7590,8 +7807,8 @@ impl Db {
                 version_num: row.get(5)?,
                 operation: row.get(6)?,
                 timestamp_ms: row.get(7)?,
-                data_snapshot: row.get(8)?,
-                expire_at: row.get(9)?,
+                data_snapshot: row.get::<_, Option<Vec<u8>>>(8)?,
+                expire_at: row.get::<_, Option<i64>>(9)?,
             })
         })?;
 
@@ -7606,17 +7823,19 @@ impl Db {
     pub fn history_get_at(&self, key: &str, timestamp: i64) -> Result<Option<Vec<u8>>> {
         let conn = self.core.conn.lock().unwrap_or_else(|e| e.into_inner());
 
-        let snapshot: Option<Vec<u8>> = conn
+        // Use nested Option to handle: outer = row exists, inner = data_snapshot value
+        let snapshot: Option<Option<Vec<u8>>> = conn
             .query_row(
                 "SELECT data_snapshot FROM key_history
                  WHERE db = ? AND key = ? AND timestamp_ms <= ?
                  ORDER BY timestamp_ms DESC LIMIT 1",
                 params![self.selected_db, key, timestamp],
-                |row| row.get(0),
+                |row| row.get::<_, Option<Vec<u8>>>(0),
             )
             .optional()?;
 
-        Ok(snapshot)
+        // Flatten: None (no row) or Some(None) (row with NULL) both become None
+        Ok(snapshot.flatten())
     }
 
     /// List keys that have history tracking enabled
@@ -14461,6 +14680,201 @@ mod tests {
 
         let consumers = db.xinfo_consumers("mystream", "mygroup").unwrap();
         assert_eq!(consumers.len(), 2);
+    }
+
+    // ============================================
+    // XREAD_BLOCK_SYNC / XREADGROUP_BLOCK_SYNC Tests (Session 35.1)
+    // ============================================
+
+    #[test]
+    fn test_xread_block_sync_immediate_data() {
+        // Data already in stream - returns immediately
+        let db = Db::open_memory().unwrap();
+
+        let fields: Vec<(&[u8], &[u8])> = vec![(b"field", b"value")];
+        db.xadd("mystream", None, &fields, false, None, None, false)
+            .unwrap();
+
+        let result = db
+            .xread_block_sync(&["mystream"], &[StreamId::new(0, 0)], None, 1000)
+            .unwrap();
+        assert_eq!(result.len(), 1);
+        assert_eq!(result[0].0, "mystream");
+        assert_eq!(result[0].1.len(), 1);
+    }
+
+    #[test]
+    fn test_xread_block_sync_timeout() {
+        // No data - should timeout and return empty
+        let db = Db::open_memory().unwrap();
+
+        let start = std::time::Instant::now();
+        let result = db
+            .xread_block_sync(&["mystream"], &[StreamId::new(0, 0)], None, 200)
+            .unwrap();
+        let elapsed = start.elapsed();
+
+        assert!(result.is_empty());
+        assert!(
+            elapsed.as_millis() >= 180,
+            "Should wait for timeout, elapsed: {:?}",
+            elapsed
+        );
+    }
+
+    #[test]
+    fn test_xread_block_sync_multithread() {
+        // Cross-thread coordination via shared db
+        let temp_dir = std::env::temp_dir();
+        let db_path = temp_dir.join(format!(
+            "redlite_xread_sync_test_{}.db",
+            std::process::id()
+        ));
+        let db_path_str = db_path.to_str().unwrap();
+
+        // Clean up
+        let _ = std::fs::remove_file(&db_path);
+        let _ = std::fs::remove_file(format!("{}-shm", db_path_str));
+        let _ = std::fs::remove_file(format!("{}-wal", db_path_str));
+
+        let db = Db::open(db_path_str).unwrap();
+
+        let db_path_clone = db_path.clone();
+        let pusher = std::thread::spawn(move || {
+            std::thread::sleep(std::time::Duration::from_millis(100));
+            let db2 = Db::open(db_path_clone.to_str().unwrap()).unwrap();
+            let fields: Vec<(&[u8], &[u8])> = vec![(b"f", b"from_other_thread")];
+            db2.xadd("crossstream", None, &fields, false, None, None, false)
+                .unwrap();
+        });
+
+        let start = std::time::Instant::now();
+        let result = db
+            .xread_block_sync(&["crossstream"], &[StreamId::new(0, 0)], None, 2000)
+            .unwrap();
+        let elapsed = start.elapsed();
+
+        pusher.join().unwrap();
+
+        assert_eq!(result.len(), 1);
+        assert!(
+            elapsed.as_millis() < 1500,
+            "Should return before timeout, elapsed: {:?}",
+            elapsed
+        );
+
+        // Cleanup
+        drop(db);
+        let _ = std::fs::remove_file(&db_path);
+        let _ = std::fs::remove_file(format!("{}-shm", db_path_str));
+        let _ = std::fs::remove_file(format!("{}-wal", db_path_str));
+    }
+
+    #[test]
+    fn test_xreadgroup_block_sync_immediate() {
+        // Data already in stream - returns immediately via consumer group
+        let db = Db::open_memory().unwrap();
+
+        let fields: Vec<(&[u8], &[u8])> = vec![(b"field", b"value")];
+        db.xadd("mystream", None, &fields, false, None, None, false)
+            .unwrap();
+        db.xgroup_create("mystream", "mygroup", StreamId::new(0, 0), false)
+            .unwrap();
+
+        let result = db
+            .xreadgroup_block_sync("mygroup", "consumer1", &["mystream"], &[">"], None, false, 1000)
+            .unwrap();
+        assert_eq!(result.len(), 1);
+        assert_eq!(result[0].0, "mystream");
+        assert_eq!(result[0].1.len(), 1);
+    }
+
+    #[test]
+    fn test_xreadgroup_block_sync_timeout() {
+        // No new data - should timeout and return empty
+        let db = Db::open_memory().unwrap();
+
+        // Create stream with one entry, then consume it
+        let fields: Vec<(&[u8], &[u8])> = vec![(b"f", b"v")];
+        db.xadd("mystream", None, &fields, false, None, None, false)
+            .unwrap();
+        db.xgroup_create("mystream", "mygroup", StreamId::new(0, 0), false)
+            .unwrap();
+        // Consume the entry
+        db.xreadgroup("mygroup", "consumer1", &["mystream"], &[">"], None, false)
+            .unwrap();
+
+        // Now block for more - should timeout
+        let start = std::time::Instant::now();
+        let result = db
+            .xreadgroup_block_sync("mygroup", "consumer1", &["mystream"], &[">"], None, false, 200)
+            .unwrap();
+        let elapsed = start.elapsed();
+
+        assert!(result.is_empty());
+        assert!(
+            elapsed.as_millis() >= 180,
+            "Should wait for timeout, elapsed: {:?}",
+            elapsed
+        );
+    }
+
+    #[test]
+    fn test_xreadgroup_block_sync_multithread() {
+        // Cross-thread coordination with consumer groups
+        let temp_dir = std::env::temp_dir();
+        let db_path = temp_dir.join(format!(
+            "redlite_xreadgroup_sync_test_{}.db",
+            std::process::id()
+        ));
+        let db_path_str = db_path.to_str().unwrap();
+
+        // Clean up
+        let _ = std::fs::remove_file(&db_path);
+        let _ = std::fs::remove_file(format!("{}-shm", db_path_str));
+        let _ = std::fs::remove_file(format!("{}-wal", db_path_str));
+
+        let db = Db::open(db_path_str).unwrap();
+
+        // Create stream and group
+        let fields: Vec<(&[u8], &[u8])> = vec![(b"init", b"data")];
+        db.xadd("jobqueue", None, &fields, false, None, None, false)
+            .unwrap();
+        db.xgroup_create("jobqueue", "workers", StreamId::new(0, 0), false)
+            .unwrap();
+        // Consume initial entry
+        db.xreadgroup("workers", "worker1", &["jobqueue"], &[">"], None, false)
+            .unwrap();
+
+        let db_path_clone = db_path.clone();
+        let pusher = std::thread::spawn(move || {
+            std::thread::sleep(std::time::Duration::from_millis(100));
+            let db2 = Db::open(db_path_clone.to_str().unwrap()).unwrap();
+            let fields: Vec<(&[u8], &[u8])> = vec![(b"job", b"new_task")];
+            db2.xadd("jobqueue", None, &fields, false, None, None, false)
+                .unwrap();
+        });
+
+        let start = std::time::Instant::now();
+        let result = db
+            .xreadgroup_block_sync("workers", "worker1", &["jobqueue"], &[">"], None, false, 2000)
+            .unwrap();
+        let elapsed = start.elapsed();
+
+        pusher.join().unwrap();
+
+        assert_eq!(result.len(), 1);
+        assert!(
+            elapsed.as_millis() < 1500,
+            "Should return before timeout, elapsed: {:?}",
+            elapsed
+        );
+
+        // Cleanup
+        drop(db);
+        let _ = std::fs::remove_file(&db_path);
+        let _ = std::fs::remove_file(format!("{}-shm", db_path_str));
+        let _ = std::fs::remove_file(format!("{}-wal", db_path_str));
     }
 
     #[test]
@@ -21750,6 +22164,160 @@ mod tests {
         let (key, value) = result.unwrap();
         assert_eq!(key, "hasdata");
         assert_eq!(value, b"real_value".to_vec());
+    }
+
+    // ============================================
+    // BLPOP_SYNC / BRPOP_SYNC Tests (Session 35.1)
+    // ============================================
+
+    #[test]
+    fn test_blpop_sync_immediate_data() {
+        // Data already in list - returns immediately without blocking
+        let db = Db::open_memory().unwrap();
+        db.rpush("mylist", &[b"first", b"second"]).unwrap();
+
+        let result = db.blpop_sync(&["mylist"], 1.0).unwrap();
+        assert!(result.is_some());
+        let (key, value) = result.unwrap();
+        assert_eq!(key, "mylist");
+        assert_eq!(value, b"first".to_vec());
+
+        // Second pop should get second value
+        let result2 = db.blpop_sync(&["mylist"], 1.0).unwrap();
+        assert!(result2.is_some());
+        let (key2, value2) = result2.unwrap();
+        assert_eq!(key2, "mylist");
+        assert_eq!(value2, b"second".to_vec());
+    }
+
+    #[test]
+    fn test_blpop_sync_timeout() {
+        // Empty list - should timeout and return None
+        let db = Db::open_memory().unwrap();
+
+        let start = std::time::Instant::now();
+        let result = db.blpop_sync(&["emptylist"], 0.2).unwrap();
+        let elapsed = start.elapsed();
+
+        assert!(result.is_none());
+        // Should have waited at least ~200ms
+        assert!(elapsed.as_millis() >= 180, "Should wait for timeout, elapsed: {:?}", elapsed);
+    }
+
+    #[test]
+    fn test_blpop_sync_multiprocess() {
+        // Test cross-process coordination via shared SQLite file
+        // Create a temp file for the database
+        let temp_dir = std::env::temp_dir();
+        let db_path = temp_dir.join(format!("redlite_multiprocess_test_{}.db", std::process::id()));
+        let db_path_str = db_path.to_str().unwrap();
+
+        // Clean up any previous test run
+        let _ = std::fs::remove_file(&db_path);
+        let _ = std::fs::remove_file(format!("{}-shm", db_path_str));
+        let _ = std::fs::remove_file(format!("{}-wal", db_path_str));
+
+        // Open db in parent process
+        let db = Db::open(db_path_str).unwrap();
+
+        // Spawn child process that will push after a delay
+        // Using a simple Rust one-liner via cargo script or direct exec
+        // For simplicity, we'll use a thread to simulate the "other process" behavior
+        // In a real scenario with separate processes, the SQLite polling will detect changes
+        let db_path_clone = db_path.clone();
+        let pusher = std::thread::spawn(move || {
+            std::thread::sleep(std::time::Duration::from_millis(100));
+            // Open the same db file in a "separate context"
+            let db2 = Db::open(db_path_clone.to_str().unwrap()).unwrap();
+            db2.rpush("crossproc", &[b"from_other_process"]).unwrap();
+        });
+
+        let start = std::time::Instant::now();
+        let result = db.blpop_sync(&["crossproc"], 2.0).unwrap();
+        let elapsed = start.elapsed();
+
+        pusher.join().unwrap();
+
+        assert!(result.is_some(), "Should have received data from other thread/process");
+        let (key, value) = result.unwrap();
+        assert_eq!(key, "crossproc");
+        assert_eq!(value, b"from_other_process".to_vec());
+        // Should have returned after the push (~100ms), not at timeout (2s)
+        assert!(elapsed.as_millis() < 1500, "Should return before timeout, elapsed: {:?}", elapsed);
+
+        // Cleanup
+        drop(db);
+        let _ = std::fs::remove_file(&db_path);
+        let _ = std::fs::remove_file(format!("{}-shm", db_path_str));
+        let _ = std::fs::remove_file(format!("{}-wal", db_path_str));
+    }
+
+    #[test]
+    fn test_brpop_sync_basic() {
+        // BRPOP pops from the right (tail) of list
+        let db = Db::open_memory().unwrap();
+        db.rpush("mylist", &[b"first", b"second", b"third"]).unwrap();
+
+        // BRPOP should get "third" (rightmost)
+        let result = db.brpop_sync(&["mylist"], 1.0).unwrap();
+        assert!(result.is_some());
+        let (key, value) = result.unwrap();
+        assert_eq!(key, "mylist");
+        assert_eq!(value, b"third".to_vec());
+
+        // Next should get "second"
+        let result2 = db.brpop_sync(&["mylist"], 1.0).unwrap();
+        assert!(result2.is_some());
+        let (key2, value2) = result2.unwrap();
+        assert_eq!(key2, "mylist");
+        assert_eq!(value2, b"second".to_vec());
+    }
+
+    #[test]
+    fn test_blpop_sync_multiple_keys() {
+        // Multiple keys - first non-empty key wins
+        let db = Db::open_memory().unwrap();
+
+        // Only second key has data
+        db.rpush("list2", &[b"value2"]).unwrap();
+
+        let result = db.blpop_sync(&["list1", "list2", "list3"], 1.0).unwrap();
+        assert!(result.is_some());
+        let (key, value) = result.unwrap();
+        assert_eq!(key, "list2");
+        assert_eq!(value, b"value2".to_vec());
+    }
+
+    #[test]
+    fn test_blpop_sync_wrong_type() {
+        // BLPOP on a non-list key should return WRONGTYPE error
+        let db = Db::open_memory().unwrap();
+
+        // Create a string key
+        db.set("stringkey", b"value", None).unwrap();
+
+        // BLPOP should fail with WRONGTYPE error
+        let result = db.blpop_sync(&["stringkey"], 0.1);
+        assert!(result.is_err());
+        let err = result.unwrap_err();
+        assert!(
+            err.to_string().contains("WRONGTYPE") || err.to_string().contains("wrong type"),
+            "Expected WRONGTYPE error, got: {}", err
+        );
+    }
+
+    #[test]
+    fn test_brpop_sync_timeout() {
+        // Empty list - should timeout and return None
+        let db = Db::open_memory().unwrap();
+
+        let start = std::time::Instant::now();
+        let result = db.brpop_sync(&["emptylist"], 0.2).unwrap();
+        let elapsed = start.elapsed();
+
+        assert!(result.is_none());
+        // Should have waited at least ~200ms
+        assert!(elapsed.as_millis() >= 180, "Should wait for timeout, elapsed: {:?}", elapsed);
     }
 
 }

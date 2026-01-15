@@ -33,5 +33,5 @@ pub use turso_db::TursoDb;
 pub use types::{
     FtField, FtFieldType, FtIndex, FtIndexInfo, FtOnType, FtSearchOptions, FtSearchResult,
     FtSuggestion, GetExOption, HistoryConfig, HistoryEntry, HistoryLevel, KeyType, ListDirection,
-    RetentionType, SetOptions, StreamEntry, StreamId, ZMember,
+    PollConfig, RetentionType, SetOptions, StreamEntry, StreamId, ZMember,
 };

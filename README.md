@@ -33,7 +33,7 @@ redis-cli SET foo bar
 | Memory-constrained | Disk-backed | RAM-bound |
 | Persistence required | Always durable | Needs config |
 | Multi-app sharing | Server mode | Native |
-| Clusters | Use [Litestream](https://github.com/benbjohnson/litestream) | Native |
+| Clustered/Replicated | Use [Litestream](https://github.com/benbjohnson/litestream) for  replication. | Native |
 
 ## Embedded vs Server Mode
 
@@ -58,6 +58,29 @@ secondary = Redlite("redis://localhost:6379")     # Via server
 ```
 
 **Sweet spot**: Embedded file mode with large cache. 50GB hot cache, terabytes on disk. Multiple processes, one file. Litestream to S3. No server, no Docker, no ops.
+
+## Embedded Blocking Operations
+
+Blocking operations work in embedded mode via efficient polling:
+
+```rust
+use redlite::{Db, PollConfig};
+
+let db = Db::open("mydata.db")?;
+
+// Blocking pop (waits up to 30 seconds for data)
+if let Some((key, value)) = db.blpop_sync(&["queue"], 30.0)? {
+    println!("Got {} from {}", String::from_utf8_lossy(&value), key);
+}
+
+// Configure polling behavior
+db.set_poll_config(PollConfig::aggressive()); // Low latency (100μs-500μs)
+db.set_poll_config(PollConfig::relaxed());    // Low CPU (1ms-10ms)
+```
+
+**Cross-process coordination**: Multiple processes can share a SQLite file. Process A blocks on `blpop_sync`, Process B pushes with `rpush` - A unblocks immediately.
+
+**Available methods**: `blpop_sync`, `brpop_sync`, `xread_block_sync`, `xreadgroup_block_sync`
 
 ## Why Redlite
 

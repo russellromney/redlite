@@ -121,7 +121,7 @@ pub fn blpop(&self, keys: &[&str], timeout: f64) -> Result<Option<(String, Vec<u
 
 ---
 
-### Session 35.1: Sync Blocking Operations - PLANNED
+### Session 35.1: Sync Blocking Operations - ✅ COMPLETE
 
 **Goal**: Add sync versions of BLPOP/BRPOP for embedded mode without tokio dependency.
 
@@ -129,7 +129,7 @@ pub fn blpop(&self, keys: &[&str], timeout: f64) -> Result<Option<(String, Vec<u
 
 #### Implementation
 
-**New Methods**:
+**New Methods** (db.rs:6969-7063):
 ```rust
 pub fn blpop_sync(&self, keys: &[&str], timeout: f64) -> Result<Option<(String, Vec<u8>)>>
 pub fn brpop_sync(&self, keys: &[&str], timeout: f64) -> Result<Option<(String, Vec<u8>)>>
@@ -137,7 +137,7 @@ pub fn brpop_sync(&self, keys: &[&str], timeout: f64) -> Result<Option<(String, 
 
 **Adaptive Polling**:
 - Start at 250μs interval
-- After 100 iterations, increase to 1ms
+- Ramps up to 1ms cap (reduces CPU while maintaining responsiveness)
 - Uses `std::thread::sleep` (no tokio required)
 - Sub-ms response when data arrives
 
@@ -146,11 +146,16 @@ pub fn brpop_sync(&self, keys: &[&str], timeout: f64) -> Result<Option<(String, 
 - Multi-process coordination via shared .db file
 - Python/Node SDKs calling via FFI
 
-#### Tests
-- [ ] `test_blpop_sync_immediate_data`
-- [ ] `test_blpop_sync_timeout`
-- [ ] `test_blpop_sync_multiprocess` (spawn child process)
-- [ ] `test_brpop_sync_basic`
+#### Tests (db.rs:21851-22005)
+- [x] `test_blpop_sync_immediate_data`
+- [x] `test_blpop_sync_timeout`
+- [x] `test_blpop_sync_multiprocess` (cross-thread with shared db file)
+- [x] `test_brpop_sync_basic`
+- [x] `test_blpop_sync_multiple_keys`
+- [x] `test_blpop_sync_wrong_type`
+- [x] `test_brpop_sync_timeout`
+
+**Result**: 608 tests passing
 
 ---
 
@@ -866,13 +871,13 @@ Inspired by [sled](https://sled.rs/simulation.html), [TigerBeetle VOPR](https://
 - [x] ZREMRANGEBYRANK, ZREMRANGEBYSCORE, ZINTERSTORE, ZUNIONSTORE, ZSCAN
 - [x] Empty sorted set edge cases
 
-**Streams (13 commands - 7 tested)**
+**Streams (13 commands - all tested)**
 - [x] XADD, XLEN, XTRIM
 - [x] XRANGE, XREVRANGE, XDEL, XINFO STREAM
-- [ ] XGROUP (CREATE, DESTROY, SETID, CREATECONSUMER, DELCONSUMER)
-- [ ] XREAD (async/blocking)
-- [ ] XREADGROUP (async/blocking)
-- [ ] XACK, XPENDING, XCLAIM
+- [x] XGROUP (CREATE, DESTROY, SETID, CREATECONSUMER, DELCONSUMER)
+- [x] XREAD (async/blocking)
+- [x] XREADGROUP (async/blocking)
+- [x] XACK, XPENDING, XCLAIM
 
 **Transactions (5 commands - 0 tested)**
 - [ ] MULTI, EXEC, DISCARD
@@ -891,6 +896,46 @@ Inspired by [sled](https://sled.rs/simulation.html), [TigerBeetle VOPR](https://
 - [ ] Error response format matching (error messages match Redis exactly)
 
 **Summary: ~100 commands, 85 tests, remaining: blocking commands, transactions, GEO**
+
+---
+
+### Session 35.2: Oracle Tests - Transactions & Blocking Commands - PLANNED
+
+**Goal**: Add Redis oracle tests for the remaining untested command categories.
+
+#### Blocking Commands (BLPOP/BRPOP)
+- [ ] `test_oracle_blpop_immediate` - Data exists, returns immediately
+- [ ] `test_oracle_blpop_timeout` - No data, times out correctly
+- [ ] `test_oracle_blpop_concurrent_push` - Push arrives during wait
+- [ ] `test_oracle_brpop_basic` - Right-pop variant
+- [ ] `test_oracle_blpop_multiple_keys` - Priority order matches Redis
+
+#### Transactions (MULTI/EXEC)
+- [ ] `test_oracle_multi_exec_basic` - Queue commands, execute atomically
+- [ ] `test_oracle_multi_discard` - DISCARD clears queue
+- [ ] `test_oracle_multi_exec_errors` - Error in queue vs error in exec
+- [ ] `test_oracle_watch_modified` - WATCH key modified before EXEC → nil
+- [ ] `test_oracle_watch_unmodified` - WATCH key not modified → success
+- [ ] `test_oracle_unwatch` - UNWATCH clears watched keys
+- [ ] `test_oracle_multi_nested` - MULTI inside MULTI → error
+
+#### Integration Tests (redlite-specific)
+- [ ] `test_integration_blpop_sync_multiprocess` - Real child process pushes to shared .db
+- [ ] `test_integration_brpop_sync_multiprocess` - Same for BRPOP
+
+---
+
+### Session 36.1: Streams Consumer Groups - ✅ COMPLETE
+
+**Status**: All consumer group commands are implemented and tested.
+
+**Commands implemented**:
+- `XGROUP CREATE/DESTROY/SETID/CREATECONSUMER/DELCONSUMER`
+- `XREADGROUP` (with blocking support via `xreadgroup_block_sync`)
+- `XACK`, `XPENDING`, `XCLAIM`
+- `XINFO GROUPS/CONSUMERS`
+
+**Tests**: 13+ stream/consumer group tests passing
 
 #### Phase 3: MadSim Integration (Session 27.3) - ✅ COMPLETE
 - [x] Add `madsim`, `madsim-tokio` dependencies (cfg-gated)

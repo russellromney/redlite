@@ -1,5 +1,56 @@
 use std::time::Duration;
 
+/// Configuration for adaptive polling in sync blocking operations.
+/// Used by blpop_sync, brpop_sync, xread_block_sync, xreadgroup_block_sync.
+#[derive(Debug, Clone, Copy)]
+pub struct PollConfig {
+    /// Initial polling interval (default: 250μs)
+    pub initial_interval: Duration,
+    /// Maximum polling interval after ramp-up (default: 1ms)
+    pub max_interval: Duration,
+    /// How much to increase interval each iteration (default: 50μs)
+    pub ramp_step: Duration,
+}
+
+impl Default for PollConfig {
+    fn default() -> Self {
+        Self {
+            initial_interval: Duration::from_micros(250),
+            max_interval: Duration::from_millis(1),
+            ramp_step: Duration::from_micros(50),
+        }
+    }
+}
+
+impl PollConfig {
+    /// Create a new PollConfig with custom values
+    pub fn new(initial_interval: Duration, max_interval: Duration, ramp_step: Duration) -> Self {
+        Self {
+            initial_interval,
+            max_interval,
+            ramp_step,
+        }
+    }
+
+    /// Create a config for aggressive polling (lower latency, more CPU)
+    pub fn aggressive() -> Self {
+        Self {
+            initial_interval: Duration::from_micros(100),
+            max_interval: Duration::from_micros(500),
+            ramp_step: Duration::from_micros(25),
+        }
+    }
+
+    /// Create a config for relaxed polling (higher latency, less CPU)
+    pub fn relaxed() -> Self {
+        Self {
+            initial_interval: Duration::from_millis(1),
+            max_interval: Duration::from_millis(10),
+            ramp_step: Duration::from_micros(500),
+        }
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[repr(i32)]
 pub enum KeyType {
