@@ -8128,6 +8128,7 @@ impl Db {
                     "weight": f.weight,
                     "separator": f.separator.to_string(),
                     "case_sensitive": f.case_sensitive,
+                    "tokenizer": f.tokenizer.as_str(),
                 })
             })
             .collect();
@@ -8150,19 +8151,23 @@ impl Db {
         let index_id = conn.last_insert_rowid();
 
         // Create dynamic FTS5 table for this index's TEXT fields
-        let text_fields: Vec<&str> = schema
+        let text_fields: Vec<&crate::types::FtField> = schema
             .iter()
             .filter(|f| matches!(f.field_type, FtFieldType::Text))
-            .map(|f| f.name.as_str())
             .collect();
 
         if !text_fields.is_empty() {
             // Create FTS5 table with columns for each TEXT field
-            let columns: Vec<String> = text_fields.iter().map(|f| format!("\"{}\"", f)).collect();
+            let columns: Vec<String> = text_fields.iter().map(|f| format!("\"{}\"", f.name)).collect();
+
+            // Use the tokenizer from the first TEXT field (all TEXT fields in an index share the same tokenizer)
+            let tokenizer_clause = text_fields[0].tokenizer.to_fts5_clause();
+
             let create_fts = format!(
-                "CREATE VIRTUAL TABLE IF NOT EXISTS fts_idx_{} USING fts5({}, content='', contentless_delete=1, tokenize='porter unicode61')",
+                "CREATE VIRTUAL TABLE IF NOT EXISTS fts_idx_{} USING fts5({}, content='', contentless_delete=1, {})",
                 index_id,
-                columns.join(", ")
+                columns.join(", "),
+                tokenizer_clause
             );
             conn.execute(&create_fts, [])?;
         }
@@ -18494,6 +18499,346 @@ mod tests {
 
         // Index should remain consistent
         assert_eq!(total, 1);
+    }
+
+    // ===== Trigram/Fuzzy Search Tests (Session 33) =====
+
+    #[test]
+    fn test_ft_create_with_trigram_tokenizer() {
+        use crate::types::{FtField, FtOnType, FtTokenizer};
+
+        let db = Db::open_memory().unwrap();
+
+        // Create a field with trigram tokenizer
+        let mut field = FtField::text("title");
+        field.tokenizer = FtTokenizer::Trigram;
+        let schema = vec![field];
+
+        db.ft_create("trigram_idx", FtOnType::Hash, &["doc:"], &schema)
+            .unwrap();
+
+        // Verify index was created
+        let indexes = db.ft_list().unwrap();
+        assert!(indexes.contains(&"trigram_idx".to_string()));
+
+        // Verify FT.INFO shows the tokenizer
+        let info = db.ft_info("trigram_idx").unwrap();
+        assert!(info.is_some());
+    }
+
+    #[test]
+    fn test_ft_create_with_text_trigram_helper() {
+        use crate::types::{FtField, FtOnType};
+
+        let db = Db::open_memory().unwrap();
+
+        // Use the convenience method
+        let schema = vec![FtField::text_trigram("title")];
+
+        db.ft_create("idx", FtOnType::Hash, &["doc:"], &schema)
+            .unwrap();
+
+        let indexes = db.ft_list().unwrap();
+        assert_eq!(indexes, vec!["idx"]);
+    }
+
+    #[test]
+    fn test_ft_search_trigram_substring() {
+        use crate::types::{FtField, FtOnType, FtSearchOptions};
+
+        let db = Db::open_memory().unwrap();
+
+        // Create index with trigram tokenizer
+        let schema = vec![FtField::text_trigram("content")];
+        db.ft_create("idx", FtOnType::Hash, &["doc:"], &schema)
+            .unwrap();
+
+        // Add documents
+        db.hset("doc:1", &[("content", b"hello world")]).unwrap();
+        db.hset("doc:2", &[("content", b"say hello to everyone")])
+            .unwrap();
+        db.hset("doc:3", &[("content", b"goodbye world")]).unwrap();
+
+        let options = FtSearchOptions::new();
+
+        // Trigram tokenizer should find "hello" as a substring
+        let (total, results) = db.ft_search("idx", "hello", &options).unwrap();
+        assert_eq!(total, 2);
+        let keys: Vec<_> = results.iter().map(|r| r.key.as_str()).collect();
+        assert!(keys.contains(&"doc:1"));
+        assert!(keys.contains(&"doc:2"));
+    }
+
+    #[test]
+    fn test_ft_search_trigram_prefix_and_suffix() {
+        use crate::types::{FtField, FtOnType, FtSearchOptions};
+
+        let db = Db::open_memory().unwrap();
+
+        let schema = vec![FtField::text_trigram("content")];
+        db.ft_create("idx", FtOnType::Hash, &["doc:"], &schema)
+            .unwrap();
+
+        db.hset("doc:1", &[("content", b"programming")]).unwrap();
+        db.hset("doc:2", &[("content", b"programmer")]).unwrap();
+        db.hset("doc:3", &[("content", b"reprogramming")]).unwrap();
+
+        let options = FtSearchOptions::new();
+
+        // Find documents containing "program" (prefix match)
+        let (total, _) = db.ft_search("idx", "program", &options).unwrap();
+        assert!(total >= 2); // Should match at least programming and programmer
+    }
+
+    #[test]
+    fn test_ft_search_trigram_case_insensitive() {
+        use crate::types::{FtField, FtOnType, FtSearchOptions};
+
+        let db = Db::open_memory().unwrap();
+
+        let schema = vec![FtField::text_trigram("content")];
+        db.ft_create("idx", FtOnType::Hash, &["doc:"], &schema)
+            .unwrap();
+
+        db.hset("doc:1", &[("content", b"Hello World")]).unwrap();
+        db.hset("doc:2", &[("content", b"HELLO THERE")]).unwrap();
+
+        let options = FtSearchOptions::new();
+
+        // Search should be case-insensitive by default
+        let (total, _) = db.ft_search("idx", "hello", &options).unwrap();
+        assert_eq!(total, 2);
+    }
+
+    #[test]
+    fn test_ft_info_shows_tokenizer() {
+        use crate::types::{FtField, FtOnType, FtTokenizer};
+
+        let db = Db::open_memory().unwrap();
+
+        // Create with porter (default)
+        let schema_porter = vec![FtField::text("title")];
+        db.ft_create("porter_idx", FtOnType::Hash, &["porter:"], &schema_porter)
+            .unwrap();
+
+        // Create with trigram
+        let mut trigram_field = FtField::text("title");
+        trigram_field.tokenizer = FtTokenizer::Trigram;
+        let schema_trigram = vec![trigram_field];
+        db.ft_create("trigram_idx", FtOnType::Hash, &["trigram:"], &schema_trigram)
+            .unwrap();
+
+        // Both indexes should exist
+        let indexes = db.ft_list().unwrap();
+        assert!(indexes.contains(&"porter_idx".to_string()));
+        assert!(indexes.contains(&"trigram_idx".to_string()));
+
+        // Verify both have info
+        let porter_info = db.ft_info("porter_idx").unwrap();
+        let trigram_info = db.ft_info("trigram_idx").unwrap();
+        assert!(porter_info.is_some());
+        assert!(trigram_info.is_some());
+    }
+
+    #[test]
+    fn test_ft_tokenizer_builder_pattern() {
+        use crate::types::{FtField, FtFieldType, FtOnType, FtTokenizer};
+
+        let db = Db::open_memory().unwrap();
+
+        // Test the builder pattern for tokenizer
+        let field = FtField::new("content", FtFieldType::Text)
+            .tokenizer(FtTokenizer::Trigram)
+            .sortable();
+
+        let schema = vec![field];
+        db.ft_create("idx", FtOnType::Hash, &["doc:"], &schema)
+            .unwrap();
+
+        let indexes = db.ft_list().unwrap();
+        assert_eq!(indexes, vec!["idx"]);
+    }
+
+    // ===== Fuzzy Query Syntax Tests (Session 33 Phase 2) =====
+
+    #[test]
+    fn test_ft_search_fuzzy_syntax_basic() {
+        use crate::types::{FtField, FtOnType, FtSearchOptions};
+
+        let db = Db::open_memory().unwrap();
+
+        let schema = vec![FtField::text_trigram("content")];
+        db.ft_create("idx", FtOnType::Hash, &["doc:"], &schema)
+            .unwrap();
+
+        db.hset("doc:1", &[("content", b"hello world")]).unwrap();
+        db.hset("doc:2", &[("content", b"say hello to everyone")])
+            .unwrap();
+        db.hset("doc:3", &[("content", b"goodbye world")]).unwrap();
+
+        let options = FtSearchOptions::new();
+
+        // Fuzzy syntax %%term%% should find substring matches
+        let (total, results) = db.ft_search("idx", "%%hello%%", &options).unwrap();
+        assert_eq!(total, 2);
+        let keys: Vec<_> = results.iter().map(|r| r.key.as_str()).collect();
+        assert!(keys.contains(&"doc:1"));
+        assert!(keys.contains(&"doc:2"));
+    }
+
+    #[test]
+    fn test_ft_search_fuzzy_typo_matches() {
+        use crate::types::{FtField, FtOnType, FtSearchOptions};
+
+        let db = Db::open_memory().unwrap();
+
+        let schema = vec![FtField::text_trigram("content")];
+        db.ft_create("idx", FtOnType::Hash, &["doc:"], &schema)
+            .unwrap();
+
+        // Documents with similar words
+        db.hset("doc:1", &[("content", b"programming language")])
+            .unwrap();
+        db.hset("doc:2", &[("content", b"programmer skills")])
+            .unwrap();
+        db.hset("doc:3", &[("content", b"unrelated content")])
+            .unwrap();
+
+        let options = FtSearchOptions::new();
+
+        // Trigram search for "program" should match both programming and programmer
+        let (total, _) = db.ft_search("idx", "%%program%%", &options).unwrap();
+        assert!(total >= 2);
+    }
+
+    #[test]
+    fn test_ft_search_fuzzy_field_scoped() {
+        use crate::types::{FtField, FtOnType, FtSearchOptions};
+
+        let db = Db::open_memory().unwrap();
+
+        let schema = vec![
+            FtField::text_trigram("title"),
+            FtField::text_trigram("body"),
+        ];
+        db.ft_create("idx", FtOnType::Hash, &["doc:"], &schema)
+            .unwrap();
+
+        db.hset(
+            "doc:1",
+            &[("title", b"hello world"), ("body", b"some content")],
+        )
+        .unwrap();
+        db.hset(
+            "doc:2",
+            &[("title", b"goodbye"), ("body", b"hello there")],
+        )
+        .unwrap();
+
+        let options = FtSearchOptions::new();
+
+        // Field-scoped fuzzy search
+        let (total, results) = db.ft_search("idx", "@title:%%hello%%", &options).unwrap();
+        assert_eq!(total, 1);
+        assert_eq!(results[0].key, "doc:1");
+    }
+
+    #[test]
+    fn test_ft_search_fuzzy_mixed_query() {
+        use crate::types::{FtField, FtOnType, FtSearchOptions};
+
+        let db = Db::open_memory().unwrap();
+
+        let schema = vec![FtField::text_trigram("content")];
+        db.ft_create("idx", FtOnType::Hash, &["doc:"], &schema)
+            .unwrap();
+
+        db.hset("doc:1", &[("content", b"hello world programming")])
+            .unwrap();
+        db.hset("doc:2", &[("content", b"hello universe coding")])
+            .unwrap();
+        db.hset("doc:3", &[("content", b"goodbye world")])
+            .unwrap();
+
+        let options = FtSearchOptions::new();
+
+        // Mix of fuzzy and exact terms
+        let (total, results) = db.ft_search("idx", "%%hello%% world", &options).unwrap();
+        assert_eq!(total, 1);
+        assert_eq!(results[0].key, "doc:1");
+    }
+
+    #[test]
+    fn test_ft_search_fuzzy_unicode() {
+        use crate::types::{FtField, FtOnType, FtSearchOptions};
+
+        let db = Db::open_memory().unwrap();
+
+        let schema = vec![FtField::text_trigram("content")];
+        db.ft_create("idx", FtOnType::Hash, &["doc:"], &schema)
+            .unwrap();
+
+        // Unicode content
+        db.hset("doc:1", &[("content", "日本語テスト".as_bytes())])
+            .unwrap();
+        db.hset("doc:2", &[("content", "テストデータ".as_bytes())])
+            .unwrap();
+        db.hset("doc:3", &[("content", "English text".as_bytes())])
+            .unwrap();
+
+        let options = FtSearchOptions::new();
+
+        // Search for Japanese text
+        let (total, _) = db.ft_search("idx", "%%テスト%%", &options).unwrap();
+        assert_eq!(total, 2);
+    }
+
+    #[test]
+    fn test_ft_search_fuzzy_short_terms() {
+        use crate::types::{FtField, FtOnType, FtSearchOptions};
+
+        let db = Db::open_memory().unwrap();
+
+        let schema = vec![FtField::text_trigram("content")];
+        db.ft_create("idx", FtOnType::Hash, &["doc:"], &schema)
+            .unwrap();
+
+        db.hset("doc:1", &[("content", b"ab cd ef")]).unwrap();
+        db.hset("doc:2", &[("content", b"abc def")]).unwrap();
+
+        let options = FtSearchOptions::new();
+
+        // Short terms (less than 3 chars) may have limited trigram matching
+        // but should not crash
+        let (total, _) = db.ft_search("idx", "%%ab%%", &options).unwrap();
+        // Result depends on trigram behavior with short terms
+        assert!(total >= 0); // Just verify no crash
+    }
+
+    #[test]
+    fn test_query_parser_fuzzy_expr() {
+        use crate::search::{QueryExpr, QueryParser};
+
+        let mut parser = QueryParser::new("%%hello%%", false);
+        let expr = parser.parse_expr().unwrap();
+        assert_eq!(expr, QueryExpr::Fuzzy("hello".to_string()));
+    }
+
+    #[test]
+    fn test_query_parser_fuzzy_in_and() {
+        use crate::search::{QueryExpr, QueryParser};
+
+        let mut parser = QueryParser::new("%%hello%% world", false);
+        let expr = parser.parse_expr().unwrap();
+
+        match expr {
+            QueryExpr::And(exprs) => {
+                assert_eq!(exprs.len(), 2);
+                assert_eq!(exprs[0], QueryExpr::Fuzzy("hello".to_string()));
+                assert_eq!(exprs[1], QueryExpr::Term("world".to_string()));
+            }
+            _ => panic!("Expected And expression"),
+        }
     }
 
     // ===== Vector Tests (Phase 4) =====

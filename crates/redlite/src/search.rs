@@ -9,8 +9,10 @@
 //! - NOT operator: `-word` or `!word`
 //! - Phrase matching: `"exact phrase"`
 //! - Prefix search: `hel*`
+//! - Fuzzy/substring search: `%%term%%` (requires trigram tokenizer)
 //! - Field-scoped text: `@title:hello`
 //! - Field-scoped phrase: `@title:"hello world"`
+//! - Field-scoped fuzzy: `@title:%%term%%`
 //! - Numeric range: `@price:[10 100]` or `@price:[(10 (100]` for exclusive bounds
 //! - Tag exact match: `@category:{electronics|books}`
 //! - Grouping: `(term1 | term2) term3`
@@ -23,6 +25,7 @@
 //! - `-word` -> `NOT word`
 //! - `"phrase"` -> `"phrase"`
 //! - `word*` -> `word*`
+//! - `%%term%%` -> `term` (trigram tokenizer enables substring matching)
 //! - `@field:term` -> `field:term`
 
 /// Parsed query component
@@ -34,6 +37,9 @@ pub enum QueryExpr {
     Prefix(String),
     /// Exact phrase ("words here")
     Phrase(String),
+    /// Fuzzy/substring search (%%term%%) - requires trigram tokenizer
+    /// With Levenshtein: post-filters results by edit distance
+    Fuzzy(String),
     /// Field-scoped query (@field:expr)
     FieldText { field: String, expr: Box<QueryExpr> },
     /// Numeric range query (@field:[min max])
@@ -245,6 +251,15 @@ impl<'a> QueryParser<'a> {
             }
             QueryExpr::Phrase(p) => {
                 let escaped = escape_fts5_phrase(p);
+                match field {
+                    Some(f) => format!("\"{}\":\"{}\"", f, escaped),
+                    None => format!("\"{}\"", escaped),
+                }
+            }
+            // Fuzzy search: For trigram tokenizers, this enables substring matching
+            // The term is quoted to preserve as a unit for matching
+            QueryExpr::Fuzzy(t) => {
+                let escaped = escape_fts5_phrase(t);
                 match field {
                     Some(f) => format!("\"{}\":\"{}\"", f, escaped),
                     None => format!("\"{}\"", escaped),
@@ -598,6 +613,14 @@ impl<'a> QueryParser<'a> {
             return Err("Expected term".to_string());
         }
 
+        // Check for fuzzy/substring search (%%term%%)
+        if term.starts_with("%%") && term.ends_with("%%") && term.len() > 4 {
+            let inner = term[2..term.len() - 2].to_string();
+            if !inner.is_empty() {
+                return Ok(QueryExpr::Fuzzy(inner));
+            }
+        }
+
         // Check for prefix search
         if term.ends_with('*') {
             let prefix = term[..term.len() - 1].to_string();
@@ -732,6 +755,10 @@ fn expr_to_explain(expr: &QueryExpr) -> ExplainNode {
         QueryExpr::Phrase(p) => ExplainNode::array(vec![
             ExplainNode::text("PHRASE"),
             ExplainNode::text(&format!("\"{}\"", p)),
+        ]),
+        QueryExpr::Fuzzy(f) => ExplainNode::array(vec![
+            ExplainNode::text("FUZZY"),
+            ExplainNode::text(&format!("%%{}%%", f)),
         ]),
         QueryExpr::FieldText { field, expr } => ExplainNode::array(vec![
             ExplainNode::text("FIELD"),

@@ -460,6 +460,53 @@ impl FtsStats {
 // RediSearch-Compatible Types (Session 23)
 // ============================================================================
 
+/// FTS5 tokenizer type for TEXT fields
+/// See: https://sqlite.org/fts5.html#tokenizers
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub enum FtTokenizer {
+    /// Porter stemmer with unicode61 - good for natural language (default)
+    #[default]
+    Porter,
+    /// Trigram tokenizer - enables substring/fuzzy matching
+    /// Supports LIKE/GLOB queries efficiently
+    Trigram,
+    /// Unicode-aware tokenizer without stemming
+    Unicode61,
+    /// ASCII-only tokenizer (fastest, English only)
+    Ascii,
+}
+
+impl FtTokenizer {
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            FtTokenizer::Porter => "porter",
+            FtTokenizer::Trigram => "trigram",
+            FtTokenizer::Unicode61 => "unicode61",
+            FtTokenizer::Ascii => "ascii",
+        }
+    }
+
+    pub fn from_str(s: &str) -> Option<Self> {
+        match s.to_lowercase().as_str() {
+            "porter" => Some(FtTokenizer::Porter),
+            "trigram" => Some(FtTokenizer::Trigram),
+            "unicode61" => Some(FtTokenizer::Unicode61),
+            "ascii" => Some(FtTokenizer::Ascii),
+            _ => None,
+        }
+    }
+
+    /// Generate the FTS5 tokenize clause
+    pub fn to_fts5_clause(&self) -> String {
+        match self {
+            FtTokenizer::Porter => "tokenize='porter unicode61'".to_string(),
+            FtTokenizer::Trigram => "tokenize='trigram'".to_string(),
+            FtTokenizer::Unicode61 => "tokenize='unicode61'".to_string(),
+            FtTokenizer::Ascii => "tokenize='ascii'".to_string(),
+        }
+    }
+}
+
 /// Field type in an FT index schema
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum FtFieldType {
@@ -504,6 +551,7 @@ pub struct FtField {
     pub weight: f64,          // TEXT only: field weight for scoring
     pub separator: char,      // TAG only: tag separator (default ',')
     pub case_sensitive: bool, // TAG only
+    pub tokenizer: FtTokenizer, // TEXT only: tokenizer type (porter, trigram, etc.)
 }
 
 impl FtField {
@@ -517,11 +565,19 @@ impl FtField {
             weight: 1.0,
             separator: ',',
             case_sensitive: false,
+            tokenizer: FtTokenizer::default(),
         }
     }
 
     pub fn text(name: &str) -> Self {
         Self::new(name, FtFieldType::Text)
+    }
+
+    /// Create a TEXT field with trigram tokenizer for fuzzy/substring matching
+    pub fn text_trigram(name: &str) -> Self {
+        let mut field = Self::new(name, FtFieldType::Text);
+        field.tokenizer = FtTokenizer::Trigram;
+        field
     }
 
     pub fn numeric(name: &str) -> Self {
@@ -534,6 +590,12 @@ impl FtField {
 
     pub fn sortable(mut self) -> Self {
         self.sortable = true;
+        self
+    }
+
+    /// Set the tokenizer for this TEXT field
+    pub fn tokenizer(mut self, tokenizer: FtTokenizer) -> Self {
+        self.tokenizer = tokenizer;
         self
     }
 }

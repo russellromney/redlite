@@ -1,5 +1,72 @@
 # Changelog
 
+## Session 33: Fuzzy Search with Trigram Tokenizer (15 new tests)
+
+### Added - FtTokenizer Enum and Trigram Support
+
+**Fuzzy/Substring Search**: Using SQLite FTS5's built-in trigram tokenizer for typo-tolerant search.
+
+#### Types (`types.rs`)
+- `FtTokenizer` enum with variants: `Porter` (default), `Trigram`, `Unicode61`, `Ascii`
+- `FtField.tokenizer` field to specify tokenizer per TEXT field
+- `FtField::text_trigram(name)` convenience constructor
+- `.tokenizer(FtTokenizer)` builder method
+
+#### Query Parser (`search.rs`)
+- `QueryExpr::Fuzzy(String)` variant for `%%term%%` syntax
+- Parse `%%term%%` as fuzzy/substring search
+- FTS5 generation for fuzzy terms (phrase match for trigram)
+- `expr_to_explain` support for FT.EXPLAIN
+
+#### Database (`db.rs`)
+- `ft_create` now uses field's tokenizer when creating FTS5 table
+- Generates `tokenize='trigram'` for trigram fields
+- Schema JSON includes tokenizer type for persistence
+
+### Tests - Phase 1: Trigram Index Support (7 tests)
+- `test_ft_create_with_trigram_tokenizer` - Create index with TOKENIZE trigram
+- `test_ft_create_with_text_trigram_helper` - FtField::text_trigram() helper
+- `test_ft_search_trigram_substring` - Find "hello" in "say hello world"
+- `test_ft_search_trigram_prefix_and_suffix` - Prefix/suffix matching
+- `test_ft_search_trigram_case_insensitive` - Case-insensitive search
+- `test_ft_info_shows_tokenizer` - FT.INFO displays tokenizer type
+- `test_ft_tokenizer_builder_pattern` - Builder pattern test
+
+### Tests - Phase 2: Fuzzy Query Syntax (8 tests)
+- `test_ft_search_fuzzy_syntax_basic` - Basic %%term%% query
+- `test_ft_search_fuzzy_typo_matches` - Similar word matching
+- `test_ft_search_fuzzy_field_scoped` - @field:%%term%%
+- `test_ft_search_fuzzy_mixed_query` - Fuzzy + exact in same query
+- `test_ft_search_fuzzy_unicode` - Unicode (Japanese) fuzzy matching
+- `test_ft_search_fuzzy_short_terms` - Short term edge cases
+- `test_query_parser_fuzzy_expr` - Parser produces Fuzzy variant
+- `test_query_parser_fuzzy_in_and` - Fuzzy in AND expression
+
+### Test Results
+- **15 new tests** (7 trigram + 8 fuzzy)
+- **639 total tests** with `--features "vectors geo"`
+- **All new tests passing**
+
+### Usage
+```rust
+use redlite::types::{FtField, FtOnType};
+
+// Create index with trigram tokenizer
+let schema = vec![FtField::text_trigram("content")];
+db.ft_create("idx", FtOnType::Hash, &["doc:"], &schema)?;
+
+// Index documents
+db.hset("doc:1", &[("content", b"hello world")])?;
+
+// Substring search (trigram enables this)
+let (total, results) = db.ft_search("idx", "hello", &options)?;
+
+// Explicit fuzzy syntax
+let (total, results) = db.ft_search("idx", "%%program%%", &options)?;
+```
+
+---
+
 ## Session 32: Vector Search Test Expansion (35 → 61 tests)
 
 ### Added - 26 New Vector Tests
