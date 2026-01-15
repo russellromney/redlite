@@ -2,7 +2,54 @@
 
 See [CHANGELOG.md](./CHANGELOG.md) for completed features.
 
+## Next Steps
+
+### Session 37: Fix Remaining Oracle Test Failures
+
+**Goal**: Address 17 failing/timeout tests from oracle test suite (212 passed, 92% pass rate).
+
+**Priority 1 - Timeout Issues** (7 tests, likely deadlocks):
+- `oracle_cmd_linsert`, `oracle_cmd_lrem` - List operations hanging
+- `oracle_cmd_sdiffstore`, `oracle_cmd_sinterstore`, `oracle_cmd_sunionstore` - Set store operations
+- `oracle_lists_linsert`, `oracle_lists_lset_lrem` - List operation variants
+- Pattern: All involve list or set operations, likely similar deadlock to history bug
+
+**Priority 2 - Z-Commands** (4 tests, likely related):
+- `oracle_cmd_zcount`, `oracle_cmd_zrange`, `oracle_cmd_zrangebyscore` - Range/count queries
+- `oracle_cmd_xclaim` - Stream claim operation
+- Pattern: Range queries and boundary conditions
+
+**Priority 3 - Complex Scenarios** (4 tests):
+- `oracle_comprehensive_mixed_ops`, `oracle_hashes_random_ops`, `oracle_keys_random_ops`, `oracle_keys_persist`
+- Random operation tests, likely edge cases
+
+**Priority 4 - Basic Operations** (2 tests):
+- `oracle_cmd_persist` - TTL removal
+- `oracle_cmd_rename` - Key renaming
+
+**Approach**:
+1. Investigate timeout tests first (likely similar pattern to history deadlock)
+2. Run each failing test individually with debug output
+3. Fix bugs, run full suite to verify no regressions
+4. Update CHANGELOG, ROADMAP, README with results
+
+**Target**: 225+ tests passing (98%+ pass rate)
+
+---
+
 ## Recently Completed
+
+### Session 36: History Feature Bug Fixes & Parallel Test Infrastructure - ✅ COMPLETE
+
+**Completed**:
+- Fixed critical deadlock in history tracking (4 bugs total)
+- Built parallel test infrastructure with SQLite tracking
+- Achieved 212/230 oracle tests passing (92% pass rate)
+- Tests run in ~2 minutes (vs 10+ minutes sequential)
+
+**Key Insight**: Lock acquisition order matters. Helper functions that acquire locks must be called before parent function acquires lock, or use explicit scope blocks to ensure proper release.
+
+---
 
 ### Session 34: Bug Fixes (LPOS, LMOVE) - ✅ COMPLETE
 
@@ -156,6 +203,141 @@ pub fn brpop_sync(&self, keys: &[&str], timeout: f64) -> Result<Option<(String, 
 - [x] `test_brpop_sync_timeout`
 
 **Result**: 608 tests passing
+
+---
+
+### Session 35.2: Poll Impact Benchmarks - IN PROGRESS
+
+**Goal**: Measure polling overhead to validate PollConfig recommendations and ensure blocking operations don't starve other workloads.
+
+**Rationale**: Before recommending `PollConfig::aggressive()` vs `default()` vs `relaxed()`, we need data on:
+1. CPU cost of each polling interval
+2. Impact on concurrent non-blocking operations
+3. Latency distribution when data arrives
+
+#### Benchmark Suite (`benches/poll_impact.rs`)
+
+**1. Baseline Throughput** (~3 benchmarks)
+- [ ] `bench_baseline_set_get` - Ops/sec with no blocking operations
+- [ ] `bench_baseline_lpush_lpop` - List throughput baseline
+- [ ] `bench_baseline_xadd_xread` - Stream throughput baseline
+
+**2. Polling Overhead** (~4 benchmarks)
+- [ ] `bench_poll_cpu_aggressive` - CPU usage with 10 concurrent `blpop_sync` waiters (100μs polling)
+- [ ] `bench_poll_cpu_default` - CPU usage with 10 concurrent waiters (250μs polling)
+- [ ] `bench_poll_cpu_relaxed` - CPU usage with 10 concurrent waiters (1ms polling)
+- [ ] `bench_poll_scaling` - CPU vs waiter count (1, 10, 50, 100 waiters)
+
+**3. Throughput Under Load** (~4 benchmarks)
+- [ ] `bench_throughput_with_1_waiter` - SET/GET ops/sec with 1 blocking waiter
+- [ ] `bench_throughput_with_10_waiters` - SET/GET ops/sec with 10 blocking waiters
+- [ ] `bench_throughput_with_100_waiters` - SET/GET ops/sec with 100 blocking waiters
+- [ ] `bench_throughput_comparison` - Side-by-side aggressive/default/relaxed
+
+**4. Latency Distribution** (~3 benchmarks)
+- [ ] `bench_latency_immediate_data` - Response time when data already exists
+- [ ] `bench_latency_push_during_wait` - Response time when push arrives during wait
+- [ ] `bench_latency_p50_p99_p999` - Latency percentiles across polling configs
+
+#### Expected Results
+
+| Config | CPU (10 waiters) | Throughput Impact | Wake Latency |
+|--------|------------------|-------------------|--------------|
+| aggressive | ~5-10% | ~2-5% drop | <200μs |
+| default | ~1-2% | <1% drop | <500μs |
+| relaxed | <0.5% | negligible | <5ms |
+
+#### Implementation Notes
+- Use `criterion` crate for statistical benchmarking
+- Spawn waiter threads, measure main thread throughput
+- Use `std::hint::black_box` to prevent optimization
+- Run each config for 10+ seconds for stable measurements
+
+#### Success Criteria
+- [ ] 14 benchmarks implemented and passing
+- [ ] HTML report generated in `target/criterion/`
+- [ ] Data validates current default (250μs → 1ms) as balanced choice
+- [ ] No config causes >10% throughput degradation with 10 waiters
+
+---
+
+### Session 35.3: Oracle Tests - Blocking & Transactions - PARTIAL
+
+**Goal**: Add Redis oracle tests for blocking commands and transactions to validate compatibility.
+
+**Rationale**: These are the last major untested command categories. Oracle tests ensure identical behavior to Redis.
+
+#### Blocking Commands (~11 tests) - ✅ COMPLETE
+
+**BLPOP/BRPOP** (already implemented in previous sessions + 2 new)
+- [x] `oracle_cmd_blpop_immediate` - Data exists, returns immediately
+- [x] `oracle_cmd_blpop_timeout` - No data, times out correctly (returns nil)
+- [x] `oracle_cmd_blpop_concurrent_push` - Push arrives during wait, unblocks
+- [x] `oracle_cmd_brpop_immediate` - Right-pop variant works identically
+- [x] `oracle_cmd_blpop_multiple_keys` - Priority order (first key with data wins)
+- [x] `oracle_cmd_blpop_priority` - Key priority order
+- [x] `oracle_cmd_blpop_binary` - Binary data handling
+- [x] `oracle_cmd_brpop_timeout` - BRPOP timeout
+- [x] `oracle_cmd_blpop_nonexistent_keys` - Non-existent keys skipped
+- [x] `oracle_cmd_blpop_wrong_type` - WRONGTYPE error on non-list key (NEW)
+- [x] `oracle_cmd_brpop_wrong_type` - WRONGTYPE error on non-list key (NEW)
+
+#### Transaction Commands (~10 tests) - DEFERRED (Server Mode Only)
+
+**Note**: Transactions (MULTI/EXEC/WATCH) are only available in server mode, not embedded `Db`.
+These tests require a running redlite server and TCP connection.
+
+**MULTI/EXEC/DISCARD**
+- [ ] `test_oracle_multi_exec_basic` - Queue commands, execute atomically
+- [ ] `test_oracle_multi_exec_multiple_commands` - 5+ commands in transaction
+- [ ] `test_oracle_multi_discard` - DISCARD clears queue, returns OK
+- [ ] `test_oracle_multi_exec_empty` - EXEC with no queued commands
+- [ ] `test_oracle_multi_nested` - MULTI inside MULTI returns error
+- [ ] `test_oracle_exec_without_multi` - EXEC without MULTI returns error
+
+**WATCH/UNWATCH**
+- [ ] `test_oracle_watch_unmodified` - WATCH key not modified → EXEC succeeds
+- [ ] `test_oracle_watch_modified` - WATCH key modified → EXEC returns nil
+- [ ] `test_oracle_watch_deleted` - WATCH key deleted → EXEC returns nil
+- [ ] `test_oracle_unwatch` - UNWATCH clears watched keys, EXEC succeeds
+
+#### Error Handling (~4 tests) - DEFERRED
+- [ ] `test_oracle_multi_syntax_error` - Syntax error in queue → error on EXEC
+- [ ] `test_oracle_multi_runtime_error` - Runtime error (e.g., INCR on string) → partial success
+- [ ] `test_oracle_watch_inside_multi` - WATCH inside MULTI returns error
+- [ ] `test_oracle_multi_timeout` - Long transaction doesn't timeout
+
+#### Test Infrastructure
+
+**Async Test Setup** (for blocking commands):
+```rust
+#[tokio::test]
+async fn test_oracle_blpop_concurrent_push() {
+    let redis = redis_client();
+    let redlite = redlite_client();
+
+    // Start BLPOP in background task
+    let redis_handle = tokio::spawn(async move {
+        redis.blpop("key", 5.0).await
+    });
+
+    // Wait a bit, then push
+    tokio::time::sleep(Duration::from_millis(100)).await;
+    redis.lpush("key", "value").await;
+
+    // Compare results
+    let redis_result = redis_handle.await;
+    // ... same for redlite
+}
+```
+
+#### Success Criteria
+- [x] 11 blocking oracle tests implemented (BLPOP/BRPOP)
+- [x] 2 new WRONGTYPE tests added
+- [ ] Transaction tests deferred (require server mode)
+- [x] Zero divergences from Redis behavior
+- [x] All tests run in `redlite-dst oracle` suite
+- [x] Blocking tests use proper async coordination
 
 ---
 
@@ -610,6 +792,173 @@ db.FTS.Search(ctx, "hello world")
 5. Delegate all standard Redis methods to underlying client
 
 ## Planned
+
+### Server Mode HA (High Availability)
+
+**Goal**: Dead-simple failover for server mode with ~5 second recovery time.
+
+**Design Philosophy**: Redis Sentinel takes 10-30 seconds for failover. We can beat that with a simpler design that uses S3 as the coordination layer (already there for Litestream).
+
+#### Architecture
+
+```
+┌─────────────────────────────────────────────────────────────┐
+│                     Redlite HA                               │
+│                                                              │
+│   Leader ───────► S3 config (check every 5s for followers)  │
+│      │                                                       │
+│      │  heartbeat (1s)                                      │
+│      ▼                                                       │
+│   Follower ◄──── Litestream restore (continuous from S3)    │
+│      │                                                       │
+│      └────► watches leader, takes over if missing 5s        │
+│                                                              │
+└─────────────────────────────────────────────────────────────┘
+```
+
+#### Protocol
+
+**Leader responsibilities:**
+1. Send heartbeat to follower every 1 second
+2. Check S3 config every 5 seconds for new followers
+3. Stream WAL to S3 via Litestream
+4. If network issues prevent heartbeat delivery → step down
+
+**Follower responsibilities:**
+1. Receive heartbeat from leader, update last-seen timestamp
+2. Continuously restore from Litestream (always ~1s behind)
+3. If no heartbeat for 5 seconds:
+   - Grab S3 lease (prevents split-brain)
+   - Try to notify old leader (best effort)
+   - Promote self to leader
+   - Start Litestream replication (now source of truth)
+
+**Old leader recovery:**
+- When old leader comes back online, it sees lease is held by another node
+- Automatically demotes to follower
+- Starts Litestream restore from S3
+
+#### Constraints
+
+- **Single follower only** — No race condition for lease, simpler protocol
+- **S3 as coordination** — Lease file with conditional writes prevents split-brain
+- **Litestream for data** — No custom replication protocol needed
+
+#### Failover Timeline
+
+```
+0s     - Leader dies (or network partition)
+1-5s   - Follower detects missing heartbeats
+5s     - Follower grabs S3 lease
+5.1s   - Follower promotes, starts serving
+─────────────────────────────────────────
+Total: ~5 seconds (vs Redis 10-30 seconds)
+```
+
+#### S3 Lease File
+
+```json
+{
+  "holder": "node-abc123",
+  "timestamp": "2024-01-15T10:30:00Z",
+  "expires": "2024-01-15T10:30:15Z"
+}
+```
+
+Conditional PUT (ETag/If-Match) ensures only one node can grab the lease.
+
+#### Implementation
+
+```rust
+struct HaNode {
+    role: Role,              // Leader or Follower
+    node_id: String,
+    litestream: LitestreamHandle,
+    s3_client: S3Client,
+    follower_addr: Option<SocketAddr>,
+}
+
+impl HaNode {
+    // Leader: send heartbeats
+    async fn heartbeat_loop(&self) {
+        loop {
+            if let Some(addr) = &self.follower_addr {
+                self.send_heartbeat(addr).await;
+            }
+            sleep(Duration::from_secs(1)).await;
+        }
+    }
+
+    // Follower: watch for leader death
+    async fn watch_leader(&self) {
+        loop {
+            if self.last_heartbeat.elapsed() > Duration::from_secs(5) {
+                if self.try_grab_lease().await.is_ok() {
+                    self.promote().await;
+                }
+            }
+            sleep(Duration::from_millis(500)).await;
+        }
+    }
+
+    async fn promote(&mut self) {
+        self.litestream.stop_restore().await;
+        self.litestream.start_replicate().await;
+        self.role = Role::Leader;
+    }
+
+    async fn demote(&mut self) {
+        self.litestream.stop_replicate().await;
+        self.litestream.start_restore().await;
+        self.role = Role::Follower;
+    }
+}
+```
+
+#### Fly.io Integration
+
+On Fly, the proxy can serve as health check routing:
+
+```toml
+# fly.toml
+[[services]]
+  internal_port = 6379
+
+  [[services.http_checks]]
+    path = "/health"
+    interval = "2s"
+    timeout = "1s"
+```
+
+Health endpoint returns 200 if leader, 503 if follower. Fly routes to healthy node.
+
+#### Edge Cases
+
+1. **S3 down** — Both nodes continue with last known role until S3 recovers
+2. **Litestream lag** — Follower may be missing last ~1s of writes on promotion (acceptable for cache)
+3. **Both nodes start simultaneously** — First to grab lease wins, other becomes follower
+4. **Leader notification fails** — Old leader will discover via S3 lease check
+
+#### Cost Comparison
+
+```
+Redis Sentinel HA:     3+ nodes, all in memory     $500-2000/mo
+Redlite HA:            2 nodes, data on disk       $50-100/mo
+                       + S3 pennies
+```
+
+#### Success Criteria
+
+- [ ] Leader/follower mode implemented
+- [ ] 1s heartbeat protocol working
+- [ ] S3 lease grab with conditional writes
+- [ ] Automatic promotion on leader failure
+- [ ] Automatic demotion when old leader returns
+- [ ] Litestream integration (replicate/restore switching)
+- [ ] <5 second failover time
+- [ ] Tests: leader death, follower promotion, old leader recovery
+
+---
 
 ### Session 23: Full-Text Search (RediSearch compatible)
 
