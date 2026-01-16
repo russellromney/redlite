@@ -5579,8 +5579,8 @@ fn oracle_cmd_zcount() {
     assert_eq!(r1, 3);
 
     // ZCOUNT with exclusive bounds (using slightly adjusted values since API uses f64)
-    // Note: redlite API doesn't support exclusive bound syntax
-    let r1 = redlite.zcount("zset", 2.0 + f64::EPSILON, 4.0 - f64::EPSILON).unwrap();
+    // Note: redlite API doesn't support exclusive bound syntax, so we use 0.0001 offset
+    let r1 = redlite.zcount("zset", 2.0 + 0.0001, 4.0 - 0.0001).unwrap();
     let r2: usize = redis::cmd("ZCOUNT").arg("zset").arg("(2").arg("(4").query(&mut redis).unwrap();
     assert_eq!(r1 as usize, r2);
     assert_eq!(r1, 1); // Only 3.0
@@ -5785,8 +5785,8 @@ fn oracle_cmd_zrangebyscore() {
     assert_eq!(members(&r1), vec![b"b".to_vec(), b"c".to_vec(), b"d".to_vec()]);
 
     // ZRANGEBYSCORE exclusive bounds (using slightly adjusted values since API uses f64)
-    // Note: redlite API doesn't support exclusive bound syntax, so we approximate
-    let r1 = redlite.zrangebyscore("zset", 2.0 + f64::EPSILON, 4.0 - f64::EPSILON, None, None).unwrap();
+    // Note: redlite API doesn't support exclusive bound syntax, so we use 0.0001 offset
+    let r1 = redlite.zrangebyscore("zset", 2.0 + 0.0001, 4.0 - 0.0001, None, None).unwrap();
     let r2: Vec<Vec<u8>> = redis::cmd("ZRANGEBYSCORE").arg("zset").arg("(2").arg("(4").query(&mut redis).unwrap();
     assert_eq!(members(&r1), r2);
     assert_eq!(members(&r1), vec![b"c".to_vec()]);

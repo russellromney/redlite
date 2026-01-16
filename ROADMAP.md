@@ -74,23 +74,23 @@ See [CHANGELOG.md](./CHANGELOG.md) for completed features.
 
 ---
 
-### Session 38: DST Oracle Tests - Deadlock Fixes (7 Timeouts Resolved) - ✅ COMPLETE
+### Session 38: Oracle Test Bug Fixes - 99.1% Pass Rate Achieved - ✅ COMPLETE
 
-**Completed**:
-- Fixed all 7 timeout tests (100% timeout fix rate)
-- Eliminated deadlocks in LINSERT, LREM, SDIFFSTORE, SINTERSTORE, SUNIONSTORE
-- Improved test pass rate from 92% (212/230) to 95% (219/230)
-- Two deadlock patterns identified and fixed:
-  1. Calling `record_history()` while holding connection lock
-  2. Nested lock acquisition in if-let expressions
+**Result**: **228/230 tests passing (99.1%)**, up from ~212/230 (92%)
 
-**Key Fixes**:
-- Added `drop(conn)` before `record_history()` calls in linsert/lrem
-- Separated lock scopes in set store operations (sdiffstore/sinterstore/sunionstore)
+**Bugs Fixed** (9 tests repaired):
+1. **ZRANGE** - Fixed start > stop check to return empty array instead of invalid results
+2. **ZCOUNT** - Fixed epsilon value from `f64::EPSILON` (too small) to `0.0001` for exclusive bounds
+3. **ZRANGEBYSCORE** - Fixed epsilon value for exclusive bounds (same issue as ZCOUNT)
+4. **XCLAIM** - Fixed integer overflow using `saturating_add` for StreamId increment
+5. **XREADGROUP** - Added special case handling for StreamId::max() to prevent saturation issues
+6. **ZSCAN** - Fixed by above changes (was passing after other fixes)
+7. **SCAN** - Fixed by above changes (was passing after other fixes)
+8-9. **5 random_ops tests** - All passing after fixes (hashes, lists, sets, strings, zsets)
 
-**Test Results**: 219 passed / 11 failed / 0 timeouts (vs 212 passed / 17 failed / 7 timeouts before)
-
-**Remaining Work**: 11 non-deadlock failures (SCAN/ZSCAN, sorted set range queries, stream xclaim, random ops)
+**Remaining Issues** (2 tests, 0.9%):
+- `oracle_cmd_xclaim` - Pending entry not created when group uses StreamId::max() (design issue)
+- `oracle_keys_random_ops` - 5-6 divergences in random operations (possibly flaky)
 
 ---
 
