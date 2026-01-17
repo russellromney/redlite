@@ -119,6 +119,104 @@ typedef struct RedliteStreamEntryArray {
 } RedliteStreamEntryArray;
 
 /**
+ * Consumer group information
+ */
+typedef struct RedliteConsumerGroupInfo {
+  char *name;
+  int64_t consumers;
+  int64_t pending;
+  struct RedliteStreamId last_delivered_id;
+} RedliteConsumerGroupInfo;
+
+/**
+ * Consumer group info array
+ */
+typedef struct RedliteConsumerGroupInfoArray {
+  struct RedliteConsumerGroupInfo *groups;
+  size_t len;
+} RedliteConsumerGroupInfoArray;
+
+/**
+ * Consumer information
+ */
+typedef struct RedliteConsumerInfo {
+  char *name;
+  int64_t pending;
+  int64_t idle;
+} RedliteConsumerInfo;
+
+/**
+ * Consumer info array
+ */
+typedef struct RedliteConsumerInfoArray {
+  struct RedliteConsumerInfo *consumers;
+  size_t len;
+} RedliteConsumerInfoArray;
+
+/**
+ * Stream information
+ */
+typedef struct RedliteStreamInfo {
+  int64_t length;
+  int64_t radix_tree_keys;
+  int64_t radix_tree_nodes;
+  struct RedliteStreamId last_generated_id;
+  struct RedliteStreamEntry *first_entry;
+  struct RedliteStreamEntry *last_entry;
+} RedliteStreamInfo;
+
+/**
+ * History entry
+ */
+typedef struct RedliteHistoryEntry {
+  int64_t timestamp;
+  struct RedliteBytes value;
+} RedliteHistoryEntry;
+
+/**
+ * History entry array
+ */
+typedef struct RedliteHistoryEntryArray {
+  struct RedliteHistoryEntry *entries;
+  size_t len;
+} RedliteHistoryEntryArray;
+
+/**
+ * Geospatial member with coordinates
+ */
+typedef struct RedliteGeoMember {
+  char *member;
+  double longitude;
+  double latitude;
+  double dist;
+} RedliteGeoMember;
+
+/**
+ * Geo member array
+ */
+typedef struct RedliteGeoMemberArray {
+  struct RedliteGeoMember *members;
+  size_t len;
+} RedliteGeoMemberArray;
+
+/**
+ * Geo position (lon, lat)
+ */
+typedef struct RedliteGeoPos {
+  double longitude;
+  double latitude;
+  int exists;
+} RedliteGeoPos;
+
+/**
+ * Geo position array
+ */
+typedef struct RedliteGeoPosArray {
+  struct RedliteGeoPos *positions;
+  size_t len;
+} RedliteGeoPosArray;
+
+/**
  * Key-value pair for hash operations
  */
 typedef struct RedliteKV {
@@ -212,6 +310,36 @@ void redlite_free_stream_entry(struct RedliteStreamEntry entry);
  * Free a stream entry array
  */
 void redlite_free_stream_entry_array(struct RedliteStreamEntryArray arr);
+
+/**
+ * Free consumer group info array
+ */
+void redlite_free_consumer_group_info_array(struct RedliteConsumerGroupInfoArray arr);
+
+/**
+ * Free consumer info array
+ */
+void redlite_free_consumer_info_array(struct RedliteConsumerInfoArray arr);
+
+/**
+ * Free stream info
+ */
+void redlite_free_stream_info(struct RedliteStreamInfo info);
+
+/**
+ * Free history entry array
+ */
+void redlite_free_history_entry_array(struct RedliteHistoryEntryArray arr);
+
+/**
+ * Free geo member array
+ */
+void redlite_free_geo_member_array(struct RedliteGeoMemberArray arr);
+
+/**
+ * Free geo position array
+ */
+void redlite_free_geo_pos_array(struct RedliteGeoPosArray arr);
 
 /**
  * GET key
@@ -591,6 +719,51 @@ int64_t redlite_linsert(struct RedliteDb *db,
                         size_t element_len);
 
 /**
+ * LPUSHX key element [element ...]
+ * Returns new length or -1 on error
+ */
+int64_t redlite_lpushx(struct RedliteDb *db,
+                       const char *key,
+                       const struct RedliteBytes *values,
+                       size_t values_len);
+
+/**
+ * RPUSHX key element [element ...]
+ * Returns new length or -1 on error
+ */
+int64_t redlite_rpushx(struct RedliteDb *db,
+                       const char *key,
+                       const struct RedliteBytes *values,
+                       size_t values_len);
+
+/**
+ * LMOVE source destination LEFT|RIGHT LEFT|RIGHT
+ * wherefrom: 0 for LEFT, 1 for RIGHT
+ * whereto: 0 for LEFT, 1 for RIGHT
+ * Returns moved element or NULL on error/empty
+ */
+struct RedliteBytes redlite_lmove(struct RedliteDb *db,
+                                  const char *source,
+                                  const char *destination,
+                                  int wherefrom,
+                                  int whereto);
+
+/**
+ * LPOS key element [RANK rank] [COUNT count] [MAXLEN maxlen]
+ * Returns array of positions (use -1 for not found)
+ * rank: optional rank parameter (0 for None)
+ * count: number of matches to return (0 for all matches)
+ * maxlen: max elements to scan (0 for no limit)
+ */
+struct RedliteBytesArray redlite_lpos(struct RedliteDb *db,
+                                      const char *key,
+                                      const uint8_t *element,
+                                      size_t element_len,
+                                      int64_t rank,
+                                      size_t count,
+                                      size_t maxlen);
+
+/**
  * SADD key member [member ...]
  */
 int64_t redlite_sadd(struct RedliteDb *db,
@@ -873,6 +1046,34 @@ struct RedliteZScanResult redlite_zscan(struct RedliteDb *db,
                                         size_t count);
 
 /**
+ * ZINTERSTORE destination numkeys key [key ...] [WEIGHTS weight [weight ...]] [AGGREGATE SUM|MIN|MAX]
+ * Returns number of elements in result, or -1 on error
+ * weights: optional array (NULL for default 1.0), must match keys_len if provided
+ * aggregate: optional string "SUM", "MIN", or "MAX" (NULL for default SUM)
+ */
+int64_t redlite_zinterstore(struct RedliteDb *db,
+                            const char *destination,
+                            const char *const *keys,
+                            size_t keys_len,
+                            const double *weights,
+                            size_t weights_len,
+                            const char *aggregate);
+
+/**
+ * ZUNIONSTORE destination numkeys key [key ...] [WEIGHTS weight [weight ...]] [AGGREGATE SUM|MIN|MAX]
+ * Returns number of elements in result, or -1 on error
+ * weights: optional array (NULL for default 1.0), must match keys_len if provided
+ * aggregate: optional string "SUM", "MIN", or "MAX" (NULL for default SUM)
+ */
+int64_t redlite_zunionstore(struct RedliteDb *db,
+                            const char *destination,
+                            const char *const *keys,
+                            size_t keys_len,
+                            const double *weights,
+                            size_t weights_len,
+                            const char *aggregate);
+
+/**
  * XADD key [NOMKSTREAM] [MAXLEN|MINID [=|~] threshold] *|ID field value [field value ...]
  * Returns generated stream ID, or NULL on error
  * If id_ms and id_seq are both 0, auto-generates ID (*)
@@ -986,6 +1187,266 @@ int64_t redlite_xack(struct RedliteDb *db,
                      const char *group,
                      const struct RedliteStreamId *ids,
                      size_t ids_len);
+
+/**
+ * XGROUP SETID key group id
+ * Returns 1 on success, 0 if group doesn't exist, -1 on error
+ */
+int64_t redlite_xgroup_setid(struct RedliteDb *db,
+                             const char *key,
+                             const char *group,
+                             int64_t id_ms,
+                             int64_t id_seq);
+
+/**
+ * XGROUP CREATECONSUMER key group consumer
+ * Returns 1 if consumer was created, 0 if it already existed, -1 on error
+ */
+int64_t redlite_xgroup_createconsumer(struct RedliteDb *db,
+                                      const char *key,
+                                      const char *group,
+                                      const char *consumer);
+
+/**
+ * XGROUP DELCONSUMER key group consumer
+ * Returns number of pending messages consumer had, or -1 on error
+ */
+int64_t redlite_xgroup_delconsumer(struct RedliteDb *db,
+                                   const char *key,
+                                   const char *group,
+                                   const char *consumer);
+
+/**
+ * XCLAIM key group consumer min-idle-time ID [ID ...] [IDLE ms] [TIME ms-unix-time] [RETRYCOUNT count] [FORCE] [JUSTID]
+ * Returns claimed stream entries
+ */
+struct RedliteStreamEntryArray redlite_xclaim(struct RedliteDb *db,
+                                              const char *key,
+                                              const char *group,
+                                              const char *consumer,
+                                              int64_t min_idle_time,
+                                              const struct RedliteStreamId *ids,
+                                              size_t ids_len,
+                                              int64_t idle_ms,
+                                              int64_t time_ms,
+                                              int64_t retry_count,
+                                              int force,
+                                              int justid);
+
+/**
+ * XINFO STREAM key
+ * Returns stream information or NULL on error
+ */
+struct RedliteStreamInfo *redlite_xinfo_stream(struct RedliteDb *db, const char *key);
+
+/**
+ * XINFO GROUPS key
+ * Returns array of consumer group info
+ */
+struct RedliteConsumerGroupInfoArray redlite_xinfo_groups(struct RedliteDb *db, const char *key);
+
+/**
+ * XINFO CONSUMERS key group
+ * Returns array of consumer info
+ */
+struct RedliteConsumerInfoArray redlite_xinfo_consumers(struct RedliteDb *db,
+                                                        const char *key,
+                                                        const char *group);
+
+/**
+ * GEOADD key [NX|XX] [CH] longitude latitude member [longitude latitude member ...]
+ * Returns number of elements added
+ */
+int64_t redlite_geoadd(struct RedliteDb *db,
+                       const char *key,
+                       const struct RedliteGeoMember *members,
+                       size_t members_len,
+                       int nx,
+                       int xx,
+                       int ch);
+
+/**
+ * GEOPOS key member [member ...]
+ * Returns array of positions
+ */
+struct RedliteGeoPosArray redlite_geopos(struct RedliteDb *db,
+                                         const char *key,
+                                         const char *const *members,
+                                         size_t members_len);
+
+/**
+ * GEODIST key member1 member2 [M|KM|FT|MI]
+ * unit: 0=M, 1=KM, 2=FT, 3=MI
+ * Returns distance or -1.0 on error/not found
+ */
+double redlite_geodist(struct RedliteDb *db,
+                       const char *key,
+                       const char *member1,
+                       const char *member2,
+                       int unit);
+
+/**
+ * GEOHASH key member [member ...]
+ * Returns array of geohash strings
+ */
+struct RedliteStringArray redlite_geohash(struct RedliteDb *db,
+                                          const char *key,
+                                          const char *const *members,
+                                          size_t members_len);
+
+/**
+ * GEOSEARCH key FROMMEMBER member|FROMLONLAT lon lat BYRADIUS radius|BYBOX width height M|KM|FT|MI [ASC|DESC] [COUNT count] [WITHDIST]
+ * Simplified: searches by radius from a point
+ * from_member: if not NULL, search from this member; else use from_lon/from_lat
+ * radius: search radius
+ * unit: 0=M, 1=KM, 2=FT, 3=MI
+ * count: limit results (0 for no limit)
+ * withdist: 1 to include distance in results
+ */
+struct RedliteGeoMemberArray redlite_geosearch(struct RedliteDb *db,
+                                               const char *key,
+                                               const char *from_member,
+                                               double from_lon,
+                                               double from_lat,
+                                               double radius,
+                                               int unit,
+                                               int64_t count,
+                                               int withdist);
+
+/**
+ * GEOSEARCHSTORE dest source <GEOSEARCH args>
+ * Returns number of elements stored
+ */
+int64_t redlite_geosearchstore(struct RedliteDb *db,
+                               const char *dest,
+                               const char *src,
+                               const char *from_member,
+                               double from_lon,
+                               double from_lat,
+                               double radius,
+                               int unit,
+                               int64_t count,
+                               int store_dist);
+
+/**
+ * FT.CREATE - Simplified: create search index
+ * For simplicity, this is a stub that returns success (full implementation complex)
+ */
+int64_t redlite_ft_create(struct RedliteDb *db, const char *index_name);
+
+/**
+ * FT.DROPINDEX - Drop search index
+ */
+int64_t redlite_ft_dropindex(struct RedliteDb *db, const char *index_name, int delete_docs);
+
+/**
+ * FT._LIST - List all search indexes
+ */
+struct RedliteStringArray redlite_ft_list(struct RedliteDb *db);
+
+/**
+ * FT.INFO - stub
+ */
+int64_t redlite_ft_info(struct RedliteDb *db, const char *_index);
+
+/**
+ * FT.ALTER - stub
+ */
+int64_t redlite_ft_alter(struct RedliteDb *db, const char *_index);
+
+/**
+ * FT.SEARCH - stub
+ */
+int64_t redlite_ft_search(struct RedliteDb *db, const char *_index, const char *_query);
+
+/**
+ * FT.ALIASADD - stub
+ */
+int64_t redlite_ft_aliasadd(struct RedliteDb *db, const char *_alias, const char *_index);
+
+/**
+ * FT.ALIASDEL - stub
+ */
+int64_t redlite_ft_aliasdel(struct RedliteDb *db, const char *_alias);
+
+/**
+ * FT.ALIASUPDATE - stub
+ */
+int64_t redlite_ft_aliasupdate(struct RedliteDb *db, const char *_alias, const char *_index);
+
+/**
+ * FT.SYNUPDATE - stub
+ */
+int64_t redlite_ft_synupdate(struct RedliteDb *db, const char *_index);
+
+/**
+ * FT.SYNDUMP - stub
+ */
+int64_t redlite_ft_syndump(struct RedliteDb *db, const char *_index);
+
+/**
+ * FT.SUGADD - stub
+ */
+int64_t redlite_ft_sugadd(struct RedliteDb *db,
+                          const char *_key,
+                          const char *_string,
+                          double _score);
+
+/**
+ * FT.SUGGET - stub
+ */
+int64_t redlite_ft_sugget(struct RedliteDb *db, const char *_key, const char *_prefix);
+
+/**
+ * FT.SUGDEL - stub
+ */
+int64_t redlite_ft_sugdel(struct RedliteDb *db, const char *_key, const char *_string);
+
+/**
+ * FT.SUGLEN - stub
+ */
+int64_t redlite_ft_suglen(struct RedliteDb *db, const char *_key);
+
+/**
+ * HISTORY GET key [LIMIT limit] [SINCE timestamp] [UNTIL timestamp]
+ * Returns array of history entries for the key
+ */
+struct RedliteHistoryEntryArray redlite_history_get(struct RedliteDb *db,
+                                                    const char *key,
+                                                    int64_t limit,
+                                                    int64_t since,
+                                                    int64_t until);
+
+/**
+ * HISTORY GETAT key timestamp
+ * Returns value of key at a specific timestamp (time-travel query)
+ */
+struct RedliteBytes redlite_history_getat(struct RedliteDb *db, const char *key, int64_t timestamp);
+
+/**
+ * HISTORY LIST [PATTERN pattern]
+ * Returns list of all keys that have history tracking enabled
+ */
+struct RedliteStringArray redlite_history_list(struct RedliteDb *db, const char *pattern);
+
+/**
+ * HISTORY STATS [key]
+ * Returns statistics about history tracking
+ * For now returns a simplified count as i64 (enhance later if needed)
+ */
+int64_t redlite_history_stats(struct RedliteDb *db, const char *key);
+
+/**
+ * HISTORY CLEAR key [BEFORE timestamp]
+ * Clear history entries for a key, returns number of entries deleted
+ */
+int64_t redlite_history_clear(struct RedliteDb *db, const char *key, int64_t before);
+
+/**
+ * HISTORY PRUNE before_timestamp
+ * Prune old history entries across all keys, returns number deleted
+ */
+int64_t redlite_history_prune(struct RedliteDb *db, int64_t before_timestamp);
 
 /**
  * VACUUM - compact the database
