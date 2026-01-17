@@ -17,7 +17,7 @@
 //!
 //! Functions returning data use out-parameters with NULL indicating no value.
 
-use libc::{c_char, c_int, c_void, size_t};
+use libc::{c_char, c_int, size_t};
 use redlite::Db;
 use std::ffi::{CStr, CString};
 use std::ptr;
@@ -78,6 +78,73 @@ pub struct RedliteZMember {
     pub score: f64,
     pub member: *const u8,
     pub member_len: size_t,
+}
+
+/// Stream ID (ms-seq)
+#[repr(C)]
+pub struct RedliteStreamId {
+    pub ms: i64,
+    pub seq: i64,
+}
+
+/// Stream entry field
+#[repr(C)]
+pub struct RedliteStreamField {
+    pub key: *const u8,
+    pub key_len: size_t,
+    pub value: *const u8,
+    pub value_len: size_t,
+}
+
+/// Stream entry
+#[repr(C)]
+pub struct RedliteStreamEntry {
+    pub id: RedliteStreamId,
+    pub fields: *mut RedliteStreamField,
+    pub fields_len: size_t,
+}
+
+/// Stream entry array
+#[repr(C)]
+pub struct RedliteStreamEntryArray {
+    pub entries: *mut RedliteStreamEntry,
+    pub len: size_t,
+}
+
+/// SCAN result
+#[repr(C)]
+pub struct RedliteScanResult {
+    pub cursor: *mut c_char,
+    pub keys: RedliteStringArray,
+}
+
+/// HSCAN result (field-value pairs)
+#[repr(C)]
+pub struct RedliteHScanResult {
+    pub cursor: *mut c_char,
+    pub pairs: RedliteBytesArray, // Flattened: [field1, value1, field2, value2, ...]
+}
+
+/// SSCAN result
+#[repr(C)]
+pub struct RedliteSScanResult {
+    pub cursor: *mut c_char,
+    pub members: RedliteBytesArray,
+}
+
+/// ZSCAN member with score
+#[repr(C)]
+pub struct RedliteZScanMember {
+    pub member: RedliteBytes,
+    pub score: f64,
+}
+
+/// ZSCAN result
+#[repr(C)]
+pub struct RedliteZScanResult {
+    pub cursor: *mut c_char,
+    pub members: *mut RedliteZScanMember,
+    pub len: size_t,
 }
 
 // =============================================================================
@@ -208,6 +275,64 @@ pub extern "C" fn redlite_free_bytes_array(arr: RedliteBytesArray) {
             let items = Vec::from_raw_parts(arr.items, arr.len, arr.len);
             for item in items {
                 redlite_free_bytes(item);
+            }
+        }
+    }
+}
+
+/// Free a SCAN result
+#[no_mangle]
+pub extern "C" fn redlite_free_scan_result(result: RedliteScanResult) {
+    redlite_free_string(result.cursor);
+    redlite_free_string_array(result.keys);
+}
+
+/// Free an HSCAN result
+#[no_mangle]
+pub extern "C" fn redlite_free_hscan_result(result: RedliteHScanResult) {
+    redlite_free_string(result.cursor);
+    redlite_free_bytes_array(result.pairs);
+}
+
+/// Free an SSCAN result
+#[no_mangle]
+pub extern "C" fn redlite_free_sscan_result(result: RedliteSScanResult) {
+    redlite_free_string(result.cursor);
+    redlite_free_bytes_array(result.members);
+}
+
+/// Free a ZSCAN result
+#[no_mangle]
+pub extern "C" fn redlite_free_zscan_result(result: RedliteZScanResult) {
+    redlite_free_string(result.cursor);
+    if !result.members.is_null() && result.len > 0 {
+        unsafe {
+            let members = Vec::from_raw_parts(result.members, result.len, result.len);
+            for member in members {
+                redlite_free_bytes(member.member);
+            }
+        }
+    }
+}
+
+/// Free a stream entry
+#[no_mangle]
+pub extern "C" fn redlite_free_stream_entry(entry: RedliteStreamEntry) {
+    if !entry.fields.is_null() && entry.fields_len > 0 {
+        unsafe {
+            drop(Vec::from_raw_parts(entry.fields, entry.fields_len, entry.fields_len));
+        }
+    }
+}
+
+/// Free a stream entry array
+#[no_mangle]
+pub extern "C" fn redlite_free_stream_entry_array(arr: RedliteStreamEntryArray) {
+    if !arr.entries.is_null() && arr.len > 0 {
+        unsafe {
+            let entries = Vec::from_raw_parts(arr.entries, arr.len, arr.len);
+            for entry in entries {
+                redlite_free_stream_entry(entry);
             }
         }
     }
@@ -779,6 +904,91 @@ pub extern "C" fn redlite_mset(
         Err(e) => {
             set_error(format!("MSET failed: {}", e));
             -1
+        }
+    }
+}
+
+/// SETNX key value
+/// Returns 1 if key was set, 0 if key already exists
+#[no_mangle]
+pub extern "C" fn redlite_setnx(
+    db: *mut RedliteDb,
+    key: *const c_char,
+    value: *const u8,
+    value_len: size_t,
+) -> c_int {
+    clear_error();
+    let handle = get_db!(db);
+
+    let key = match cstr_to_str(key) {
+        Ok(k) => k,
+        Err(e) => {
+            set_error(e);
+            return -1;
+        }
+    };
+
+    let value = bytes_to_vec(value, value_len);
+
+    let guard = handle.db.lock().unwrap();
+    match guard.set_opts(key, &value, redlite::SetOptions::new().nx()) {
+        Ok(true) => 1,
+        Ok(false) => 0,
+        Err(e) => {
+            set_error(format!("SETNX failed: {}", e));
+            -1
+        }
+    }
+}
+
+/// GETEX key [EX seconds | PX milliseconds | EXAT unix-time-seconds | PXAT unix-time-milliseconds | PERSIST]
+/// ex_seconds: >0 to set EX, 0 to ignore
+/// px_milliseconds: >0 to set PX, 0 to ignore
+/// exat_timestamp: >0 to set EXAT, 0 to ignore
+/// pxat_timestamp: >0 to set PXAT, 0 to ignore
+/// persist: 1 to set PERSIST, 0 to ignore
+/// Only one option should be non-zero/non-false
+#[no_mangle]
+pub extern "C" fn redlite_getex(
+    db: *mut RedliteDb,
+    key: *const c_char,
+    ex_seconds: i64,
+    px_milliseconds: i64,
+    exat_timestamp: i64,
+    pxat_timestamp: i64,
+    persist: c_int,
+) -> RedliteBytes {
+    clear_error();
+    let handle = get_db_ret!(db, RedliteBytes { data: ptr::null_mut(), len: 0 });
+
+    let key = match cstr_to_str(key) {
+        Ok(k) => k,
+        Err(e) => {
+            set_error(e);
+            return RedliteBytes { data: ptr::null_mut(), len: 0 };
+        }
+    };
+
+    let option = if ex_seconds > 0 {
+        Some(redlite::GetExOption::Ex(ex_seconds))
+    } else if px_milliseconds > 0 {
+        Some(redlite::GetExOption::Px(px_milliseconds))
+    } else if exat_timestamp > 0 {
+        Some(redlite::GetExOption::ExAt(exat_timestamp))
+    } else if pxat_timestamp > 0 {
+        Some(redlite::GetExOption::PxAt(pxat_timestamp))
+    } else if persist != 0 {
+        Some(redlite::GetExOption::Persist)
+    } else {
+        None
+    };
+
+    let guard = handle.db.lock().unwrap();
+    match guard.getex(key, option) {
+        Ok(v) => opt_vec_to_bytes(v),
+        Err(e) => {
+            set_error(format!("GETEX failed: {}", e));
+            RedliteBytes { data: ptr::null_mut(), len: 0 }
         }
     }
 }
@@ -1591,6 +1801,86 @@ pub extern "C" fn redlite_hmget(
     }
 }
 
+/// HSETNX key field value
+/// Returns 1 if field was set, 0 if field already exists
+#[no_mangle]
+pub extern "C" fn redlite_hsetnx(
+    db: *mut RedliteDb,
+    key: *const c_char,
+    field: *const c_char,
+    value: *const u8,
+    value_len: size_t,
+) -> c_int {
+    clear_error();
+    let handle = get_db!(db);
+
+    let key = match cstr_to_str(key) {
+        Ok(k) => k,
+        Err(e) => {
+            set_error(e);
+            return -1;
+        }
+    };
+
+    let field = match cstr_to_str(field) {
+        Ok(f) => f,
+        Err(e) => {
+            set_error(e);
+            return -1;
+        }
+    };
+
+    let value = bytes_to_vec(value, value_len);
+
+    let guard = handle.db.lock().unwrap();
+    match guard.hsetnx(key, field, &value) {
+        Ok(true) => 1,
+        Ok(false) => 0,
+        Err(e) => {
+            set_error(format!("HSETNX failed: {}", e));
+            -1
+        }
+    }
+}
+
+/// HINCRBYFLOAT key field increment
+/// Returns result as string (caller must free), NULL on error
+#[no_mangle]
+pub extern "C" fn redlite_hincrbyfloat(
+    db: *mut RedliteDb,
+    key: *const c_char,
+    field: *const c_char,
+    increment: f64,
+) -> *mut c_char {
+    clear_error();
+    let handle = get_db_ret!(db, ptr::null_mut());
+
+    let key = match cstr_to_str(key) {
+        Ok(k) => k,
+        Err(e) => {
+            set_error(e);
+            return ptr::null_mut();
+        }
+    };
+
+    let field = match cstr_to_str(field) {
+        Ok(f) => f,
+        Err(e) => {
+            set_error(e);
+            return ptr::null_mut();
+        }
+    };
+
+    let guard = handle.db.lock().unwrap();
+    match guard.hincrbyfloat(key, field, increment) {
+        Ok(v) => CString::new(v).unwrap().into_raw(),
+        Err(e) => {
+            set_error(format!("HINCRBYFLOAT failed: {}", e));
+            ptr::null_mut()
+        }
+    }
+}
+
 // =============================================================================
 // List Commands
 // =============================================================================
@@ -1832,6 +2122,137 @@ pub extern "C" fn redlite_lindex(
     }
 }
 
+/// LSET key index value
+#[no_mangle]
+pub extern "C" fn redlite_lset(
+    db: *mut RedliteDb,
+    key: *const c_char,
+    index: i64,
+    value: *const u8,
+    value_len: size_t,
+) -> c_int {
+    clear_error();
+    let handle = get_db!(db);
+
+    let key = match cstr_to_str(key) {
+        Ok(k) => k,
+        Err(e) => {
+            set_error(e);
+            return -1;
+        }
+    };
+
+    let value = bytes_to_vec(value, value_len);
+
+    let guard = handle.db.lock().unwrap();
+    match guard.lset(key, index, &value) {
+        Ok(()) => 0,
+        Err(e) => {
+            set_error(format!("LSET failed: {}", e));
+            -1
+        }
+    }
+}
+
+/// LTRIM key start stop
+#[no_mangle]
+pub extern "C" fn redlite_ltrim(
+    db: *mut RedliteDb,
+    key: *const c_char,
+    start: i64,
+    stop: i64,
+) -> c_int {
+    clear_error();
+    let handle = get_db!(db);
+
+    let key = match cstr_to_str(key) {
+        Ok(k) => k,
+        Err(e) => {
+            set_error(e);
+            return -1;
+        }
+    };
+
+    let guard = handle.db.lock().unwrap();
+    match guard.ltrim(key, start, stop) {
+        Ok(()) => 0,
+        Err(e) => {
+            set_error(format!("LTRIM failed: {}", e));
+            -1
+        }
+    }
+}
+
+/// LREM key count element
+/// Returns number of elements removed
+#[no_mangle]
+pub extern "C" fn redlite_lrem(
+    db: *mut RedliteDb,
+    key: *const c_char,
+    count: i64,
+    element: *const u8,
+    element_len: size_t,
+) -> i64 {
+    clear_error();
+    let handle = get_db_ret!(db, -1);
+
+    let key = match cstr_to_str(key) {
+        Ok(k) => k,
+        Err(e) => {
+            set_error(e);
+            return -1;
+        }
+    };
+
+    let element = bytes_to_vec(element, element_len);
+
+    let guard = handle.db.lock().unwrap();
+    match guard.lrem(key, count, &element) {
+        Ok(n) => n,
+        Err(e) => {
+            set_error(format!("LREM failed: {}", e));
+            -1
+        }
+    }
+}
+
+/// LINSERT key BEFORE|AFTER pivot element
+/// before: 1 for BEFORE, 0 for AFTER
+/// Returns new length, -1 if pivot not found or on error
+#[no_mangle]
+pub extern "C" fn redlite_linsert(
+    db: *mut RedliteDb,
+    key: *const c_char,
+    before: c_int,
+    pivot: *const u8,
+    pivot_len: size_t,
+    element: *const u8,
+    element_len: size_t,
+) -> i64 {
+    clear_error();
+    let handle = get_db_ret!(db, -1);
+
+    let key = match cstr_to_str(key) {
+        Ok(k) => k,
+        Err(e) => {
+            set_error(e);
+            return -1;
+        }
+    };
+
+    let pivot = bytes_to_vec(pivot, pivot_len);
+    let element = bytes_to_vec(element, element_len);
+
+    let guard = handle.db.lock().unwrap();
+    match guard.linsert(key, before != 0, &pivot, &element) {
+        Ok(n) => n,
+        Err(e) => {
+            set_error(format!("LINSERT failed: {}", e));
+            -1
+        }
+    }
+}
+
 // =============================================================================
 // Set Commands
 // =============================================================================
@@ -2005,6 +2426,367 @@ pub extern "C" fn redlite_scard(db: *mut RedliteDb, key: *const c_char) -> i64 {
         Ok(n) => n,
         Err(e) => {
             set_error(format!("SCARD failed: {}", e));
+            -1
+        }
+    }
+}
+
+/// SPOP key [count]
+#[no_mangle]
+pub extern "C" fn redlite_spop(
+    db: *mut RedliteDb,
+    key: *const c_char,
+    count: size_t,
+) -> RedliteBytesArray {
+    clear_error();
+    let handle = get_db_ret!(db, RedliteBytesArray { items: ptr::null_mut(), len: 0 });
+
+    let key = match cstr_to_str(key) {
+        Ok(k) => k,
+        Err(e) => {
+            set_error(e);
+            return RedliteBytesArray { items: ptr::null_mut(), len: 0 };
+        }
+    };
+
+    let count_opt = if count > 0 { Some(count) } else { None };
+
+    let guard = handle.db.lock().unwrap();
+    match guard.spop(key, count_opt) {
+        Ok(members) => vecs_to_bytes_array(members),
+        Err(e) => {
+            set_error(format!("SPOP failed: {}", e));
+            RedliteBytesArray { items: ptr::null_mut(), len: 0 }
+        }
+    }
+}
+
+/// SRANDMEMBER key [count]
+/// If count is positive, returns up to count distinct elements
+/// If count is negative, may return duplicates
+#[no_mangle]
+pub extern "C" fn redlite_srandmember(
+    db: *mut RedliteDb,
+    key: *const c_char,
+    count: i64,
+) -> RedliteBytesArray {
+    clear_error();
+    let handle = get_db_ret!(db, RedliteBytesArray { items: ptr::null_mut(), len: 0 });
+
+    let key = match cstr_to_str(key) {
+        Ok(k) => k,
+        Err(e) => {
+            set_error(e);
+            return RedliteBytesArray { items: ptr::null_mut(), len: 0 };
+        }
+    };
+
+    let count_opt = if count != 0 { Some(count) } else { None };
+
+    let guard = handle.db.lock().unwrap();
+    match guard.srandmember(key, count_opt) {
+        Ok(members) => vecs_to_bytes_array(members),
+        Err(e) => {
+            set_error(format!("SRANDMEMBER failed: {}", e));
+            RedliteBytesArray { items: ptr::null_mut(), len: 0 }
+        }
+    }
+}
+
+/// SDIFF key [key ...]
+#[no_mangle]
+pub extern "C" fn redlite_sdiff(
+    db: *mut RedliteDb,
+    keys: *const *const c_char,
+    keys_len: size_t,
+) -> RedliteBytesArray {
+    clear_error();
+    let handle = get_db_ret!(db, RedliteBytesArray { items: ptr::null_mut(), len: 0 });
+
+    if keys.is_null() || keys_len == 0 {
+        return RedliteBytesArray { items: ptr::null_mut(), len: 0 };
+    }
+
+    let keys_slice = unsafe { slice::from_raw_parts(keys, keys_len) };
+    let keys_vec: Result<Vec<&str>, _> = keys_slice
+        .iter()
+        .map(|&k| cstr_to_str(k))
+        .collect();
+
+    let keys_vec = match keys_vec {
+        Ok(v) => v,
+        Err(e) => {
+            set_error(e);
+            return RedliteBytesArray { items: ptr::null_mut(), len: 0 };
+        }
+    };
+
+    let guard = handle.db.lock().unwrap();
+    match guard.sdiff(&keys_vec) {
+        Ok(members) => vecs_to_bytes_array(members),
+        Err(e) => {
+            set_error(format!("SDIFF failed: {}", e));
+            RedliteBytesArray { items: ptr::null_mut(), len: 0 }
+        }
+    }
+}
+
+/// SINTER key [key ...]
+#[no_mangle]
+pub extern "C" fn redlite_sinter(
+    db: *mut RedliteDb,
+    keys: *const *const c_char,
+    keys_len: size_t,
+) -> RedliteBytesArray {
+    clear_error();
+    let handle = get_db_ret!(db, RedliteBytesArray { items: ptr::null_mut(), len: 0 });
+
+    if keys.is_null() || keys_len == 0 {
+        return RedliteBytesArray { items: ptr::null_mut(), len: 0 };
+    }
+
+    let keys_slice = unsafe { slice::from_raw_parts(keys, keys_len) };
+    let keys_vec: Result<Vec<&str>, _> = keys_slice
+        .iter()
+        .map(|&k| cstr_to_str(k))
+        .collect();
+
+    let keys_vec = match keys_vec {
+        Ok(v) => v,
+        Err(e) => {
+            set_error(e);
+            return RedliteBytesArray { items: ptr::null_mut(), len: 0 };
+        }
+    };
+
+    let guard = handle.db.lock().unwrap();
+    match guard.sinter(&keys_vec) {
+        Ok(members) => vecs_to_bytes_array(members),
+        Err(e) => {
+            set_error(format!("SINTER failed: {}", e));
+            RedliteBytesArray { items: ptr::null_mut(), len: 0 }
+        }
+    }
+}
+
+/// SUNION key [key ...]
+#[no_mangle]
+pub extern "C" fn redlite_sunion(
+    db: *mut RedliteDb,
+    keys: *const *const c_char,
+    keys_len: size_t,
+) -> RedliteBytesArray {
+    clear_error();
+    let handle = get_db_ret!(db, RedliteBytesArray { items: ptr::null_mut(), len: 0 });
+
+    if keys.is_null() || keys_len == 0 {
+        return RedliteBytesArray { items: ptr::null_mut(), len: 0 };
+    }
+
+    let keys_slice = unsafe { slice::from_raw_parts(keys, keys_len) };
+    let keys_vec: Result<Vec<&str>, _> = keys_slice
+        .iter()
+        .map(|&k| cstr_to_str(k))
+        .collect();
+
+    let keys_vec = match keys_vec {
+        Ok(v) => v,
+        Err(e) => {
+            set_error(e);
+            return RedliteBytesArray { items: ptr::null_mut(), len: 0 };
+        }
+    };
+
+    let guard = handle.db.lock().unwrap();
+    match guard.sunion(&keys_vec) {
+        Ok(members) => vecs_to_bytes_array(members),
+        Err(e) => {
+            set_error(format!("SUNION failed: {}", e));
+            RedliteBytesArray { items: ptr::null_mut(), len: 0 }
+        }
+    }
+}
+
+/// SMOVE source destination member
+/// Returns 1 if moved, 0 if member not in source
+#[no_mangle]
+pub extern "C" fn redlite_smove(
+    db: *mut RedliteDb,
+    source: *const c_char,
+    destination: *const c_char,
+    member: *const u8,
+    member_len: size_t,
+) -> c_int {
+    clear_error();
+    let handle = get_db!(db);
+
+    let source = match cstr_to_str(source) {
+        Ok(k) => k,
+        Err(e) => {
+            set_error(e);
+            return -1;
+        }
+    };
+
+    let destination = match cstr_to_str(destination) {
+        Ok(k) => k,
+        Err(e) => {
+            set_error(e);
+            return -1;
+        }
+    };
+
+    let member = bytes_to_vec(member, member_len);
+
+    let guard = handle.db.lock().unwrap();
+    match guard.smove(source, destination, &member) {
+        Ok(n) => n as c_int,
+        Err(e) => {
+            set_error(format!("SMOVE failed: {}", e));
+            -1
+        }
+    }
+}
+
+/// SDIFFSTORE destination key [key ...]
+/// Returns size of resulting set
+#[no_mangle]
+pub extern "C" fn redlite_sdiffstore(
+    db: *mut RedliteDb,
+    destination: *const c_char,
+    keys: *const *const c_char,
+    keys_len: size_t,
+) -> i64 {
+    clear_error();
+    let handle = get_db_ret!(db, -1);
+
+    let destination = match cstr_to_str(destination) {
+        Ok(k) => k,
+        Err(e) => {
+            set_error(e);
+            return -1;
+        }
+    };
+
+    if keys.is_null() || keys_len == 0 {
+        return 0;
+    }
+
+    let keys_slice = unsafe { slice::from_raw_parts(keys, keys_len) };
+    let keys_vec: Result<Vec<&str>, _> = keys_slice
+        .iter()
+        .map(|&k| cstr_to_str(k))
+        .collect();
+
+    let keys_vec = match keys_vec {
+        Ok(v) => v,
+        Err(e) => {
+            set_error(e);
+            return -1;
+        }
+    };
+
+    let guard = handle.db.lock().unwrap();
+    match guard.sdiffstore(destination, &keys_vec) {
+        Ok(n) => n,
+        Err(e) => {
+            set_error(format!("SDIFFSTORE failed: {}", e));
+            -1
+        }
+    }
+}
+
+/// SINTERSTORE destination key [key ...]
+/// Returns size of resulting set
+#[no_mangle]
+pub extern "C" fn redlite_sinterstore(
+    db: *mut RedliteDb,
+    destination: *const c_char,
+    keys: *const *const c_char,
+    keys_len: size_t,
+) -> i64 {
+    clear_error();
+    let handle = get_db_ret!(db, -1);
+
+    let destination = match cstr_to_str(destination) {
+        Ok(k) => k,
+        Err(e) => {
+            set_error(e);
+            return -1;
+        }
+    };
+
+    if keys.is_null() || keys_len == 0 {
+        return 0;
+    }
+
+    let keys_slice = unsafe { slice::from_raw_parts(keys, keys_len) };
+    let keys_vec: Result<Vec<&str>, _> = keys_slice
+        .iter()
+        .map(|&k| cstr_to_str(k))
+        .collect();
+
+    let keys_vec = match keys_vec {
+        Ok(v) => v,
+        Err(e) => {
+            set_error(e);
+            return -1;
+        }
+    };
+
+    let guard = handle.db.lock().unwrap();
+    match guard.sinterstore(destination, &keys_vec) {
+        Ok(n) => n,
+        Err(e) => {
+            set_error(format!("SINTERSTORE failed: {}", e));
+            -1
+        }
+    }
+}
+
+/// SUNIONSTORE destination key [key ...]
+/// Returns size of resulting set
+#[no_mangle]
+pub extern "C" fn redlite_sunionstore(
+    db: *mut RedliteDb,
+    destination: *const c_char,
+    keys: *const *const c_char,
+    keys_len: size_t,
+) -> i64 {
+    clear_error();
+    let handle = get_db_ret!(db, -1);
+
+    let destination = match cstr_to_str(destination) {
+        Ok(k) => k,
+        Err(e) => {
+            set_error(e);
+            return -1;
+        }
+    };
+
+    if keys.is_null() || keys_len == 0 {
+        return 0;
+    }
+
+    let keys_slice = unsafe { slice::from_raw_parts(keys, keys_len) };
+    let keys_vec: Result<Vec<&str>, _> = keys_slice
+        .iter()
+        .map(|&k| cstr_to_str(k))
+        .collect();
+
+    let keys_vec = match keys_vec {
+        Ok(v) => v,
+        Err(e) => {
+            set_error(e);
+            return -1;
+        }
+    };
+
+    let guard = handle.db.lock().unwrap();
+    match guard.sunionstore(destination, &keys_vec) {
+        Ok(n) => n,
+        Err(e) => {
+            set_error(format!("SUNIONSTORE failed: {}", e));
             -1
         }
     }
@@ -2314,6 +3096,1367 @@ pub extern "C" fn redlite_zrevrange(
         Err(e) => {
             set_error(format!("ZREVRANGE failed: {}", e));
             RedliteBytesArray { items: ptr::null_mut(), len: 0 }
+        }
+    }
+}
+
+/// ZRANK key member
+/// Returns rank (0-based), -1 if not found, -2 on error
+#[no_mangle]
+pub extern "C" fn redlite_zrank(
+    db: *mut RedliteDb,
+    key: *const c_char,
+    member: *const u8,
+    member_len: size_t,
+) -> i64 {
+    clear_error();
+    let handle = get_db_ret!(db, -2);
+
+    let key = match cstr_to_str(key) {
+        Ok(k) => k,
+        Err(e) => {
+            set_error(e);
+            return -2;
+        }
+    };
+
+    let member = bytes_to_vec(member, member_len);
+
+    let guard = handle.db.lock().unwrap();
+    match guard.zrank(key, &member) {
+        Ok(Some(rank)) => rank,
+        Ok(None) => -1,
+        Err(e) => {
+            set_error(format!("ZRANK failed: {}", e));
+            -2
+        }
+    }
+}
+
+/// ZREVRANK key member
+/// Returns reverse rank (0-based), -1 if not found, -2 on error
+#[no_mangle]
+pub extern "C" fn redlite_zrevrank(
+    db: *mut RedliteDb,
+    key: *const c_char,
+    member: *const u8,
+    member_len: size_t,
+) -> i64 {
+    clear_error();
+    let handle = get_db_ret!(db, -2);
+
+    let key = match cstr_to_str(key) {
+        Ok(k) => k,
+        Err(e) => {
+            set_error(e);
+            return -2;
+        }
+    };
+
+    let member = bytes_to_vec(member, member_len);
+
+    let guard = handle.db.lock().unwrap();
+    match guard.zrevrank(key, &member) {
+        Ok(Some(rank)) => rank,
+        Ok(None) => -1,
+        Err(e) => {
+            set_error(format!("ZREVRANK failed: {}", e));
+            -2
+        }
+    }
+}
+
+/// ZRANGEBYSCORE key min max [offset count]
+/// offset: number of elements to skip (use -1 for no offset)
+/// count: max number of elements to return (use -1 for no limit)
+#[no_mangle]
+pub extern "C" fn redlite_zrangebyscore(
+    db: *mut RedliteDb,
+    key: *const c_char,
+    min: f64,
+    max: f64,
+    offset: i64,
+    count: i64,
+) -> RedliteBytesArray {
+    clear_error();
+    let handle = get_db_ret!(db, RedliteBytesArray { items: ptr::null_mut(), len: 0 });
+
+    let key = match cstr_to_str(key) {
+        Ok(k) => k,
+        Err(e) => {
+            set_error(e);
+            return RedliteBytesArray { items: ptr::null_mut(), len: 0 };
+        }
+    };
+
+    let offset_opt = if offset >= 0 { Some(offset) } else { None };
+    let count_opt = if count >= 0 { Some(count) } else { None };
+
+    let guard = handle.db.lock().unwrap();
+    match guard.zrangebyscore(key, min, max, offset_opt, count_opt) {
+        Ok(members) => {
+            let members_only: Vec<Vec<u8>> = members.into_iter().map(|zm| zm.member).collect();
+            vecs_to_bytes_array(members_only)
+        }
+        Err(e) => {
+            set_error(format!("ZRANGEBYSCORE failed: {}", e));
+            RedliteBytesArray { items: ptr::null_mut(), len: 0 }
+        }
+    }
+}
+
+/// ZREMRANGEBYRANK key start stop
+/// Returns number of elements removed
+#[no_mangle]
+pub extern "C" fn redlite_zremrangebyrank(
+    db: *mut RedliteDb,
+    key: *const c_char,
+    start: i64,
+    stop: i64,
+) -> i64 {
+    clear_error();
+    let handle = get_db_ret!(db, -1);
+
+    let key = match cstr_to_str(key) {
+        Ok(k) => k,
+        Err(e) => {
+            set_error(e);
+            return -1;
+        }
+    };
+
+    let guard = handle.db.lock().unwrap();
+    match guard.zremrangebyrank(key, start, stop) {
+        Ok(n) => n,
+        Err(e) => {
+            set_error(format!("ZREMRANGEBYRANK failed: {}", e));
+            -1
+        }
+    }
+}
+
+/// ZREMRANGEBYSCORE key min max
+/// Returns number of elements removed
+#[no_mangle]
+pub extern "C" fn redlite_zremrangebyscore(
+    db: *mut RedliteDb,
+    key: *const c_char,
+    min: f64,
+    max: f64,
+) -> i64 {
+    clear_error();
+    let handle = get_db_ret!(db, -1);
+
+    let key = match cstr_to_str(key) {
+        Ok(k) => k,
+        Err(e) => {
+            set_error(e);
+            return -1;
+        }
+    };
+
+    let guard = handle.db.lock().unwrap();
+    match guard.zremrangebyscore(key, min, max) {
+        Ok(n) => n,
+        Err(e) => {
+            set_error(format!("ZREMRANGEBYSCORE failed: {}", e));
+            -1
+        }
+    }
+}
+
+// =============================================================================
+// Bit Operations (Phase 1)
+// =============================================================================
+
+/// GETBIT key offset
+/// Returns bit value (0 or 1), or -1 on error
+#[no_mangle]
+pub extern "C" fn redlite_getbit(
+    db: *mut RedliteDb,
+    key: *const c_char,
+    offset: u64,
+) -> i64 {
+    clear_error();
+    let handle = get_db_ret!(db, -1);
+
+    let key = match cstr_to_str(key) {
+        Ok(k) => k,
+        Err(e) => {
+            set_error(e);
+            return -1;
+        }
+    };
+
+    let guard = handle.db.lock().unwrap();
+    match guard.getbit(key, offset) {
+        Ok(bit) => bit,
+        Err(e) => {
+            set_error(format!("GETBIT failed: {}", e));
+            -1
+        }
+    }
+}
+
+/// SETBIT key offset value
+/// Returns previous bit value (0 or 1), or -1 on error
+#[no_mangle]
+pub extern "C" fn redlite_setbit(
+    db: *mut RedliteDb,
+    key: *const c_char,
+    offset: u64,
+    value: c_int,
+) -> i64 {
+    clear_error();
+    let handle = get_db_ret!(db, -1);
+
+    let key = match cstr_to_str(key) {
+        Ok(k) => k,
+        Err(e) => {
+            set_error(e);
+            return -1;
+        }
+    };
+
+    let guard = handle.db.lock().unwrap();
+    match guard.setbit(key, offset, value != 0) {
+        Ok(prev) => prev,
+        Err(e) => {
+            set_error(format!("SETBIT failed: {}", e));
+            -1
+        }
+    }
+}
+
+/// BITCOUNT key [start end]
+/// Returns number of set bits, or -1 on error
+#[no_mangle]
+pub extern "C" fn redlite_bitcount(
+    db: *mut RedliteDb,
+    key: *const c_char,
+    start: i64,
+    end: i64,
+    use_range: c_int,
+) -> i64 {
+    clear_error();
+    let handle = get_db_ret!(db, -1);
+
+    let key = match cstr_to_str(key) {
+        Ok(k) => k,
+        Err(e) => {
+            set_error(e);
+            return -1;
+        }
+    };
+
+    let start_opt = if use_range != 0 { Some(start) } else { None };
+    let end_opt = if use_range != 0 { Some(end) } else { None };
+
+    let guard = handle.db.lock().unwrap();
+    match guard.bitcount(key, start_opt, end_opt) {
+        Ok(count) => count,
+        Err(e) => {
+            set_error(format!("BITCOUNT failed: {}", e));
+            -1
+        }
+    }
+}
+
+/// BITOP operation destkey key [key ...]
+/// Returns length of result string, or -1 on error
+/// operation: "AND", "OR", "XOR", "NOT"
+#[no_mangle]
+pub extern "C" fn redlite_bitop(
+    db: *mut RedliteDb,
+    operation: *const c_char,
+    destkey: *const c_char,
+    keys: *const *const c_char,
+    keys_len: size_t,
+) -> i64 {
+    clear_error();
+    let handle = get_db_ret!(db, -1);
+
+    let op = match cstr_to_str(operation) {
+        Ok(s) => s,
+        Err(e) => {
+            set_error(e);
+            return -1;
+        }
+    };
+
+    let dest = match cstr_to_str(destkey) {
+        Ok(s) => s,
+        Err(e) => {
+            set_error(e);
+            return -1;
+        }
+    };
+
+    if keys.is_null() || keys_len == 0 {
+        set_error("BITOP requires at least one source key".to_string());
+        return -1;
+    }
+
+    let keys_slice = unsafe { slice::from_raw_parts(keys, keys_len) };
+    let mut key_strs = Vec::new();
+    for &key_ptr in keys_slice {
+        match cstr_to_str(key_ptr) {
+            Ok(s) => key_strs.push(s),
+            Err(e) => {
+                set_error(e);
+                return -1;
+            }
+        }
+    }
+
+    let guard = handle.db.lock().unwrap();
+    match guard.bitop(op, dest, &key_strs) {
+        Ok(len) => len,
+        Err(e) => {
+            set_error(format!("BITOP failed: {}", e));
+            -1
+        }
+    }
+}
+
+// =============================================================================
+// Scan Operations (Phase 1)
+// =============================================================================
+
+/// SCAN cursor [MATCH pattern] [COUNT count]
+/// Returns scan result with next cursor and keys
+#[no_mangle]
+pub extern "C" fn redlite_scan(
+    db: *mut RedliteDb,
+    cursor: *const c_char,
+    pattern: *const c_char,
+    count: size_t,
+) -> RedliteScanResult {
+    clear_error();
+    let handle = get_db_ret!(db, RedliteScanResult {
+        cursor: ptr::null_mut(),
+        keys: RedliteStringArray { strings: ptr::null_mut(), len: 0 },
+    });
+
+    let cursor_str = match cstr_to_str(cursor) {
+        Ok(s) => s,
+        Err(e) => {
+            set_error(e);
+            return RedliteScanResult {
+                cursor: ptr::null_mut(),
+                keys: RedliteStringArray { strings: ptr::null_mut(), len: 0 },
+            };
+        }
+    };
+
+    let pattern_opt = if pattern.is_null() {
+        None
+    } else {
+        match cstr_to_str(pattern) {
+            Ok(s) => Some(s),
+            Err(e) => {
+                set_error(e);
+                return RedliteScanResult {
+                    cursor: ptr::null_mut(),
+                    keys: RedliteStringArray { strings: ptr::null_mut(), len: 0 },
+                };
+            }
+        }
+    };
+
+    let guard = handle.db.lock().unwrap();
+    match guard.scan(cursor_str, pattern_opt, count) {
+        Ok((next_cursor, keys)) => {
+            let cursor_cstr = CString::new(next_cursor).unwrap().into_raw();
+            let keys_array = strings_to_array(keys);
+            RedliteScanResult {
+                cursor: cursor_cstr,
+                keys: keys_array,
+            }
+        }
+        Err(e) => {
+            set_error(format!("SCAN failed: {}", e));
+            RedliteScanResult {
+                cursor: ptr::null_mut(),
+                keys: RedliteStringArray { strings: ptr::null_mut(), len: 0 },
+            }
+        }
+    }
+}
+
+/// HSCAN key cursor [MATCH pattern] [COUNT count]
+/// Returns scan result with next cursor and field-value pairs
+#[no_mangle]
+pub extern "C" fn redlite_hscan(
+    db: *mut RedliteDb,
+    key: *const c_char,
+    cursor: *const c_char,
+    pattern: *const c_char,
+    count: size_t,
+) -> RedliteHScanResult {
+    clear_error();
+    let handle = get_db_ret!(db, RedliteHScanResult {
+        cursor: ptr::null_mut(),
+        pairs: RedliteBytesArray { items: ptr::null_mut(), len: 0 },
+    });
+
+    let key_str = match cstr_to_str(key) {
+        Ok(s) => s,
+        Err(e) => {
+            set_error(e);
+            return RedliteHScanResult {
+                cursor: ptr::null_mut(),
+                pairs: RedliteBytesArray { items: ptr::null_mut(), len: 0 },
+            };
+        }
+    };
+
+    let cursor_str = match cstr_to_str(cursor) {
+        Ok(s) => s,
+        Err(e) => {
+            set_error(e);
+            return RedliteHScanResult {
+                cursor: ptr::null_mut(),
+                pairs: RedliteBytesArray { items: ptr::null_mut(), len: 0 },
+            };
+        }
+    };
+
+    let pattern_opt = if pattern.is_null() {
+        None
+    } else {
+        match cstr_to_str(pattern) {
+            Ok(s) => Some(s),
+            Err(e) => {
+                set_error(e);
+                return RedliteHScanResult {
+                    cursor: ptr::null_mut(),
+                    pairs: RedliteBytesArray { items: ptr::null_mut(), len: 0 },
+                };
+            }
+        }
+    };
+
+    let guard = handle.db.lock().unwrap();
+    match guard.hscan(key_str, cursor_str, pattern_opt, count) {
+        Ok((next_cursor, pairs)) => {
+            let cursor_cstr = CString::new(next_cursor).unwrap().into_raw();
+            // Flatten pairs into [field1, value1, field2, value2, ...]
+            let mut flat_pairs = Vec::new();
+            for (field, value) in pairs {
+                flat_pairs.push(field.into_bytes());
+                flat_pairs.push(value);
+            }
+            let pairs_array = vecs_to_bytes_array(flat_pairs);
+            RedliteHScanResult {
+                cursor: cursor_cstr,
+                pairs: pairs_array,
+            }
+        }
+        Err(e) => {
+            set_error(format!("HSCAN failed: {}", e));
+            RedliteHScanResult {
+                cursor: ptr::null_mut(),
+                pairs: RedliteBytesArray { items: ptr::null_mut(), len: 0 },
+            }
+        }
+    }
+}
+
+/// SSCAN key cursor [MATCH pattern] [COUNT count]
+/// Returns scan result with next cursor and members
+#[no_mangle]
+pub extern "C" fn redlite_sscan(
+    db: *mut RedliteDb,
+    key: *const c_char,
+    cursor: *const c_char,
+    pattern: *const c_char,
+    count: size_t,
+) -> RedliteSScanResult {
+    clear_error();
+    let handle = get_db_ret!(db, RedliteSScanResult {
+        cursor: ptr::null_mut(),
+        members: RedliteBytesArray { items: ptr::null_mut(), len: 0 },
+    });
+
+    let key_str = match cstr_to_str(key) {
+        Ok(s) => s,
+        Err(e) => {
+            set_error(e);
+            return RedliteSScanResult {
+                cursor: ptr::null_mut(),
+                members: RedliteBytesArray { items: ptr::null_mut(), len: 0 },
+            };
+        }
+    };
+
+    let cursor_str = match cstr_to_str(cursor) {
+        Ok(s) => s,
+        Err(e) => {
+            set_error(e);
+            return RedliteSScanResult {
+                cursor: ptr::null_mut(),
+                members: RedliteBytesArray { items: ptr::null_mut(), len: 0 },
+            };
+        }
+    };
+
+    let pattern_opt = if pattern.is_null() {
+        None
+    } else {
+        match cstr_to_str(pattern) {
+            Ok(s) => Some(s),
+            Err(e) => {
+                set_error(e);
+                return RedliteSScanResult {
+                    cursor: ptr::null_mut(),
+                    members: RedliteBytesArray { items: ptr::null_mut(), len: 0 },
+                };
+            }
+        }
+    };
+
+    let guard = handle.db.lock().unwrap();
+    match guard.sscan(key_str, cursor_str, pattern_opt, count) {
+        Ok((next_cursor, members)) => {
+            let cursor_cstr = CString::new(next_cursor).unwrap().into_raw();
+            let members_array = vecs_to_bytes_array(members);
+            RedliteSScanResult {
+                cursor: cursor_cstr,
+                members: members_array,
+            }
+        }
+        Err(e) => {
+            set_error(format!("SSCAN failed: {}", e));
+            RedliteSScanResult {
+                cursor: ptr::null_mut(),
+                members: RedliteBytesArray { items: ptr::null_mut(), len: 0 },
+            }
+        }
+    }
+}
+
+/// ZSCAN key cursor [MATCH pattern] [COUNT count]
+/// Returns scan result with next cursor and member-score pairs
+#[no_mangle]
+pub extern "C" fn redlite_zscan(
+    db: *mut RedliteDb,
+    key: *const c_char,
+    cursor: *const c_char,
+    pattern: *const c_char,
+    count: size_t,
+) -> RedliteZScanResult {
+    clear_error();
+    let handle = get_db_ret!(db, RedliteZScanResult {
+        cursor: ptr::null_mut(),
+        members: ptr::null_mut(),
+        len: 0,
+    });
+
+    let key_str = match cstr_to_str(key) {
+        Ok(s) => s,
+        Err(e) => {
+            set_error(e);
+            return RedliteZScanResult {
+                cursor: ptr::null_mut(),
+                members: ptr::null_mut(),
+                len: 0,
+            };
+        }
+    };
+
+    let cursor_str = match cstr_to_str(cursor) {
+        Ok(s) => s,
+        Err(e) => {
+            set_error(e);
+            return RedliteZScanResult {
+                cursor: ptr::null_mut(),
+                members: ptr::null_mut(),
+                len: 0,
+            };
+        }
+    };
+
+    let pattern_opt = if pattern.is_null() {
+        None
+    } else {
+        match cstr_to_str(pattern) {
+            Ok(s) => Some(s),
+            Err(e) => {
+                set_error(e);
+                return RedliteZScanResult {
+                    cursor: ptr::null_mut(),
+                    members: ptr::null_mut(),
+                    len: 0,
+                };
+            }
+        }
+    };
+
+    let guard = handle.db.lock().unwrap();
+    match guard.zscan(key_str, cursor_str, pattern_opt, count) {
+        Ok((next_cursor, pairs)) => {
+            let cursor_cstr = CString::new(next_cursor).unwrap().into_raw();
+            let len = pairs.len();
+            if len == 0 {
+                return RedliteZScanResult {
+                    cursor: cursor_cstr,
+                    members: ptr::null_mut(),
+                    len: 0,
+                };
+            }
+
+            let mut members: Vec<RedliteZScanMember> = pairs
+                .into_iter()
+                .map(|(member, score)| RedliteZScanMember {
+                    member: vec_to_bytes(member),
+                    score,
+                })
+                .collect();
+
+            let ptr = members.as_mut_ptr();
+            std::mem::forget(members);
+
+            RedliteZScanResult {
+                cursor: cursor_cstr,
+                members: ptr,
+                len,
+            }
+        }
+        Err(e) => {
+            set_error(format!("ZSCAN failed: {}", e));
+            RedliteZScanResult {
+                cursor: ptr::null_mut(),
+                members: ptr::null_mut(),
+                len: 0,
+            }
+        }
+    }
+}
+
+// =============================================================================
+// Stream Operations (Phase 1)
+// =============================================================================
+
+/// XADD key [NOMKSTREAM] [MAXLEN|MINID [=|~] threshold] *|ID field value [field value ...]
+/// Returns generated stream ID, or NULL on error
+/// If id_ms and id_seq are both 0, auto-generates ID (*)
+#[no_mangle]
+pub extern "C" fn redlite_xadd(
+    db: *mut RedliteDb,
+    key: *const c_char,
+    id_ms: i64,
+    id_seq: i64,
+    fields: *const RedliteStreamField,
+    fields_len: size_t,
+    nomkstream: c_int,
+    maxlen: i64,
+    use_maxlen: c_int,
+) -> RedliteStreamId {
+    clear_error();
+    let handle = get_db_ret!(db, RedliteStreamId { ms: -1, seq: -1 });
+
+    let key_str = match cstr_to_str(key) {
+        Ok(s) => s,
+        Err(e) => {
+            set_error(e);
+            return RedliteStreamId { ms: -1, seq: -1 };
+        }
+    };
+
+    if fields.is_null() || fields_len == 0 {
+        set_error("XADD requires at least one field-value pair".to_string());
+        return RedliteStreamId { ms: -1, seq: -1 };
+    }
+
+    let fields_slice = unsafe { slice::from_raw_parts(fields, fields_len) };
+    let mut field_pairs = Vec::new();
+    for field in fields_slice {
+        let key_bytes = bytes_to_vec(field.key, field.key_len);
+        let value_bytes = bytes_to_vec(field.value, field.value_len);
+        field_pairs.push((key_bytes, value_bytes));
+    }
+
+    let field_refs: Vec<(&[u8], &[u8])> = field_pairs
+        .iter()
+        .map(|(k, v)| (k.as_slice(), v.as_slice()))
+        .collect();
+
+    let stream_id = if id_ms == 0 && id_seq == 0 {
+        None
+    } else {
+        Some(redlite::StreamId { ms: id_ms, seq: id_seq })
+    };
+
+    let maxlen_opt = if use_maxlen != 0 { Some(maxlen) } else { None };
+
+    let guard = handle.db.lock().unwrap();
+    match guard.xadd(
+        key_str,
+        stream_id,
+        &field_refs,
+        nomkstream != 0,
+        maxlen_opt,
+        None,
+        false,
+    ) {
+        Ok(Some(id)) => RedliteStreamId { ms: id.ms, seq: id.seq },
+        Ok(None) => {
+            set_error("XADD returned no ID (stream not created)".to_string());
+            RedliteStreamId { ms: -1, seq: -1 }
+        }
+        Err(e) => {
+            set_error(format!("XADD failed: {}", e));
+            RedliteStreamId { ms: -1, seq: -1 }
+        }
+    }
+}
+
+/// XLEN key
+/// Returns stream length, or -1 on error
+#[no_mangle]
+pub extern "C" fn redlite_xlen(db: *mut RedliteDb, key: *const c_char) -> i64 {
+    clear_error();
+    let handle = get_db_ret!(db, -1);
+
+    let key_str = match cstr_to_str(key) {
+        Ok(s) => s,
+        Err(e) => {
+            set_error(e);
+            return -1;
+        }
+    };
+
+    let guard = handle.db.lock().unwrap();
+    match guard.xlen(key_str) {
+        Ok(len) => len,
+        Err(e) => {
+            set_error(format!("XLEN failed: {}", e));
+            -1
+        }
+    }
+}
+
+/// XRANGE key start end [COUNT count]
+/// Returns stream entries in range, or empty array on error
+#[no_mangle]
+pub extern "C" fn redlite_xrange(
+    db: *mut RedliteDb,
+    key: *const c_char,
+    start_ms: i64,
+    start_seq: i64,
+    end_ms: i64,
+    end_seq: i64,
+    count: i64,
+    use_count: c_int,
+) -> RedliteStreamEntryArray {
+    clear_error();
+    let handle = get_db_ret!(db, RedliteStreamEntryArray {
+        entries: ptr::null_mut(),
+        len: 0,
+    });
+
+    let key_str = match cstr_to_str(key) {
+        Ok(s) => s,
+        Err(e) => {
+            set_error(e);
+            return RedliteStreamEntryArray {
+                entries: ptr::null_mut(),
+                len: 0,
+            };
+        }
+    };
+
+    let start_id = redlite::StreamId { ms: start_ms, seq: start_seq };
+    let end_id = redlite::StreamId { ms: end_ms, seq: end_seq };
+    let count_opt = if use_count != 0 { Some(count) } else { None };
+
+    let guard = handle.db.lock().unwrap();
+    match guard.xrange(key_str, start_id, end_id, count_opt) {
+        Ok(entries) => {
+            let len = entries.len();
+            if len == 0 {
+                return RedliteStreamEntryArray {
+                    entries: ptr::null_mut(),
+                    len: 0,
+                };
+            }
+
+            let mut c_entries: Vec<RedliteStreamEntry> = entries
+                .into_iter()
+                .map(|entry| {
+                    let fields_len = entry.fields.len();
+                    let mut fields: Vec<RedliteStreamField> = entry
+                        .fields
+                        .into_iter()
+                        .map(|(k, v)| {
+                            let k_bytes = vec_to_bytes(k);
+                            let v_bytes = vec_to_bytes(v);
+                            RedliteStreamField {
+                                key: k_bytes.data,
+                                key_len: k_bytes.len,
+                                value: v_bytes.data,
+                                value_len: v_bytes.len,
+                            }
+                        })
+                        .collect();
+
+                    let fields_ptr = fields.as_mut_ptr();
+                    std::mem::forget(fields);
+
+                    RedliteStreamEntry {
+                        id: RedliteStreamId {
+                            ms: entry.id.ms,
+                            seq: entry.id.seq,
+                        },
+                        fields: fields_ptr,
+                        fields_len,
+                    }
+                })
+                .collect();
+
+            let ptr = c_entries.as_mut_ptr();
+            std::mem::forget(c_entries);
+
+            RedliteStreamEntryArray { entries: ptr, len }
+        }
+        Err(e) => {
+            set_error(format!("XRANGE failed: {}", e));
+            RedliteStreamEntryArray {
+                entries: ptr::null_mut(),
+                len: 0,
+            }
+        }
+    }
+}
+
+/// XREVRANGE key end start [COUNT count]
+/// Returns stream entries in reverse range
+#[no_mangle]
+pub extern "C" fn redlite_xrevrange(
+    db: *mut RedliteDb,
+    key: *const c_char,
+    end_ms: i64,
+    end_seq: i64,
+    start_ms: i64,
+    start_seq: i64,
+    count: i64,
+    use_count: c_int,
+) -> RedliteStreamEntryArray {
+    clear_error();
+    let handle = get_db_ret!(db, RedliteStreamEntryArray {
+        entries: ptr::null_mut(),
+        len: 0,
+    });
+
+    let key_str = match cstr_to_str(key) {
+        Ok(s) => s,
+        Err(e) => {
+            set_error(e);
+            return RedliteStreamEntryArray {
+                entries: ptr::null_mut(),
+                len: 0,
+            };
+        }
+    };
+
+    let end_id = redlite::StreamId { ms: end_ms, seq: end_seq };
+    let start_id = redlite::StreamId { ms: start_ms, seq: start_seq };
+    let count_opt = if use_count != 0 { Some(count) } else { None };
+
+    let guard = handle.db.lock().unwrap();
+    match guard.xrevrange(key_str, end_id, start_id, count_opt) {
+        Ok(entries) => {
+            let len = entries.len();
+            if len == 0 {
+                return RedliteStreamEntryArray {
+                    entries: ptr::null_mut(),
+                    len: 0,
+                };
+            }
+
+            let mut c_entries: Vec<RedliteStreamEntry> = entries
+                .into_iter()
+                .map(|entry| {
+                    let fields_len = entry.fields.len();
+                    let mut fields: Vec<RedliteStreamField> = entry
+                        .fields
+                        .into_iter()
+                        .map(|(k, v)| {
+                            let k_bytes = vec_to_bytes(k);
+                            let v_bytes = vec_to_bytes(v);
+                            RedliteStreamField {
+                                key: k_bytes.data,
+                                key_len: k_bytes.len,
+                                value: v_bytes.data,
+                                value_len: v_bytes.len,
+                            }
+                        })
+                        .collect();
+
+                    let fields_ptr = fields.as_mut_ptr();
+                    std::mem::forget(fields);
+
+                    RedliteStreamEntry {
+                        id: RedliteStreamId {
+                            ms: entry.id.ms,
+                            seq: entry.id.seq,
+                        },
+                        fields: fields_ptr,
+                        fields_len,
+                    }
+                })
+                .collect();
+
+            let ptr = c_entries.as_mut_ptr();
+            std::mem::forget(c_entries);
+
+            RedliteStreamEntryArray { entries: ptr, len }
+        }
+        Err(e) => {
+            set_error(format!("XREVRANGE failed: {}", e));
+            RedliteStreamEntryArray {
+                entries: ptr::null_mut(),
+                len: 0,
+            }
+        }
+    }
+}
+
+/// XREAD [COUNT count] STREAMS key [key ...] id [id ...]
+/// Note: This is a simplified version. Full XREAD with BLOCK is async-only.
+/// For single-key reads with count. Use XRANGE for more control.
+#[no_mangle]
+pub extern "C" fn redlite_xread(
+    db: *mut RedliteDb,
+    key: *const c_char,
+    id_ms: i64,
+    id_seq: i64,
+    count: i64,
+    use_count: c_int,
+) -> RedliteStreamEntryArray {
+    clear_error();
+    let handle = get_db_ret!(db, RedliteStreamEntryArray {
+        entries: ptr::null_mut(),
+        len: 0,
+    });
+
+    let key_str = match cstr_to_str(key) {
+        Ok(s) => s,
+        Err(e) => {
+            set_error(e);
+            return RedliteStreamEntryArray {
+                entries: ptr::null_mut(),
+                len: 0,
+            };
+        }
+    };
+
+    let start_id = redlite::StreamId { ms: id_ms, seq: id_seq };
+    let count_opt = if use_count != 0 { Some(count) } else { None };
+
+    let guard = handle.db.lock().unwrap();
+    match guard.xread(&[key_str], &[start_id], count_opt) {
+        Ok(results) => {
+            // Results is Vec<(String, Vec<StreamEntry>)>
+            // For simplicity, flatten all entries from all keys
+            let mut all_entries = Vec::new();
+            for (_key, entries) in results {
+                all_entries.extend(entries);
+            }
+
+            let len = all_entries.len();
+            if len == 0 {
+                return RedliteStreamEntryArray {
+                    entries: ptr::null_mut(),
+                    len: 0,
+                };
+            }
+
+            let mut c_entries: Vec<RedliteStreamEntry> = all_entries
+                .into_iter()
+                .map(|entry| {
+                    let fields_len = entry.fields.len();
+                    let mut fields: Vec<RedliteStreamField> = entry
+                        .fields
+                        .into_iter()
+                        .map(|(k, v)| {
+                            let k_bytes = vec_to_bytes(k);
+                            let v_bytes = vec_to_bytes(v);
+                            RedliteStreamField {
+                                key: k_bytes.data,
+                                key_len: k_bytes.len,
+                                value: v_bytes.data,
+                                value_len: v_bytes.len,
+                            }
+                        })
+                        .collect();
+
+                    let fields_ptr = fields.as_mut_ptr();
+                    std::mem::forget(fields);
+
+                    RedliteStreamEntry {
+                        id: RedliteStreamId {
+                            ms: entry.id.ms,
+                            seq: entry.id.seq,
+                        },
+                        fields: fields_ptr,
+                        fields_len,
+                    }
+                })
+                .collect();
+
+            let ptr = c_entries.as_mut_ptr();
+            std::mem::forget(c_entries);
+
+            RedliteStreamEntryArray { entries: ptr, len }
+        }
+        Err(e) => {
+            set_error(format!("XREAD failed: {}", e));
+            RedliteStreamEntryArray {
+                entries: ptr::null_mut(),
+                len: 0,
+            }
+        }
+    }
+}
+
+/// XTRIM key MAXLEN [~] count
+/// Returns number of entries deleted, or -1 on error
+#[no_mangle]
+pub extern "C" fn redlite_xtrim(
+    db: *mut RedliteDb,
+    key: *const c_char,
+    maxlen: i64,
+) -> i64 {
+    clear_error();
+    let handle = get_db_ret!(db, -1);
+
+    let key_str = match cstr_to_str(key) {
+        Ok(s) => s,
+        Err(e) => {
+            set_error(e);
+            return -1;
+        }
+    };
+
+    let guard = handle.db.lock().unwrap();
+    match guard.xtrim(key_str, Some(maxlen), None, false) {
+        Ok(count) => count,
+        Err(e) => {
+            set_error(format!("XTRIM failed: {}", e));
+            -1
+        }
+    }
+}
+
+/// XDEL key id [id ...]
+/// Returns number of entries deleted, or -1 on error
+#[no_mangle]
+pub extern "C" fn redlite_xdel(
+    db: *mut RedliteDb,
+    key: *const c_char,
+    ids: *const RedliteStreamId,
+    ids_len: size_t,
+) -> i64 {
+    clear_error();
+    let handle = get_db_ret!(db, -1);
+
+    let key_str = match cstr_to_str(key) {
+        Ok(s) => s,
+        Err(e) => {
+            set_error(e);
+            return -1;
+        }
+    };
+
+    if ids.is_null() || ids_len == 0 {
+        return 0;
+    }
+
+    let ids_slice = unsafe { slice::from_raw_parts(ids, ids_len) };
+    let stream_ids: Vec<redlite::StreamId> = ids_slice
+        .iter()
+        .map(|id| redlite::StreamId { ms: id.ms, seq: id.seq })
+        .collect();
+
+    let guard = handle.db.lock().unwrap();
+    match guard.xdel(key_str, &stream_ids) {
+        Ok(count) => count,
+        Err(e) => {
+            set_error(format!("XDEL failed: {}", e));
+            -1
+        }
+    }
+}
+
+// =============================================================================
+// Stream Consumer Groups (Phase 1)
+// =============================================================================
+
+/// XGROUP CREATE key group id [MKSTREAM]
+/// Returns 1 on success, 0 on error
+#[no_mangle]
+pub extern "C" fn redlite_xgroup_create(
+    db: *mut RedliteDb,
+    key: *const c_char,
+    group: *const c_char,
+    id_ms: i64,
+    id_seq: i64,
+    mkstream: c_int,
+) -> c_int {
+    clear_error();
+    let handle = get_db_ret!(db, 0);
+
+    let key_str = match cstr_to_str(key) {
+        Ok(s) => s,
+        Err(e) => {
+            set_error(e);
+            return 0;
+        }
+    };
+
+    let group_str = match cstr_to_str(group) {
+        Ok(s) => s,
+        Err(e) => {
+            set_error(e);
+            return 0;
+        }
+    };
+
+    let stream_id = redlite::StreamId { ms: id_ms, seq: id_seq };
+
+    let guard = handle.db.lock().unwrap();
+    match guard.xgroup_create(key_str, group_str, stream_id, mkstream != 0) {
+        Ok(true) => 1,
+        Ok(false) => 0,
+        Err(e) => {
+            set_error(format!("XGROUP CREATE failed: {}", e));
+            0
+        }
+    }
+}
+
+/// XGROUP DESTROY key group
+/// Returns 1 if group was destroyed, 0 otherwise
+#[no_mangle]
+pub extern "C" fn redlite_xgroup_destroy(
+    db: *mut RedliteDb,
+    key: *const c_char,
+    group: *const c_char,
+) -> c_int {
+    clear_error();
+    let handle = get_db_ret!(db, 0);
+
+    let key_str = match cstr_to_str(key) {
+        Ok(s) => s,
+        Err(e) => {
+            set_error(e);
+            return 0;
+        }
+    };
+
+    let group_str = match cstr_to_str(group) {
+        Ok(s) => s,
+        Err(e) => {
+            set_error(e);
+            return 0;
+        }
+    };
+
+    let guard = handle.db.lock().unwrap();
+    match guard.xgroup_destroy(key_str, group_str) {
+        Ok(true) => 1,
+        Ok(false) => 0,
+        Err(e) => {
+            set_error(format!("XGROUP DESTROY failed: {}", e));
+            0
+        }
+    }
+}
+
+/// XREADGROUP GROUP group consumer [COUNT count] STREAMS key id
+/// Note: Simplified single-key version. Use ">" for id to get new messages.
+/// Returns stream entries
+#[no_mangle]
+pub extern "C" fn redlite_xreadgroup(
+    db: *mut RedliteDb,
+    group: *const c_char,
+    consumer: *const c_char,
+    key: *const c_char,
+    id: *const c_char,
+    count: i64,
+    use_count: c_int,
+    noack: c_int,
+) -> RedliteStreamEntryArray {
+    clear_error();
+    let handle = get_db_ret!(db, RedliteStreamEntryArray {
+        entries: ptr::null_mut(),
+        len: 0,
+    });
+
+    let group_str = match cstr_to_str(group) {
+        Ok(s) => s,
+        Err(e) => {
+            set_error(e);
+            return RedliteStreamEntryArray {
+                entries: ptr::null_mut(),
+                len: 0,
+            };
+        }
+    };
+
+    let consumer_str = match cstr_to_str(consumer) {
+        Ok(s) => s,
+        Err(e) => {
+            set_error(e);
+            return RedliteStreamEntryArray {
+                entries: ptr::null_mut(),
+                len: 0,
+            };
+        }
+    };
+
+    let key_str = match cstr_to_str(key) {
+        Ok(s) => s,
+        Err(e) => {
+            set_error(e);
+            return RedliteStreamEntryArray {
+                entries: ptr::null_mut(),
+                len: 0,
+            };
+        }
+    };
+
+    let id_str = match cstr_to_str(id) {
+        Ok(s) => s,
+        Err(e) => {
+            set_error(e);
+            return RedliteStreamEntryArray {
+                entries: ptr::null_mut(),
+                len: 0,
+            };
+        }
+    };
+
+    let count_opt = if use_count != 0 { Some(count) } else { None };
+
+    let guard = handle.db.lock().unwrap();
+    match guard.xreadgroup(
+        group_str,
+        consumer_str,
+        &[key_str],
+        &[id_str],
+        count_opt,
+        noack != 0,
+    ) {
+        Ok(results) => {
+            let mut all_entries = Vec::new();
+            for (_key, entries) in results {
+                all_entries.extend(entries);
+            }
+
+            let len = all_entries.len();
+            if len == 0 {
+                return RedliteStreamEntryArray {
+                    entries: ptr::null_mut(),
+                    len: 0,
+                };
+            }
+
+            let mut c_entries: Vec<RedliteStreamEntry> = all_entries
+                .into_iter()
+                .map(|entry| {
+                    let fields_len = entry.fields.len();
+                    let mut fields: Vec<RedliteStreamField> = entry
+                        .fields
+                        .into_iter()
+                        .map(|(k, v)| {
+                            let k_bytes = vec_to_bytes(k);
+                            let v_bytes = vec_to_bytes(v);
+                            RedliteStreamField {
+                                key: k_bytes.data,
+                                key_len: k_bytes.len,
+                                value: v_bytes.data,
+                                value_len: v_bytes.len,
+                            }
+                        })
+                        .collect();
+
+                    let fields_ptr = fields.as_mut_ptr();
+                    std::mem::forget(fields);
+
+                    RedliteStreamEntry {
+                        id: RedliteStreamId {
+                            ms: entry.id.ms,
+                            seq: entry.id.seq,
+                        },
+                        fields: fields_ptr,
+                        fields_len,
+                    }
+                })
+                .collect();
+
+            let ptr = c_entries.as_mut_ptr();
+            std::mem::forget(c_entries);
+
+            RedliteStreamEntryArray { entries: ptr, len }
+        }
+        Err(e) => {
+            set_error(format!("XREADGROUP failed: {}", e));
+            RedliteStreamEntryArray {
+                entries: ptr::null_mut(),
+                len: 0,
+            }
+        }
+    }
+}
+
+/// XACK key group id [id ...]
+/// Returns number of messages acknowledged, or -1 on error
+#[no_mangle]
+pub extern "C" fn redlite_xack(
+    db: *mut RedliteDb,
+    key: *const c_char,
+    group: *const c_char,
+    ids: *const RedliteStreamId,
+    ids_len: size_t,
+) -> i64 {
+    clear_error();
+    let handle = get_db_ret!(db, -1);
+
+    let key_str = match cstr_to_str(key) {
+        Ok(s) => s,
+        Err(e) => {
+            set_error(e);
+            return -1;
+        }
+    };
+
+    let group_str = match cstr_to_str(group) {
+        Ok(s) => s,
+        Err(e) => {
+            set_error(e);
+            return -1;
+        }
+    };
+
+    if ids.is_null() || ids_len == 0 {
+        return 0;
+    }
+
+    let ids_slice = unsafe { slice::from_raw_parts(ids, ids_len) };
+    let stream_ids: Vec<redlite::StreamId> = ids_slice
+        .iter()
+        .map(|id| redlite::StreamId { ms: id.ms, seq: id.seq })
+        .collect();
+
+    let guard = handle.db.lock().unwrap();
+    match guard.xack(key_str, group_str, &stream_ids) {
+        Ok(count) => count,
+        Err(e) => {
+            set_error(format!("XACK failed: {}", e));
+            -1
         }
     }
 }

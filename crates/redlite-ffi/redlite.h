@@ -43,6 +43,82 @@ typedef struct RedliteBytesArray {
 } RedliteBytesArray;
 
 /**
+ * SCAN result
+ */
+typedef struct RedliteScanResult {
+  char *cursor;
+  struct RedliteStringArray keys;
+} RedliteScanResult;
+
+/**
+ * HSCAN result (field-value pairs)
+ */
+typedef struct RedliteHScanResult {
+  char *cursor;
+  struct RedliteBytesArray pairs;
+} RedliteHScanResult;
+
+/**
+ * SSCAN result
+ */
+typedef struct RedliteSScanResult {
+  char *cursor;
+  struct RedliteBytesArray members;
+} RedliteSScanResult;
+
+/**
+ * ZSCAN member with score
+ */
+typedef struct RedliteZScanMember {
+  struct RedliteBytes member;
+  double score;
+} RedliteZScanMember;
+
+/**
+ * ZSCAN result
+ */
+typedef struct RedliteZScanResult {
+  char *cursor;
+  struct RedliteZScanMember *members;
+  size_t len;
+} RedliteZScanResult;
+
+/**
+ * Stream ID (ms-seq)
+ */
+typedef struct RedliteStreamId {
+  int64_t ms;
+  int64_t seq;
+} RedliteStreamId;
+
+/**
+ * Stream entry field
+ */
+typedef struct RedliteStreamField {
+  const uint8_t *key;
+  size_t key_len;
+  const uint8_t *value;
+  size_t value_len;
+} RedliteStreamField;
+
+/**
+ * Stream entry
+ */
+typedef struct RedliteStreamEntry {
+  struct RedliteStreamId id;
+  struct RedliteStreamField *fields;
+  size_t fields_len;
+} RedliteStreamEntry;
+
+/**
+ * Stream entry array
+ */
+typedef struct RedliteStreamEntryArray {
+  struct RedliteStreamEntry *entries;
+  size_t len;
+} RedliteStreamEntryArray;
+
+/**
  * Key-value pair for hash operations
  */
 typedef struct RedliteKV {
@@ -106,6 +182,36 @@ void redlite_free_string_array(struct RedliteStringArray arr);
  * Free a bytes array returned by redlite functions
  */
 void redlite_free_bytes_array(struct RedliteBytesArray arr);
+
+/**
+ * Free a SCAN result
+ */
+void redlite_free_scan_result(struct RedliteScanResult result);
+
+/**
+ * Free an HSCAN result
+ */
+void redlite_free_hscan_result(struct RedliteHScanResult result);
+
+/**
+ * Free an SSCAN result
+ */
+void redlite_free_sscan_result(struct RedliteSScanResult result);
+
+/**
+ * Free a ZSCAN result
+ */
+void redlite_free_zscan_result(struct RedliteZScanResult result);
+
+/**
+ * Free a stream entry
+ */
+void redlite_free_stream_entry(struct RedliteStreamEntry entry);
+
+/**
+ * Free a stream entry array
+ */
+void redlite_free_stream_entry_array(struct RedliteStreamEntryArray arr);
 
 /**
  * GET key
@@ -213,6 +319,29 @@ struct RedliteBytesArray redlite_mget(struct RedliteDb *db,
  * MSET key value [key value ...]
  */
 int redlite_mset(struct RedliteDb *db, const struct RedliteKV *pairs, size_t pairs_len);
+
+/**
+ * SETNX key value
+ * Returns 1 if key was set, 0 if key already exists
+ */
+int redlite_setnx(struct RedliteDb *db, const char *key, const uint8_t *value, size_t value_len);
+
+/**
+ * GETEX key [EX seconds | PX milliseconds | EXAT unix-time-seconds | PXAT unix-time-milliseconds | PERSIST]
+ * ex_seconds: >0 to set EX, 0 to ignore
+ * px_milliseconds: >0 to set PX, 0 to ignore
+ * exat_timestamp: >0 to set EXAT, 0 to ignore
+ * pxat_timestamp: >0 to set PXAT, 0 to ignore
+ * persist: 1 to set PERSIST, 0 to ignore
+ * Only one option should be non-zero/non-false
+ */
+struct RedliteBytes redlite_getex(struct RedliteDb *db,
+                                  const char *key,
+                                  int64_t ex_seconds,
+                                  int64_t px_milliseconds,
+                                  int64_t exat_timestamp,
+                                  int64_t pxat_timestamp,
+                                  int persist);
 
 /**
  * DEL key [key ...]
@@ -362,6 +491,25 @@ struct RedliteBytesArray redlite_hmget(struct RedliteDb *db,
                                        size_t fields_len);
 
 /**
+ * HSETNX key field value
+ * Returns 1 if field was set, 0 if field already exists
+ */
+int redlite_hsetnx(struct RedliteDb *db,
+                   const char *key,
+                   const char *field,
+                   const uint8_t *value,
+                   size_t value_len);
+
+/**
+ * HINCRBYFLOAT key field increment
+ * Returns result as string (caller must free), NULL on error
+ */
+char *redlite_hincrbyfloat(struct RedliteDb *db,
+                           const char *key,
+                           const char *field,
+                           double increment);
+
+/**
  * LPUSH key value [value ...]
  */
 int64_t redlite_lpush(struct RedliteDb *db,
@@ -406,6 +554,43 @@ struct RedliteBytesArray redlite_lrange(struct RedliteDb *db,
 struct RedliteBytes redlite_lindex(struct RedliteDb *db, const char *key, int64_t index);
 
 /**
+ * LSET key index value
+ */
+int redlite_lset(struct RedliteDb *db,
+                 const char *key,
+                 int64_t index,
+                 const uint8_t *value,
+                 size_t value_len);
+
+/**
+ * LTRIM key start stop
+ */
+int redlite_ltrim(struct RedliteDb *db, const char *key, int64_t start, int64_t stop);
+
+/**
+ * LREM key count element
+ * Returns number of elements removed
+ */
+int64_t redlite_lrem(struct RedliteDb *db,
+                     const char *key,
+                     int64_t count,
+                     const uint8_t *element,
+                     size_t element_len);
+
+/**
+ * LINSERT key BEFORE|AFTER pivot element
+ * before: 1 for BEFORE, 0 for AFTER
+ * Returns new length, -1 if pivot not found or on error
+ */
+int64_t redlite_linsert(struct RedliteDb *db,
+                        const char *key,
+                        int before,
+                        const uint8_t *pivot,
+                        size_t pivot_len,
+                        const uint8_t *element,
+                        size_t element_len);
+
+/**
  * SADD key member [member ...]
  */
 int64_t redlite_sadd(struct RedliteDb *db,
@@ -438,6 +623,76 @@ int redlite_sismember(struct RedliteDb *db,
  * SCARD key
  */
 int64_t redlite_scard(struct RedliteDb *db, const char *key);
+
+/**
+ * SPOP key [count]
+ */
+struct RedliteBytesArray redlite_spop(struct RedliteDb *db, const char *key, size_t count);
+
+/**
+ * SRANDMEMBER key [count]
+ * If count is positive, returns up to count distinct elements
+ * If count is negative, may return duplicates
+ */
+struct RedliteBytesArray redlite_srandmember(struct RedliteDb *db, const char *key, int64_t count);
+
+/**
+ * SDIFF key [key ...]
+ */
+struct RedliteBytesArray redlite_sdiff(struct RedliteDb *db,
+                                       const char *const *keys,
+                                       size_t keys_len);
+
+/**
+ * SINTER key [key ...]
+ */
+struct RedliteBytesArray redlite_sinter(struct RedliteDb *db,
+                                        const char *const *keys,
+                                        size_t keys_len);
+
+/**
+ * SUNION key [key ...]
+ */
+struct RedliteBytesArray redlite_sunion(struct RedliteDb *db,
+                                        const char *const *keys,
+                                        size_t keys_len);
+
+/**
+ * SMOVE source destination member
+ * Returns 1 if moved, 0 if member not in source
+ */
+int redlite_smove(struct RedliteDb *db,
+                  const char *source,
+                  const char *destination,
+                  const uint8_t *member,
+                  size_t member_len);
+
+/**
+ * SDIFFSTORE destination key [key ...]
+ * Returns size of resulting set
+ */
+int64_t redlite_sdiffstore(struct RedliteDb *db,
+                           const char *destination,
+                           const char *const *keys,
+                           size_t keys_len);
+
+/**
+ * SINTERSTORE destination key [key ...]
+ * Returns size of resulting set
+ */
+int64_t redlite_sinterstore(struct RedliteDb *db,
+                            const char *destination,
+                            const char *const *keys,
+                            size_t keys_len);
+
+/**
+ * SUNIONSTORE destination key [key ...]
+ * Returns size of resulting set
+ */
+int64_t redlite_sunionstore(struct RedliteDb *db,
+                            const char *destination,
+                            const char *const *keys,
+                            size_t keys_len);
 
 /**
  * ZADD key score member [score member ...]
@@ -504,6 +759,235 @@ struct RedliteBytesArray redlite_zrevrange(struct RedliteDb *db,
                                            int with_scores);
 
 /**
+ * ZRANK key member
+ * Returns rank (0-based), -1 if not found, -2 on error
+ */
+int64_t redlite_zrank(struct RedliteDb *db,
+                      const char *key,
+                      const uint8_t *member,
+                      size_t member_len);
+
+/**
+ * ZREVRANK key member
+ * Returns reverse rank (0-based), -1 if not found, -2 on error
+ */
+int64_t redlite_zrevrank(struct RedliteDb *db,
+                         const char *key,
+                         const uint8_t *member,
+                         size_t member_len);
+
+/**
+ * ZRANGEBYSCORE key min max [offset count]
+ * offset: number of elements to skip (use -1 for no offset)
+ * count: max number of elements to return (use -1 for no limit)
+ */
+struct RedliteBytesArray redlite_zrangebyscore(struct RedliteDb *db,
+                                               const char *key,
+                                               double min,
+                                               double max,
+                                               int64_t offset,
+                                               int64_t count);
+
+/**
+ * ZREMRANGEBYRANK key start stop
+ * Returns number of elements removed
+ */
+int64_t redlite_zremrangebyrank(struct RedliteDb *db, const char *key, int64_t start, int64_t stop);
+
+/**
+ * ZREMRANGEBYSCORE key min max
+ * Returns number of elements removed
+ */
+int64_t redlite_zremrangebyscore(struct RedliteDb *db, const char *key, double min, double max);
+
+/**
+ * GETBIT key offset
+ * Returns bit value (0 or 1), or -1 on error
+ */
+int64_t redlite_getbit(struct RedliteDb *db, const char *key, uint64_t offset);
+
+/**
+ * SETBIT key offset value
+ * Returns previous bit value (0 or 1), or -1 on error
+ */
+int64_t redlite_setbit(struct RedliteDb *db, const char *key, uint64_t offset, int value);
+
+/**
+ * BITCOUNT key [start end]
+ * Returns number of set bits, or -1 on error
+ */
+int64_t redlite_bitcount(struct RedliteDb *db,
+                         const char *key,
+                         int64_t start,
+                         int64_t end,
+                         int use_range);
+
+/**
+ * BITOP operation destkey key [key ...]
+ * Returns length of result string, or -1 on error
+ * operation: "AND", "OR", "XOR", "NOT"
+ */
+int64_t redlite_bitop(struct RedliteDb *db,
+                      const char *operation,
+                      const char *destkey,
+                      const char *const *keys,
+                      size_t keys_len);
+
+/**
+ * SCAN cursor [MATCH pattern] [COUNT count]
+ * Returns scan result with next cursor and keys
+ */
+struct RedliteScanResult redlite_scan(struct RedliteDb *db,
+                                      const char *cursor,
+                                      const char *pattern,
+                                      size_t count);
+
+/**
+ * HSCAN key cursor [MATCH pattern] [COUNT count]
+ * Returns scan result with next cursor and field-value pairs
+ */
+struct RedliteHScanResult redlite_hscan(struct RedliteDb *db,
+                                        const char *key,
+                                        const char *cursor,
+                                        const char *pattern,
+                                        size_t count);
+
+/**
+ * SSCAN key cursor [MATCH pattern] [COUNT count]
+ * Returns scan result with next cursor and members
+ */
+struct RedliteSScanResult redlite_sscan(struct RedliteDb *db,
+                                        const char *key,
+                                        const char *cursor,
+                                        const char *pattern,
+                                        size_t count);
+
+/**
+ * ZSCAN key cursor [MATCH pattern] [COUNT count]
+ * Returns scan result with next cursor and member-score pairs
+ */
+struct RedliteZScanResult redlite_zscan(struct RedliteDb *db,
+                                        const char *key,
+                                        const char *cursor,
+                                        const char *pattern,
+                                        size_t count);
+
+/**
+ * XADD key [NOMKSTREAM] [MAXLEN|MINID [=|~] threshold] *|ID field value [field value ...]
+ * Returns generated stream ID, or NULL on error
+ * If id_ms and id_seq are both 0, auto-generates ID (*)
+ */
+struct RedliteStreamId redlite_xadd(struct RedliteDb *db,
+                                    const char *key,
+                                    int64_t id_ms,
+                                    int64_t id_seq,
+                                    const struct RedliteStreamField *fields,
+                                    size_t fields_len,
+                                    int nomkstream,
+                                    int64_t maxlen,
+                                    int use_maxlen);
+
+/**
+ * XLEN key
+ * Returns stream length, or -1 on error
+ */
+int64_t redlite_xlen(struct RedliteDb *db, const char *key);
+
+/**
+ * XRANGE key start end [COUNT count]
+ * Returns stream entries in range, or empty array on error
+ */
+struct RedliteStreamEntryArray redlite_xrange(struct RedliteDb *db,
+                                              const char *key,
+                                              int64_t start_ms,
+                                              int64_t start_seq,
+                                              int64_t end_ms,
+                                              int64_t end_seq,
+                                              int64_t count,
+                                              int use_count);
+
+/**
+ * XREVRANGE key end start [COUNT count]
+ * Returns stream entries in reverse range
+ */
+struct RedliteStreamEntryArray redlite_xrevrange(struct RedliteDb *db,
+                                                 const char *key,
+                                                 int64_t end_ms,
+                                                 int64_t end_seq,
+                                                 int64_t start_ms,
+                                                 int64_t start_seq,
+                                                 int64_t count,
+                                                 int use_count);
+
+/**
+ * XREAD [COUNT count] STREAMS key [key ...] id [id ...]
+ * Note: This is a simplified version. Full XREAD with BLOCK is async-only.
+ * For single-key reads with count. Use XRANGE for more control.
+ */
+struct RedliteStreamEntryArray redlite_xread(struct RedliteDb *db,
+                                             const char *key,
+                                             int64_t id_ms,
+                                             int64_t id_seq,
+                                             int64_t count,
+                                             int use_count);
+
+/**
+ * XTRIM key MAXLEN [~] count
+ * Returns number of entries deleted, or -1 on error
+ */
+int64_t redlite_xtrim(struct RedliteDb *db, const char *key, int64_t maxlen);
+
+/**
+ * XDEL key id [id ...]
+ * Returns number of entries deleted, or -1 on error
+ */
+int64_t redlite_xdel(struct RedliteDb *db,
+                     const char *key,
+                     const struct RedliteStreamId *ids,
+                     size_t ids_len);
+
+/**
+ * XGROUP CREATE key group id [MKSTREAM]
+ * Returns 1 on success, 0 on error
+ */
+int redlite_xgroup_create(struct RedliteDb *db,
+                          const char *key,
+                          const char *group,
+                          int64_t id_ms,
+                          int64_t id_seq,
+                          int mkstream);
+
+/**
+ * XGROUP DESTROY key group
+ * Returns 1 if group was destroyed, 0 otherwise
+ */
+int redlite_xgroup_destroy(struct RedliteDb *db, const char *key, const char *group);
+
+/**
+ * XREADGROUP GROUP group consumer [COUNT count] STREAMS key id
+ * Note: Simplified single-key version. Use ">" for id to get new messages.
+ * Returns stream entries
+ */
+struct RedliteStreamEntryArray redlite_xreadgroup(struct RedliteDb *db,
+                                                  const char *group,
+                                                  const char *consumer,
+                                                  const char *key,
+                                                  const char *id,
+                                                  int64_t count,
+                                                  int use_count,
+                                                  int noack);
+
+/**
+ * XACK key group id [id ...]
+ * Returns number of messages acknowledged, or -1 on error
+ */
+int64_t redlite_xack(struct RedliteDb *db,
+                     const char *key,
+                     const char *group,
+                     const struct RedliteStreamId *ids,
+                     size_t ids_len);
+
+/**
  * VACUUM - compact the database
  */
 int64_t redlite_vacuum(struct RedliteDb *db);
@@ -513,4 +997,4 @@ int64_t redlite_vacuum(struct RedliteDb *db);
  */
 char *redlite_version(void);
 
-#endif /* REDLITE_H */
+#endif  /* REDLITE_H */
