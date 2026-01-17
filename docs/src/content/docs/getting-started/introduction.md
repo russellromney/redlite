@@ -1,39 +1,46 @@
 ---
 title: Introduction
-description: What is Redlite and why use it?
+description: SQLite-backed Redis-compatible key-value store
 ---
 
-Redlite is a **SQLite-backed Redis-compatible key-value store** written in Rust. It's designed to be embedded directly in your application, though it can also run as a standalone server.
+Redlite is a **SQLite-backed Redis-compatible key-value store** written in Rust. It can be used as an embedded library or as a standalone server.
 
-## Core Principles
+## Architecture
 
-1. **Embedded-first** — Library mode is the primary use case
-2. **Disk is cheap** — Don't optimize for memory like Redis does
-3. **SQLite is the foundation** — Leverage its strengths (ACID, durability, zero config)
-4. **Redis-compatible** — Existing clients should just work
-5. **Extend thoughtfully** — Add features Redis doesn't have (KEYINFO, history, FTS in the future)
+Redlite implements the Redis protocol on top of SQLite's storage engine:
 
-## When to Use Redlite
+1. **Storage layer** — SQLite provides ACID transactions and durability
+2. **Data model** — Redis data types (strings, hashes, lists, sets, sorted sets, streams) mapped to SQLite tables
+3. **Protocol** — RESP (Redis Serialization Protocol) compatibility for network access
+4. **Deployment modes** — Embedded library (FFI) or standalone TCP server
+5. **Extensions** — Additional commands beyond Redis (KEYINFO, HISTORY, VACUUM)
 
-Use Redlite when you need:
+## Use Cases
 
-- **Persistent storage** without running a separate Redis server
-- **Embedded key-value store** in a Rust application
-- **Simple deployment** — it's just a SQLite file
-- **Redis protocol compatibility** for existing tools and libraries
-- **ACID transactions** and durability guarantees
+Redlite supports these deployment patterns:
 
-## When NOT to Use Redlite
+- **Embedded storage** — Link directly into applications via FFI bindings
+- **Persistent key-value storage** — Disk-backed storage with configurable memory cache
+- **Single-file deployment** — SQLite database file contains all data
+- **Redis protocol compatibility** — Works with existing Redis clients
+- **Cross-process access** — Multiple processes can access the same database file via SQLite's WAL mode
 
-Redlite is not suitable for:
+## Technical Trade-offs
 
-- **High-throughput, low-latency workloads** where Redis's in-memory model excels
-- **Distributed systems** requiring built-in replication (though this is planned via walsync)
-- **Heavy Lua scripting workloads** (Lua scripting not supported)
+**Performance characteristics:**
+
+- **Throughput** — Lower than Redis (SQLite I/O vs in-memory). Embedded mode: ~50k-230k ops/sec. Server mode: ~2k-3k ops/sec over TCP.
+- **Latency** — Higher than Redis due to disk I/O
+- **Memory** — Configurable page cache, not constrained by total RAM
+- **Durability** — All writes are durable by default (SQLite WAL mode)
+
+**Limitations:**
+
+- **Replication** — No built-in replication (use external tools like Litestream or walsync)
+- **Clustering** — Single-node only
+- **Lua scripting** — Not supported
 
 ## Feature Status
-
-**Current Status:** Sessions 1-23 complete
 
 | Feature | Status |
 |---------|--------|
@@ -51,7 +58,7 @@ Redlite is not suitable for:
 | Authentication (AUTH, --password) | ✅ Complete |
 | Client Commands (CLIENT LIST, etc.) | ✅ Complete |
 | Cache Configuration (--cache) | ✅ Complete |
-| Python/Node.js/Go Bindings | 🔜 Sessions 19-21 |
-| Full-Text Search | 🔜 Session 24 |
-| Vector Search | 🔜 Session 24 |
-| Geospatial | 🔜 Session 25 |
+| Full-Text Search (RediSearch) | ✅ Complete |
+| Vector Search (requires `--features vectors`) | ✅ Complete |
+| Geospatial (requires `--features geo`) | ✅ Complete |
+| Language Bindings (Python, TypeScript, Go, PHP, Elixir, etc.) | ✅ Complete |

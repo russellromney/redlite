@@ -3,7 +3,7 @@ title: Configuration
 description: Configuration options for Redlite
 ---
 
-Redlite is designed for zero-configuration operation. However, there are a few options available.
+Redlite operates with default settings that can be overridden via command-line arguments or API calls.
 
 ## Server Configuration
 
@@ -31,10 +31,10 @@ Redlite is designed for zero-configuration operation. However, there are a few o
 ### Network Binding
 
 ```bash
-# Localhost only (default, secure)
+# Localhost only (default)
 ./redlite --addr 127.0.0.1:6379
 
-# All interfaces (for remote access)
+# All interfaces
 ./redlite --addr 0.0.0.0:6379
 
 # Custom port
@@ -87,14 +87,14 @@ db.select(1)?;
 
 ## SQLite Settings
 
-Redlite configures SQLite with sensible defaults:
+Redlite configures SQLite with these defaults:
 
 | Setting | Value | Purpose |
 |---------|-------|---------|
-| `journal_mode` | `WAL` | Concurrent reads, better performance |
-| `synchronous` | `NORMAL` | Balance of safety and speed |
-| `foreign_keys` | `ON` | Enforce referential integrity |
-| `busy_timeout` | `5000ms` | Wait for locks before failing |
+| `journal_mode` | `WAL` | Write-ahead logging for concurrent readers |
+| `synchronous` | `NORMAL` | Fsync at checkpoints, not every commit |
+| `foreign_keys` | `ON` | Enforce foreign key constraints |
+| `busy_timeout` | `5000ms` | Wait duration for locked database |
 
 These settings are applied automatically when opening a database and cannot currently be changed.
 

@@ -1,9 +1,9 @@
 ---
 title: Embedded (Library)
-description: Using Redlite as an embedded library in your Rust application
+description: Using Redlite as an embedded library in Rust applications
 ---
 
-Redlite's primary use case is as an embedded library. No separate server process needed—just add it to your Cargo.toml and start using it.
+Redlite can be embedded directly in applications via the Rust library API. This mode uses FFI for language bindings and eliminates network overhead.
 
 ## Opening a Database
 
@@ -13,7 +13,7 @@ use redlite::Db;
 // Persistent storage (creates file if doesn't exist)
 let db = Db::open("mydata.db")?;
 
-// In-memory (great for testing)
+// In-memory storage
 let db = Db::open_memory()?;
 ```
 
@@ -137,12 +137,12 @@ for handle in handles {
 }
 ```
 
-## SQLite Advantages
+## SQLite Storage Properties
 
-Redlite's SQLite foundation provides:
+Redlite's SQLite storage layer provides:
 
-- **ACID transactions** - Data integrity guaranteed
-- **WAL mode** - Concurrent readers with single writer
-- **Durability** - Survives crashes and power failures
-- **Zero configuration** - No tuning required
-- **Portability** - Single file, easy to backup/move
+- **ACID transactions** - Atomicity, consistency, isolation, and durability guarantees
+- **WAL mode** - Concurrent readers with single writer (SQLite's write-ahead logging)
+- **Crash safety** - Transactions are atomic; partial writes are rolled back on crash
+- **Single-file format** - Database state contained in one file plus WAL and SHM files
+- **Cross-platform** - SQLite file format is portable across architectures

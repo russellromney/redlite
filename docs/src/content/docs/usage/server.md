@@ -3,7 +3,7 @@ title: Server Mode
 description: Running Redlite as a standalone Redis-compatible server
 ---
 
-While Redlite is designed as an embedded library, it also includes a standalone server that speaks the Redis protocol. Any standard Redis client can connect.
+Redlite includes a standalone server that implements the Redis protocol over TCP. Standard Redis clients can connect to it.
 
 ## Starting the Server
 

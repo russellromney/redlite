@@ -1,6 +1,6 @@
 ---
 title: Quick Start
-description: Get up and running with Redlite in 5 minutes
+description: Basic setup and usage examples
 ---
 
 ## Embedded Mode (Library)

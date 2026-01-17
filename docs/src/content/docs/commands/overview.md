@@ -44,16 +44,16 @@ Commands that wait for data with timeouts:
 - `XREAD BLOCK` - Blocking stream reads
 - `BRPOPLPUSH`, `BLMOVE` - Blocking list moves
 
-**Why server-only?** Cross-client coordination requires a central server process.
+**Server-only limitation:** Cross-client coordination requires a central server process to manage waiters.
 
 ### Pub/Sub
 
-Fire-and-forget messaging via channels:
+Messaging via publish/subscribe channels:
 - `SUBSCRIBE`, `UNSUBSCRIBE` - Channel subscriptions
 - `PSUBSCRIBE`, `PUNSUBSCRIBE` - Pattern subscriptions
 - `PUBLISH` - Publish messages
 
-**Why server-only?** Message routing requires a central broker to coordinate subscribers.
+**Server-only limitation:** Message routing requires a central broker to maintain subscriber lists.
 
 ## Custom Commands
 
@@ -73,10 +73,10 @@ OK
 db.vacuum()?;
 ```
 
-Useful for:
-- Cleaning up expired keys (lazy expiration only deletes on read)
-- Reclaiming disk space (SQLite VACUUM)
-- Periodic maintenance
+Use cases:
+- Remove expired keys (lazy expiration only deletes on read)
+- Reclaim disk space (SQLite VACUUM compacts database file)
+- Maintenance operations
 
 ### KEYINFO
 
@@ -130,21 +130,21 @@ See [History Tracking](/reference/history) for full documentation.
 
 ### Expiration
 
-Redlite uses **lazy expiration** by default:
-- Expired keys checked on read
+Redlite uses lazy expiration:
+- Expired keys checked on read access
 - Manual cleanup via `VACUUM` command
-- No background expiration daemon (optional in future)
+- No background expiration daemon
 
-**Why?** Disk is cheap. Expired keys sitting on disk is fine until you need the space.
+**Implementation rationale:** Expired keys remain on disk until accessed or explicitly removed via VACUUM.
 
 ### Persistence
 
-Redlite **persists data by default**:
-- All data written to SQLite database file
-- ACID transactions out of the box
-- No separate `SAVE` or `BGSAVE` commands needed
+Redlite persists data by default:
+- All writes committed to SQLite database file
+- ACID guarantees via SQLite's transaction system
+- No separate `SAVE` or `BGSAVE` commands
 
-**Why?** SQLite handles durability. No need for Redis-style persistence configuration.
+**Implementation:** SQLite WAL mode provides durability without requiring manual persistence configuration.
 
 ### Transactions
 
