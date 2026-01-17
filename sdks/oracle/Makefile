@@ -6,12 +6,12 @@ SPEC_DIR := spec
 RUST_RUNNER := runners/rust_runner
 DART_SDK := ../redlite-dart
 
-.PHONY: help test test-python test-ts test-rust test-go test-dart test-ruby test-dotnet test-verbose clean build-rust build-dotnet
+.PHONY: help test test-python test-ts test-rust test-go test-dart test-ruby test-dotnet test-zig test-verbose clean build-rust build-dotnet
 
 help:
 	@echo "Oracle Test Commands:"
 	@echo "  make test           - Run all oracle tests (Python + TypeScript)"
-	@echo "  make test-all       - Run all including Rust baseline, Go, Dart, Ruby, and .NET"
+	@echo "  make test-all       - Run all including Rust baseline, Go, Dart, Ruby, .NET, and Zig"
 	@echo "  make test-python    - Run oracle tests against Python SDK"
 	@echo "  make test-ts        - Run oracle tests against TypeScript SDK"
 	@echo "  make test-rust      - Run oracle tests against Rust core (baseline)"
@@ -19,6 +19,7 @@ help:
 	@echo "  make test-dart      - Run oracle tests against Dart SDK"
 	@echo "  make test-ruby      - Run oracle tests against Ruby SDK"
 	@echo "  make test-dotnet    - Run oracle tests against .NET SDK"
+	@echo "  make test-zig       - Run oracle tests against Zig SDK"
 	@echo "  make test-verbose   - Run all tests with verbose output"
 	@echo "  make build-rust     - Build Rust runner"
 	@echo "  make build-dotnet   - Build .NET runner"
@@ -31,8 +32,8 @@ test: test-python test-ts
 	@echo ""
 	@echo "All oracle tests complete!"
 
-# Run all including Rust baseline, Go, Dart, Ruby, and .NET
-test-all: test-rust test-go test-python test-ts test-dart test-ruby test-dotnet
+# Run all including Rust baseline, Go, Dart, Ruby, .NET, and Zig
+test-all: test-rust test-go test-python test-ts test-dart test-ruby test-dotnet test-zig
 	@echo ""
 	@echo "All oracle tests complete!"
 
@@ -125,6 +126,16 @@ test-spec-ruby:
 test-spec-dotnet: build-dotnet
 	@if [ -z "$(SPEC)" ]; then echo "Usage: make test-spec-dotnet SPEC=strings.yaml"; exit 1; fi
 	cd runners && dotnet run --project DotNetOracleRunner.csproj -- ../$(SPEC_DIR)/$(SPEC)
+
+# Zig SDK tests (runs SDK unit tests)
+test-zig:
+	@echo "Running tests against Zig SDK..."
+	cd ../redlite-zig && zig test src/redlite.zig -I../../crates/redlite-ffi/ -L../../target/release -lredlite_ffi -lc
+
+# Zig SDK tests (verbose - shows test names)
+test-zig-verbose:
+	@echo "Running tests against Zig SDK (verbose)..."
+	cd ../redlite-zig && zig test src/redlite.zig -I../../crates/redlite-ffi/ -L../../target/release -lredlite_ffi -lc --summary all
 
 clean:
 	rm -rf node_modules package-lock.json
