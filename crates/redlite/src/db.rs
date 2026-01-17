@@ -1,6 +1,6 @@
 use rusqlite::{params, Connection, OptionalExtension};
 use std::collections::HashMap;
-use std::sync::atomic::{AtomicBool, AtomicI64, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicI64, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, Once, RwLock};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use tokio::sync::broadcast;
@@ -50,6 +50,10 @@ struct DbCore {
     notifier: RwLock<Option<Arc<RwLock<HashMap<String, broadcast::Sender<()>>>>>>,
     /// Polling configuration for sync blocking operations (blpop_sync, xreadgroup_block_sync, etc.)
     poll_config: RwLock<PollConfig>,
+    /// Maximum disk size in bytes (0 = unlimited, no eviction)
+    max_disk_bytes: AtomicU64,
+    /// Last eviction check timestamp in milliseconds
+    last_eviction_check: AtomicI64,
 }
 
 /// Database session with per-instance selected database.
@@ -179,6 +183,8 @@ impl Db {
             autovacuum_interval_ms: AtomicI64::new(DEFAULT_AUTOVACUUM_INTERVAL_MS),
             notifier: RwLock::new(None),
             poll_config: RwLock::new(PollConfig::default()),
+            max_disk_bytes: AtomicU64::new(0),
+            last_eviction_check: AtomicI64::new(0),
         });
 
         let db = Self {
@@ -242,6 +248,8 @@ impl Db {
             autovacuum_interval_ms: AtomicI64::new(DEFAULT_AUTOVACUUM_INTERVAL_MS),
             notifier: RwLock::new(None),
             poll_config: RwLock::new(PollConfig::default()),
+            max_disk_bytes: AtomicU64::new(0),
+            last_eviction_check: AtomicI64::new(0),
         });
 
         let db = Self {
@@ -375,6 +383,16 @@ impl Db {
         *self.core.poll_config.read().unwrap()
     }
 
+    /// Set maximum disk size in bytes for eviction (0 = unlimited)
+    pub fn set_max_disk(&self, bytes: u64) {
+        self.core.max_disk_bytes.store(bytes, Ordering::Relaxed);
+    }
+
+    /// Get maximum disk size in bytes (0 = unlimited)
+    pub fn max_disk(&self) -> u64 {
+        self.core.max_disk_bytes.load(Ordering::Relaxed)
+    }
+
     /// Maybe run autovacuum if enabled and interval has passed.
     /// Called on read operations. Uses atomic compare-exchange to ensure
     /// only one connection does cleanup per interval.
@@ -404,6 +422,61 @@ impl Db {
                 "DELETE FROM keys WHERE expire_at IS NOT NULL AND expire_at <= ?1",
                 params![now],
             );
+        }
+    }
+
+    /// Maybe evict oldest keys if disk size exceeds max_disk_bytes.
+    /// Called on write operations. Uses atomic compare-exchange to ensure
+    /// only one connection does eviction per check interval (1 second).
+    fn maybe_evict(&self) {
+        let max_bytes = self.core.max_disk_bytes.load(Ordering::Relaxed);
+        if max_bytes == 0 {
+            return; // No limit set
+        }
+
+        let now = Self::now_ms();
+        let last = self.core.last_eviction_check.load(Ordering::Relaxed);
+
+        // Check every 1 second
+        if now - last < 1000 {
+            return;
+        }
+
+        // Try to claim eviction duty (only one connection wins)
+        if self
+            .core
+            .last_eviction_check
+            .compare_exchange(last, now, Ordering::Relaxed, Ordering::Relaxed)
+            .is_ok()
+        {
+            let conn = self.core.conn.lock().unwrap_or_else(|e| e.into_inner());
+
+            // Evict oldest keys until under limit
+            loop {
+                let size: u64 = conn
+                    .query_row(
+                        "SELECT page_count * page_size FROM pragma_page_count(), pragma_page_size()",
+                        [],
+                        |r| r.get(0),
+                    )
+                    .unwrap_or(0);
+
+                if size <= max_bytes {
+                    break;
+                }
+
+                // Delete oldest key (across all DBs) - history cascades automatically
+                let deleted = conn
+                    .execute(
+                        "DELETE FROM keys WHERE id = (SELECT id FROM keys ORDER BY created_at ASC LIMIT 1)",
+                        [],
+                    )
+                    .unwrap_or(0);
+
+                if deleted == 0 {
+                    break; // No more keys to delete
+                }
+            }
         }
     }
 
@@ -536,6 +609,9 @@ impl Db {
 
         // Index for FTS if enabled
         let _ = self.fts_index(key, value);
+
+        // Check if disk eviction needed
+        self.maybe_evict();
 
         Ok(true)
     }
@@ -2237,6 +2313,9 @@ impl Db {
         // Record history for HSET operation
         let _ = self.record_history(self.selected_db, key, "HSET", None);
 
+        // Check if disk eviction needed
+        self.maybe_evict();
+
         Ok(new_fields)
     }
 
@@ -2746,6 +2825,9 @@ impl Db {
             });
         }
 
+        // Check if disk eviction needed
+        self.maybe_evict();
+
         Ok(length)
     }
 
@@ -2820,6 +2902,9 @@ impl Db {
                 let _ = db.notify_key(&key).await;
             });
         }
+
+        // Check if disk eviction needed
+        self.maybe_evict();
 
         Ok(length)
     }
@@ -3964,6 +4049,9 @@ impl Db {
             params![now, key_id],
         )?;
 
+        // Check if disk eviction needed
+        self.maybe_evict();
+
         Ok(added)
     }
 
@@ -4559,6 +4647,9 @@ impl Db {
             "UPDATE keys SET updated_at = ?1, version = version + 1 WHERE id = ?2",
             params![now, key_id],
         )?;
+
+        // Check if disk eviction needed
+        self.maybe_evict();
 
         Ok(added)
     }

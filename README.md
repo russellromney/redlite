@@ -131,7 +131,10 @@ redlite --db mydata.db              # Persistent
 redlite --storage memory            # In-memory
 redlite --password secret           # Auth
 redlite --cache 1024                # 1GB cache (faster reads)
+redlite --max-disk 104857600        # 100MB disk limit (evicts oldest keys)
 ```
+
+**Eviction**: When `--max-disk` is set, redlite automatically evicts the oldest keys (by creation time) when disk usage exceeds the limit. Eviction runs every second during write operations. Use `CONFIG SET maxdisk <bytes>` to adjust at runtime.
 
 ## Performance
 

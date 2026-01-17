@@ -1,5 +1,35 @@
 # Changelog
 
+## Session 49: Disk-Based Eviction
+
+### Added - Simple Disk Eviction
+
+**Feature**: Automatic eviction of oldest keys when disk exceeds configured limit.
+
+**Implementation**:
+- `--max-disk <bytes>` CLI flag (0 = unlimited, default)
+- `CONFIG SET maxdisk <bytes>` / `CONFIG GET maxdisk` commands
+- Checks every 1 second during write operations
+- Evicts oldest keys (by `created_at`) until disk is under limit
+- History automatically cascade-deleted with key
+
+**Files Modified**:
+- `crates/redlite/src/db.rs` - `maybe_evict()`, `set_max_disk()`, `max_disk()`
+- `crates/redlite/src/main.rs` - `--max-disk` CLI flag
+- `crates/redlite/src/server/mod.rs` - `CONFIG` command handler
+
+**Usage**:
+```bash
+# Start with 100MB disk limit
+./redlite --db data.db --max-disk 104857600
+
+# Or configure at runtime
+redis-cli CONFIG SET maxdisk 104857600
+redis-cli CONFIG GET maxdisk
+```
+
+---
+
 ## Session 48: PHP SDK Implementation
 
 ### Added - Complete PHP SDK with FFI Bindings

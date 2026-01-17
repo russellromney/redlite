@@ -396,6 +396,7 @@ async fn execute_command(
         "DBSIZE" => cmd_dbsize(db),
         "FLUSHDB" => cmd_flushdb(db),
         "INFO" => cmd_info(db, cmd_args),
+        "CONFIG" => cmd_config(db, cmd_args),
         // String commands
         "GET" => cmd_get(db, cmd_args),
         "SET" => cmd_set(db, cmd_args),
@@ -686,6 +687,66 @@ fn cmd_info(db: &Db, args: &[Vec<u8>]) -> RespValue {
     }
 
     RespValue::BulkString(Some(info.into_bytes()))
+}
+
+fn cmd_config(db: &Db, args: &[Vec<u8>]) -> RespValue {
+    if args.is_empty() {
+        return RespValue::error("wrong number of arguments for 'config' command");
+    }
+
+    let subcommand = match std::str::from_utf8(&args[0]) {
+        Ok(s) => s.to_uppercase(),
+        Err(_) => return RespValue::error("invalid subcommand"),
+    };
+
+    match subcommand.as_str() {
+        "GET" => {
+            if args.len() < 2 {
+                return RespValue::error("wrong number of arguments for 'config get' command");
+            }
+            let pattern = match std::str::from_utf8(&args[1]) {
+                Ok(p) => p.to_lowercase(),
+                Err(_) => return RespValue::error("invalid pattern"),
+            };
+
+            let mut result = Vec::new();
+
+            // Match maxdisk pattern
+            if pattern == "maxdisk" || pattern == "*" {
+                result.push(RespValue::BulkString(Some(b"maxdisk".to_vec())));
+                result.push(RespValue::BulkString(Some(db.max_disk().to_string().into_bytes())));
+            }
+
+            RespValue::Array(Some(result))
+        }
+        "SET" => {
+            if args.len() < 3 {
+                return RespValue::error("wrong number of arguments for 'config set' command");
+            }
+            let key = match std::str::from_utf8(&args[1]) {
+                Ok(k) => k.to_lowercase(),
+                Err(_) => return RespValue::error("invalid key"),
+            };
+            let value = match std::str::from_utf8(&args[2]) {
+                Ok(v) => v,
+                Err(_) => return RespValue::error("invalid value"),
+            };
+
+            match key.as_str() {
+                "maxdisk" => {
+                    match value.parse::<u64>() {
+                        Ok(bytes) => {
+                            db.set_max_disk(bytes);
+                            RespValue::ok()
+                        }
+                        Err(_) => RespValue::error("invalid maxdisk value"),
+                    }
+                }
+                _ => RespValue::error(format!("unsupported config parameter: {}", key)),
+            }
+        }
+        _ => RespValue::error(format!("unknown config subcommand: {}", subcommand)),
+    }
 }
 
 fn cmd_client(
@@ -8182,6 +8243,7 @@ async fn execute_command_in_transaction(db: &mut Db, args: &[Vec<u8>]) -> RespVa
         "DBSIZE" => cmd_dbsize(db),
         "FLUSHDB" => cmd_flushdb(db),
         "INFO" => cmd_info(db, cmd_args),
+        "CONFIG" => cmd_config(db, cmd_args),
         // String commands
         "GET" => cmd_get(db, cmd_args),
         "SET" => cmd_set(db, cmd_args),

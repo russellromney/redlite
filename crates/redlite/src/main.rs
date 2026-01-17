@@ -43,6 +43,11 @@ struct Args {
     /// Set to available RAM for best performance (e.g., 1024 for 1GB).
     #[arg(long, default_value = "64")]
     cache: i64,
+
+    /// Maximum disk size in bytes for eviction (0 = unlimited).
+    /// When exceeded, oldest keys are automatically deleted.
+    #[arg(long, default_value = "0")]
+    max_disk: u64,
 }
 
 #[tokio::main]
@@ -75,6 +80,12 @@ async fn main() -> anyhow::Result<()> {
                     anyhow::bail!("Invalid storage type: {}. Use 'file' or 'memory'", storage);
                 }
             };
+
+            // Set max disk size for eviction if specified
+            if args.max_disk > 0 {
+                db.set_max_disk(args.max_disk);
+                tracing::info!("Eviction enabled: max disk {} bytes", args.max_disk);
+            }
 
             if args.password.is_some() {
                 tracing::info!("Authentication enabled");
