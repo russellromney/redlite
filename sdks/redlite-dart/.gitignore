@@ -1,0 +1,33 @@
+# Rust build artifacts
+rust/target/
+rust/Cargo.lock
+
+# Flutter/Dart
+.dart_tool/
+.packages
+build/
+*.iml
+.flutter-plugins
+.flutter-plugins-dependencies
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# macOS
+.DS_Store
+*.dSYM/
+
+# Generated files (keep in git for easier setup)
+# lib/src/rust/frb_generated.dart
+# rust/src/frb_generated.rs
+
+# Platform build artifacts
+ios/Pods/
+macos/Pods/
+android/.gradle/
+android/build/
+linux/build/
+windows/build/
