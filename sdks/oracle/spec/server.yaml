@@ -49,3 +49,99 @@ tests:
       - { cmd: LLEN, args: ["list"], expect: 3 }
       - { cmd: SCARD, args: ["set"], expect: 3 }
       - { cmd: ZCARD, args: ["zset"], expect: 2 }
+
+  # ==========================================================================
+  # CONFIG
+  # ==========================================================================
+
+  - name: CONFIG GET maxmemory-policy default
+    operations:
+      - { cmd: CONFIG, args: ["GET", "maxmemory-policy"], expect: ["maxmemory-policy", "noeviction"] }
+
+  - name: CONFIG SET maxmemory-policy allkeys-lru
+    operations:
+      - { cmd: CONFIG, args: ["SET", "maxmemory-policy", "allkeys-lru"], expect: "OK" }
+      - { cmd: CONFIG, args: ["GET", "maxmemory-policy"], expect: ["maxmemory-policy", "allkeys-lru"] }
+
+  - name: CONFIG SET maxmemory-policy allkeys-lfu
+    operations:
+      - { cmd: CONFIG, args: ["SET", "maxmemory-policy", "allkeys-lfu"], expect: "OK" }
+      - { cmd: CONFIG, args: ["GET", "maxmemory-policy"], expect: ["maxmemory-policy", "allkeys-lfu"] }
+
+  - name: CONFIG SET maxmemory-policy allkeys-random
+    operations:
+      - { cmd: CONFIG, args: ["SET", "maxmemory-policy", "allkeys-random"], expect: "OK" }
+      - { cmd: CONFIG, args: ["GET", "maxmemory-policy"], expect: ["maxmemory-policy", "allkeys-random"] }
+
+  - name: CONFIG SET maxmemory-policy volatile-lru
+    operations:
+      - { cmd: CONFIG, args: ["SET", "maxmemory-policy", "volatile-lru"], expect: "OK" }
+      - { cmd: CONFIG, args: ["GET", "maxmemory-policy"], expect: ["maxmemory-policy", "volatile-lru"] }
+
+  - name: CONFIG SET maxmemory-policy volatile-lfu
+    operations:
+      - { cmd: CONFIG, args: ["SET", "maxmemory-policy", "volatile-lfu"], expect: "OK" }
+      - { cmd: CONFIG, args: ["GET", "maxmemory-policy"], expect: ["maxmemory-policy", "volatile-lfu"] }
+
+  - name: CONFIG SET maxmemory-policy volatile-ttl
+    operations:
+      - { cmd: CONFIG, args: ["SET", "maxmemory-policy", "volatile-ttl"], expect: "OK" }
+      - { cmd: CONFIG, args: ["GET", "maxmemory-policy"], expect: ["maxmemory-policy", "volatile-ttl"] }
+
+  - name: CONFIG SET maxmemory-policy volatile-random
+    operations:
+      - { cmd: CONFIG, args: ["SET", "maxmemory-policy", "volatile-random"], expect: "OK" }
+      - { cmd: CONFIG, args: ["GET", "maxmemory-policy"], expect: ["maxmemory-policy", "volatile-random"] }
+
+  - name: CONFIG SET maxmemory-policy noeviction
+    operations:
+      - { cmd: CONFIG, args: ["SET", "maxmemory-policy", "noeviction"], expect: "OK" }
+      - { cmd: CONFIG, args: ["GET", "maxmemory-policy"], expect: ["maxmemory-policy", "noeviction"] }
+
+  - name: CONFIG SET persist-access-tracking on
+    operations:
+      - { cmd: CONFIG, args: ["SET", "persist-access-tracking", "on"], expect: "OK" }
+      - { cmd: CONFIG, args: ["GET", "persist-access-tracking"], expect: ["persist-access-tracking", "on"] }
+
+  - name: CONFIG SET persist-access-tracking off
+    operations:
+      - { cmd: CONFIG, args: ["SET", "persist-access-tracking", "off"], expect: "OK" }
+      - { cmd: CONFIG, args: ["GET", "persist-access-tracking"], expect: ["persist-access-tracking", "off"] }
+
+  - name: CONFIG SET persist-access-tracking yes
+    operations:
+      - { cmd: CONFIG, args: ["SET", "persist-access-tracking", "yes"], expect: "OK" }
+      - { cmd: CONFIG, args: ["GET", "persist-access-tracking"], expect: ["persist-access-tracking", "on"] }
+
+  - name: CONFIG SET persist-access-tracking no
+    operations:
+      - { cmd: CONFIG, args: ["SET", "persist-access-tracking", "no"], expect: "OK" }
+      - { cmd: CONFIG, args: ["GET", "persist-access-tracking"], expect: ["persist-access-tracking", "off"] }
+
+  - name: CONFIG SET access-flush-interval 10000
+    operations:
+      - { cmd: CONFIG, args: ["SET", "access-flush-interval", "10000"], expect: "OK" }
+      - { cmd: CONFIG, args: ["GET", "access-flush-interval"], expect: ["access-flush-interval", "10000"] }
+
+  - name: CONFIG SET access-flush-interval 0
+    operations:
+      - { cmd: CONFIG, args: ["SET", "access-flush-interval", "0"], expect: "OK" }
+      - { cmd: CONFIG, args: ["GET", "access-flush-interval"], expect: ["access-flush-interval", "0"] }
+
+  - name: CONFIG SET maxmemory
+    operations:
+      - { cmd: CONFIG, args: ["SET", "maxmemory", "1048576"], expect: "OK" }
+      - { cmd: CONFIG, args: ["GET", "maxmemory"], expect: ["maxmemory", "1048576"] }
+
+  - name: CONFIG SET maxdisk
+    operations:
+      - { cmd: CONFIG, args: ["SET", "maxdisk", "2097152"], expect: "OK" }
+      - { cmd: CONFIG, args: ["GET", "maxdisk"], expect: ["maxdisk", "2097152"] }
+
+  - name: CONFIG GET wildcard returns all
+    operations:
+      - { cmd: CONFIG, args: ["GET", "*"], expect: { type: "list" } }
+
+  - name: CONFIG GET unknown parameter returns empty
+    operations:
+      - { cmd: CONFIG, args: ["GET", "unknown-param"], expect: [] }

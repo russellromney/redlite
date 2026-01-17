@@ -62,3 +62,8 @@ harness = false
 [[bench]]
 name = "poll_impact"
 harness = false
+
+# Session 51: Eviction & Access Tracking Benchmarks
+[[bench]]
+name = "eviction"
+harness = false

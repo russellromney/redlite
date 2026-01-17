@@ -35,6 +35,63 @@ fn init_sqlite_vec() {}
 /// Default autovacuum interval in milliseconds (60 seconds)
 const DEFAULT_AUTOVACUUM_INTERVAL_MS: i64 = 60_000;
 
+/// Access tracking information for LRU/LFU eviction
+#[derive(Debug, Clone, Copy)]
+struct AccessInfo {
+    last_accessed: i64,
+    access_count: i64,
+}
+
+/// Eviction policy for memory-based eviction
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum EvictionPolicy {
+    /// Never evict keys (default, returns error on OOM)
+    NoEviction,
+    /// Evict least recently used keys (by last_accessed)
+    AllKeysLRU,
+    /// Evict least frequently used keys (by access_count)
+    AllKeysLFU,
+    /// Evict random keys
+    AllKeysRandom,
+    /// Evict LRU among keys with TTL
+    VolatileLRU,
+    /// Evict LFU among keys with TTL
+    VolatileLFU,
+    /// Evict shortest TTL first
+    VolatileTTL,
+    /// Evict random keys with TTL
+    VolatileRandom,
+}
+
+impl EvictionPolicy {
+    pub fn from_str(s: &str) -> Result<Self> {
+        match s.to_lowercase().as_str() {
+            "noeviction" => Ok(Self::NoEviction),
+            "allkeys-lru" => Ok(Self::AllKeysLRU),
+            "allkeys-lfu" => Ok(Self::AllKeysLFU),
+            "allkeys-random" => Ok(Self::AllKeysRandom),
+            "volatile-lru" => Ok(Self::VolatileLRU),
+            "volatile-lfu" => Ok(Self::VolatileLFU),
+            "volatile-ttl" => Ok(Self::VolatileTTL),
+            "volatile-random" => Ok(Self::VolatileRandom),
+            _ => Err(KvError::SyntaxError),
+        }
+    }
+
+    pub fn to_str(&self) -> &'static str {
+        match self {
+            Self::NoEviction => "noeviction",
+            Self::AllKeysLRU => "allkeys-lru",
+            Self::AllKeysLFU => "allkeys-lfu",
+            Self::AllKeysRandom => "allkeys-random",
+            Self::VolatileLRU => "volatile-lru",
+            Self::VolatileLFU => "volatile-lfu",
+            Self::VolatileTTL => "volatile-ttl",
+            Self::VolatileRandom => "volatile-random",
+        }
+    }
+}
+
 /// Shared database backend (SQLite connection)
 struct DbCore {
     conn: Mutex<Connection>,
@@ -54,6 +111,22 @@ struct DbCore {
     max_disk_bytes: AtomicU64,
     /// Last eviction check timestamp in milliseconds
     last_eviction_check: AtomicI64,
+    /// Maximum memory size in bytes (0 = unlimited, no eviction)
+    max_memory_bytes: AtomicU64,
+    /// Last memory eviction check timestamp in milliseconds
+    last_memory_eviction_check: AtomicI64,
+    /// Eviction policy for memory-based eviction
+    eviction_policy: Mutex<EvictionPolicy>,
+    /// In-memory access tracking for LRU/LFU eviction (key_id -> access stats)
+    access_tracking: RwLock<HashMap<i64, AccessInfo>>,
+    /// Whether to persist access tracking to disk (default: true for :memory:, false for file)
+    persist_access_tracking: AtomicBool,
+    /// Access tracking flush interval in milliseconds
+    access_flush_interval_ms: AtomicI64,
+    /// Last access tracking flush timestamp
+    last_access_flush: AtomicI64,
+    /// Whether this is an in-memory database
+    is_memory_db: bool,
 }
 
 /// Database session with per-instance selected database.
@@ -174,6 +247,15 @@ impl Db {
              PRAGMA temp_store = MEMORY;",
         )?;
 
+        // Detect database type and set smart defaults
+        let is_memory_db = path == ":memory:";
+        let persist_access_tracking = is_memory_db; // true for :memory:, false for file
+        let access_flush_interval_ms = if is_memory_db {
+            5_000  // 5 seconds for :memory: (cheap)
+        } else {
+            300_000  // 5 minutes for file-based (expensive due to WAL)
+        };
+
         // sqlite-vec is registered globally via auto_extension in lib.rs init
 
         let core = Arc::new(DbCore {
@@ -185,6 +267,14 @@ impl Db {
             poll_config: RwLock::new(PollConfig::default()),
             max_disk_bytes: AtomicU64::new(0),
             last_eviction_check: AtomicI64::new(0),
+            max_memory_bytes: AtomicU64::new(0),
+            last_memory_eviction_check: AtomicI64::new(0),
+            eviction_policy: Mutex::new(EvictionPolicy::NoEviction),
+            access_tracking: RwLock::new(HashMap::new()),
+            persist_access_tracking: AtomicBool::new(persist_access_tracking),
+            access_flush_interval_ms: AtomicI64::new(access_flush_interval_ms),
+            last_access_flush: AtomicI64::new(0),
+            is_memory_db,
         });
 
         let db = Self {
@@ -239,6 +329,15 @@ impl Db {
         let mmap_bytes = cache_mb * 4 * 1024 * 1024;
         conn.execute_batch(&format!("PRAGMA mmap_size = {};", mmap_bytes))?;
 
+        // Detect database type and set smart defaults
+        let is_memory_db = path == ":memory:";
+        let persist_access_tracking = is_memory_db; // true for :memory:, false for file
+        let access_flush_interval_ms = if is_memory_db {
+            5_000  // 5 seconds for :memory: (cheap)
+        } else {
+            300_000  // 5 minutes for file-based (expensive due to WAL)
+        };
+
         // sqlite-vec is registered globally via auto_extension in lib.rs init
 
         let core = Arc::new(DbCore {
@@ -250,6 +349,14 @@ impl Db {
             poll_config: RwLock::new(PollConfig::default()),
             max_disk_bytes: AtomicU64::new(0),
             last_eviction_check: AtomicI64::new(0),
+            max_memory_bytes: AtomicU64::new(0),
+            last_memory_eviction_check: AtomicI64::new(0),
+            eviction_policy: Mutex::new(EvictionPolicy::NoEviction),
+            access_tracking: RwLock::new(HashMap::new()),
+            persist_access_tracking: AtomicBool::new(persist_access_tracking),
+            access_flush_interval_ms: AtomicI64::new(access_flush_interval_ms),
+            last_access_flush: AtomicI64::new(0),
+            is_memory_db,
         });
 
         let db = Self {
@@ -293,6 +400,41 @@ impl Db {
         })
     }
 
+    /// Checkpoint the WAL file to persist changes to the main database file.
+    ///
+    /// This truncates the WAL file after checkpointing, which is useful for
+    /// reducing disk usage before stopping a database.
+    ///
+    /// # Example
+    /// ```
+    /// use redlite::Db;
+    ///
+    /// let db = Db::open("mydata.db").unwrap();
+    /// db.checkpoint().unwrap();
+    /// ```
+    pub fn checkpoint(&self) -> Result<()> {
+        let conn = self.core.conn.lock().unwrap_or_else(|e| e.into_inner());
+        conn.execute_batch("PRAGMA wal_checkpoint(TRUNCATE);")?;
+        Ok(())
+    }
+
+    /// Release as much memory as possible by shrinking internal caches.
+    ///
+    /// This is useful before stopping a database to free up memory resources.
+    ///
+    /// # Example
+    /// ```
+    /// use redlite::Db;
+    ///
+    /// let db = Db::open("mydata.db").unwrap();
+    /// db.shrink_memory().unwrap();
+    /// ```
+    pub fn shrink_memory(&self) -> Result<()> {
+        let conn = self.core.conn.lock().unwrap_or_else(|e| e.into_inner());
+        conn.execute_batch("PRAGMA shrink_memory;")?;
+        Ok(())
+    }
+
     /// Create a new session sharing the same database backend.
     /// The new session starts at database 0.
     pub fn session(&self) -> Self {
@@ -327,6 +469,46 @@ impl Db {
         if !has_version {
             conn.execute(
                 "ALTER TABLE keys ADD COLUMN version INTEGER NOT NULL DEFAULT 0",
+                [],
+            )?;
+        }
+
+        // Migration: Add last_accessed column for LRU eviction
+        let has_last_accessed: bool = conn
+            .query_row(
+                "SELECT COUNT(*) FROM pragma_table_info('keys') WHERE name = 'last_accessed'",
+                [],
+                |row| row.get::<_, i32>(0).map(|c| c > 0),
+            )
+            .unwrap_or(false);
+
+        if !has_last_accessed {
+            conn.execute(
+                "ALTER TABLE keys ADD COLUMN last_accessed INTEGER NOT NULL DEFAULT 0",
+                [],
+            )?;
+            conn.execute(
+                "CREATE INDEX IF NOT EXISTS idx_keys_last_accessed ON keys(last_accessed)",
+                [],
+            )?;
+        }
+
+        // Migration: Add access_count column for LFU eviction
+        let has_access_count: bool = conn
+            .query_row(
+                "SELECT COUNT(*) FROM pragma_table_info('keys') WHERE name = 'access_count'",
+                [],
+                |row| row.get::<_, i32>(0).map(|c| c > 0),
+            )
+            .unwrap_or(false);
+
+        if !has_access_count {
+            conn.execute(
+                "ALTER TABLE keys ADD COLUMN access_count INTEGER NOT NULL DEFAULT 0",
+                [],
+            )?;
+            conn.execute(
+                "CREATE INDEX IF NOT EXISTS idx_keys_access_count ON keys(access_count)",
                 [],
             )?;
         }
@@ -393,6 +575,51 @@ impl Db {
         self.core.max_disk_bytes.load(Ordering::Relaxed)
     }
 
+    /// Set maximum memory size in bytes for eviction (0 = unlimited)
+    pub fn set_max_memory(&self, bytes: u64) {
+        self.core.max_memory_bytes.store(bytes, Ordering::Relaxed);
+    }
+
+    /// Get maximum memory size in bytes (0 = unlimited)
+    pub fn max_memory(&self) -> u64 {
+        self.core.max_memory_bytes.load(Ordering::Relaxed)
+    }
+
+    /// Set eviction policy for memory-based eviction
+    pub fn set_eviction_policy(&self, policy: EvictionPolicy) {
+        *self.core.eviction_policy.lock().unwrap() = policy;
+    }
+
+    /// Get current eviction policy
+    pub fn eviction_policy(&self) -> EvictionPolicy {
+        *self.core.eviction_policy.lock().unwrap()
+    }
+
+    /// Set whether to persist access tracking to disk
+    /// When enabled, access tracking data (last_accessed, access_count) is periodically
+    /// flushed from the in-memory HashMap to SQLite columns for LRU/LFU eviction.
+    /// Default: true for :memory: databases, false for file-based databases.
+    pub fn set_persist_access_tracking(&self, enabled: bool) {
+        self.core.persist_access_tracking.store(enabled, Ordering::Relaxed);
+    }
+
+    /// Get whether access tracking is persisted to disk
+    pub fn persist_access_tracking(&self) -> bool {
+        self.core.persist_access_tracking.load(Ordering::Relaxed)
+    }
+
+    /// Set access tracking flush interval in milliseconds
+    /// This controls how often the in-memory access tracking data is flushed to disk.
+    /// Default: 5000ms for :memory: databases, 300000ms (5 min) for file-based databases.
+    pub fn set_access_flush_interval(&self, ms: i64) {
+        self.core.access_flush_interval_ms.store(ms, Ordering::Relaxed);
+    }
+
+    /// Get access tracking flush interval in milliseconds
+    pub fn access_flush_interval(&self) -> i64 {
+        self.core.access_flush_interval_ms.load(Ordering::Relaxed)
+    }
+
     /// Maybe run autovacuum if enabled and interval has passed.
     /// Called on read operations. Uses atomic compare-exchange to ensure
     /// only one connection does cleanup per interval.
@@ -428,6 +655,9 @@ impl Db {
     /// Maybe evict oldest keys if disk size exceeds max_disk_bytes.
     /// Called on write operations. Uses atomic compare-exchange to ensure
     /// only one connection does eviction per check interval (1 second).
+    ///
+    /// Strategy: First try to reclaim space by deleting expired keys (vacuum),
+    /// then only evict valid keys if still over limit.
     fn maybe_evict(&self) {
         let max_bytes = self.core.max_disk_bytes.load(Ordering::Relaxed);
         if max_bytes == 0 {
@@ -451,7 +681,26 @@ impl Db {
         {
             let conn = self.core.conn.lock().unwrap_or_else(|e| e.into_inner());
 
-            // Evict oldest keys until under limit
+            // Phase 1: Try vacuum first - remove expired keys without losing valid data
+            let _ = conn.execute(
+                "DELETE FROM keys WHERE expire_at IS NOT NULL AND expire_at < ?1",
+                params![now],
+            );
+
+            // Check if vacuum was enough
+            let size: u64 = conn
+                .query_row(
+                    "SELECT page_count * page_size FROM pragma_page_count(), pragma_page_size()",
+                    [],
+                    |r| r.get(0),
+                )
+                .unwrap_or(0);
+
+            if size <= max_bytes {
+                return; // Vacuum was sufficient
+            }
+
+            // Phase 2: Evict oldest keys until under limit
             loop {
                 let size: u64 = conn
                     .query_row(
@@ -478,6 +727,194 @@ impl Db {
                 }
             }
         }
+
+        // Also check memory-based eviction
+        self.maybe_evict_memory();
+    }
+
+    /// Find a victim key for eviction based on the current policy.
+    /// Uses Redis-style sampling to avoid full table scans for LRU/LFU.
+    fn find_eviction_victim(&self, conn: &Connection, policy: EvictionPolicy) -> Result<Option<i64>> {
+        let db = self.selected_db;
+
+        // Redis default: sample 5 keys (configurable via maxmemory-samples)
+        const SAMPLE_SIZE: i64 = 5;
+
+        match policy {
+            EvictionPolicy::NoEviction => Ok(None),
+
+            // LRU/LFU: Sample random keys, pick the worst among samples (avoid full table scan)
+            EvictionPolicy::AllKeysLRU => {
+                self.sample_and_pick_victim(conn, db, false, |id, last_acc, _count| (id, last_acc))
+                    .map(|opt| opt.map(|(id, _)| id))
+            }
+
+            EvictionPolicy::AllKeysLFU => {
+                self.sample_and_pick_victim(conn, db, false, |id, _last_acc, count| (id, count))
+                    .map(|opt| opt.map(|(id, _)| id))
+            }
+
+            EvictionPolicy::AllKeysRandom => {
+                // Random is already a single query
+                match conn.query_row(
+                    "SELECT id FROM keys WHERE db = ?1 ORDER BY RANDOM() LIMIT 1",
+                    params![db],
+                    |row| row.get(0),
+                ) {
+                    Ok(id) => Ok(Some(id)),
+                    Err(rusqlite::Error::QueryReturnedNoRows) => Ok(None),
+                    Err(e) => Err(e.into()),
+                }
+            }
+
+            EvictionPolicy::VolatileLRU => {
+                self.sample_and_pick_victim(conn, db, true, |id, last_acc, _count| (id, last_acc))
+                    .map(|opt| opt.map(|(id, _)| id))
+            }
+
+            EvictionPolicy::VolatileLFU => {
+                self.sample_and_pick_victim(conn, db, true, |id, _last_acc, count| (id, count))
+                    .map(|opt| opt.map(|(id, _)| id))
+            }
+
+            // TTL: Deterministic, use ORDER BY (optimal for this case)
+            EvictionPolicy::VolatileTTL => {
+                match conn.query_row(
+                    "SELECT id FROM keys WHERE db = ?1 AND expire_at IS NOT NULL ORDER BY expire_at ASC LIMIT 1",
+                    params![db],
+                    |row| row.get(0),
+                ) {
+                    Ok(id) => Ok(Some(id)),
+                    Err(rusqlite::Error::QueryReturnedNoRows) => Ok(None),
+                    Err(e) => Err(e.into()),
+                }
+            }
+
+            EvictionPolicy::VolatileRandom => {
+                match conn.query_row(
+                    "SELECT id FROM keys WHERE db = ?1 AND expire_at IS NOT NULL ORDER BY RANDOM() LIMIT 1",
+                    params![db],
+                    |row| row.get(0),
+                ) {
+                    Ok(id) => Ok(Some(id)),
+                    Err(rusqlite::Error::QueryReturnedNoRows) => Ok(None),
+                    Err(e) => Err(e.into()),
+                }
+            }
+        }
+    }
+
+    /// Helper: Sample random keys and pick the victim using a comparison function.
+    /// Returns (key_id, metric_value) where metric_value is what we're minimizing.
+    fn sample_and_pick_victim<F, T>(
+        &self,
+        conn: &Connection,
+        db: i32,
+        volatile_only: bool,
+        mut extract: F,
+    ) -> Result<Option<(i64, T)>>
+    where
+        F: FnMut(i64, i64, i64) -> (i64, T),
+        T: Ord + Copy,
+    {
+        const SAMPLE_SIZE: i64 = 5;
+
+        // Sample random keys
+        let sql = if volatile_only {
+            "SELECT id, last_accessed, access_count FROM keys WHERE db = ?1 AND expire_at IS NOT NULL ORDER BY RANDOM() LIMIT ?2"
+        } else {
+            "SELECT id, last_accessed, access_count FROM keys WHERE db = ?1 ORDER BY RANDOM() LIMIT ?2"
+        };
+
+        let mut stmt = conn.prepare(sql)?;
+        let samples: Vec<(i64, i64, i64)> = stmt
+            .query_map(params![db, SAMPLE_SIZE], |row| {
+                Ok((row.get(0)?, row.get(1)?, row.get(2)?))
+            })?
+            .collect::<std::result::Result<Vec<_>, _>>()?;
+
+        // Pick the one with minimum metric (LRU = min last_accessed, LFU = min access_count)
+        Ok(samples
+            .into_iter()
+            .map(|(id, last_acc, count)| extract(id, last_acc, count))
+            .min_by_key(|(_, metric)| *metric))
+    }
+
+    /// Maybe evict keys if memory usage exceeds max_memory_bytes.
+    /// Called on write operations. Uses atomic compare-exchange to ensure
+    /// only one connection does eviction per check interval (1 second).
+    ///
+    /// Strategy: First try to reclaim memory by deleting expired keys (vacuum),
+    /// then only evict valid keys if still over limit.
+    fn maybe_evict_memory(&self) {
+        let max_bytes = self.core.max_memory_bytes.load(Ordering::Relaxed);
+        if max_bytes == 0 {
+            return; // No limit set
+        }
+
+        let now = Self::now_ms();
+        let last = self.core.last_memory_eviction_check.load(Ordering::Relaxed);
+
+        // Check every 1 second
+        if now - last < 1000 {
+            return;
+        }
+
+        // Try to claim eviction duty (only one connection wins)
+        if self
+            .core
+            .last_memory_eviction_check
+            .compare_exchange(last, now, Ordering::Relaxed, Ordering::Relaxed)
+            .is_ok()
+        {
+            let conn = self.core.conn.lock().unwrap_or_else(|e| e.into_inner());
+            let policy = *self.core.eviction_policy.lock().unwrap();
+
+            // Phase 1: Try vacuum first - remove expired keys without losing valid data
+            let _ = conn.execute(
+                "DELETE FROM keys WHERE expire_at IS NOT NULL AND expire_at < ?1",
+                params![now],
+            );
+
+            // Check if vacuum was enough
+            let total_memory = match self.total_memory_usage() {
+                Ok(m) => m,
+                Err(_) => return,
+            };
+
+            if total_memory <= max_bytes {
+                return; // Vacuum was sufficient
+            }
+
+            // Phase 2: Evict keys using policy until under limit
+            loop {
+                // Calculate total memory usage
+                let total_memory = match self.total_memory_usage() {
+                    Ok(m) => m,
+                    Err(_) => break,
+                };
+
+                if total_memory <= max_bytes {
+                    break;
+                }
+
+                // Find victim key based on policy
+                let victim_id = match self.find_eviction_victim(&conn, policy) {
+                    Ok(Some(id)) => id,
+                    Ok(None) => break, // No keys to evict
+                    Err(_) => break,
+                };
+
+                // Delete the victim key (cascades to type-specific tables)
+                let deleted = conn
+                    .execute("DELETE FROM keys WHERE id = ?1", params![victim_id])
+                    .unwrap_or(0);
+
+                if deleted == 0 {
+                    break; // Failed to delete
+                }
+            }
+        }
     }
 
     /// Current time in milliseconds since epoch
@@ -486,6 +923,199 @@ impl Db {
             .duration_since(UNIX_EPOCH)
             .unwrap()
             .as_millis() as i64
+    }
+
+    /// Track access for LRU/LFU eviction policies
+    /// Updates in-memory HashMap (fast, no disk I/O)
+    /// Periodic flush to disk happens via maybe_flush_access_tracking()
+    fn track_access(&self, key_id: i64) {
+        let now = Self::now_ms();
+        let mut tracking = self.core.access_tracking.write().unwrap();
+        tracking
+            .entry(key_id)
+            .and_modify(|info| {
+                info.last_accessed = now;
+                info.access_count += 1;
+            })
+            .or_insert(AccessInfo {
+                last_accessed: now,
+                access_count: 1,
+            });
+    }
+
+    /// Flush access tracking HashMap to database columns (batched)
+    /// Called periodically during write operations
+    /// Only flushes if persist_access_tracking is enabled
+    fn maybe_flush_access_tracking(&self) {
+        if !self.core.persist_access_tracking.load(Ordering::Relaxed) {
+            return; // Persistence disabled
+        }
+
+        let now = Self::now_ms();
+        let last = self.core.last_access_flush.load(Ordering::Relaxed);
+        let interval = self.core.access_flush_interval_ms.load(Ordering::Relaxed);
+
+        // Check if enough time has passed
+        if now - last < interval {
+            return;
+        }
+
+        // Try to claim flush duty (only one connection wins)
+        if self
+            .core
+            .last_access_flush
+            .compare_exchange(last, now, Ordering::Relaxed, Ordering::Relaxed)
+            .is_ok()
+        {
+            // Drain the HashMap
+            let mut tracking = self.core.access_tracking.write().unwrap();
+            let updates = std::mem::take(&mut *tracking);
+            drop(tracking);
+
+            if updates.is_empty() {
+                return; // Nothing to flush
+            }
+
+            // Batch update to database
+            let conn = self.core.conn.lock().unwrap_or_else(|e| e.into_inner());
+            let _ = conn.execute("BEGIN IMMEDIATE", []);
+
+            for (key_id, info) in updates {
+                let _ = conn.execute(
+                    "UPDATE keys SET last_accessed = ?1, access_count = access_count + ?2 WHERE id = ?3",
+                    params![info.last_accessed, info.access_count, key_id],
+                );
+            }
+
+            let _ = conn.execute("COMMIT", []);
+        }
+    }
+
+    /// Get key_id for a given key name
+    pub fn get_key_id(&self, key: &str) -> Result<Option<i64>> {
+        let conn = self.core.conn.lock().unwrap_or_else(|e| e.into_inner());
+        let db = self.selected_db;
+
+        match conn.query_row(
+            "SELECT id FROM keys WHERE db = ?1 AND key = ?2",
+            params![db, key],
+            |row| row.get(0),
+        ) {
+            Ok(id) => Ok(Some(id)),
+            Err(rusqlite::Error::QueryReturnedNoRows) => Ok(None),
+            Err(e) => Err(e.into()),
+        }
+    }
+
+    /// Calculate approximate memory usage for a specific key in bytes
+    /// Includes key name, value(s), and metadata overhead
+    pub fn calculate_key_memory(&self, key_id: i64) -> Result<u64> {
+        let conn = self.core.conn.lock().unwrap_or_else(|e| e.into_inner());
+
+        // Get key metadata: key length and type
+        let (key_len, key_type): (usize, i32) = conn.query_row(
+            "SELECT length(key), type FROM keys WHERE id = ?1",
+            params![key_id],
+            |row| Ok((row.get::<_, String>(0)?.len(), row.get(1)?)),
+        )?;
+
+        // Calculate value size based on type
+        let value_size: u64 = match key_type {
+            t if t == KeyType::String as i32 => {
+                // Sum of string value length
+                conn.query_row(
+                    "SELECT COALESCE(length(value), 0) FROM strings WHERE key_id = ?1",
+                    params![key_id],
+                    |row| row.get::<_, i64>(0),
+                )
+                .unwrap_or(0) as u64
+            }
+            t if t == KeyType::Hash as i32 => {
+                // Sum of all field + value lengths
+                conn.query_row(
+                    "SELECT COALESCE(SUM(length(field) + length(value)), 0) FROM hashes WHERE key_id = ?1",
+                    params![key_id],
+                    |row| row.get::<_, i64>(0),
+                )
+                .unwrap_or(0) as u64
+            }
+            t if t == KeyType::List as i32 => {
+                // Sum of all list value lengths
+                conn.query_row(
+                    "SELECT COALESCE(SUM(length(value)), 0) FROM lists WHERE key_id = ?1",
+                    params![key_id],
+                    |row| row.get::<_, i64>(0),
+                )
+                .unwrap_or(0) as u64
+            }
+            t if t == KeyType::Set as i32 => {
+                // Sum of all set member lengths
+                conn.query_row(
+                    "SELECT COALESCE(SUM(length(member)), 0) FROM sets WHERE key_id = ?1",
+                    params![key_id],
+                    |row| row.get::<_, i64>(0),
+                )
+                .unwrap_or(0) as u64
+            }
+            t if t == KeyType::ZSet as i32 => {
+                // Sum of all member lengths + 8 bytes per score (REAL = 8 bytes)
+                let member_size: i64 = conn
+                    .query_row(
+                        "SELECT COALESCE(SUM(length(member)), 0) FROM zsets WHERE key_id = ?1",
+                        params![key_id],
+                        |row| row.get(0),
+                    )
+                    .unwrap_or(0);
+                let score_count: i64 = conn
+                    .query_row(
+                        "SELECT COUNT(*) FROM zsets WHERE key_id = ?1",
+                        params![key_id],
+                        |row| row.get(0),
+                    )
+                    .unwrap_or(0);
+                (member_size + score_count * 8) as u64
+            }
+            t if t == KeyType::Stream as i32 => {
+                // Sum of all stream entry data lengths
+                conn.query_row(
+                    "SELECT COALESCE(SUM(length(data)), 0) FROM streams WHERE key_id = ?1",
+                    params![key_id],
+                    |row| row.get::<_, i64>(0),
+                )
+                .unwrap_or(0) as u64
+            }
+            _ => 0,
+        };
+
+        // Fixed overhead per key:
+        // - Metadata (id, db, key, type, timestamps, access tracking): ~100 bytes
+        // - Index entries: ~50 bytes
+        const FIXED_OVERHEAD: u64 = 150;
+
+        Ok(key_len as u64 + value_size + FIXED_OVERHEAD)
+    }
+
+    /// Calculate total memory usage for all keys in current database
+    pub fn total_memory_usage(&self) -> Result<u64> {
+        let conn = self.core.conn.lock().unwrap_or_else(|e| e.into_inner());
+        let db = self.selected_db;
+
+        // Get all key IDs in current database
+        let mut stmt = conn.prepare("SELECT id FROM keys WHERE db = ?1")?;
+        let key_ids: Vec<i64> = stmt
+            .query_map(params![db], |row| row.get(0))?
+            .collect::<std::result::Result<Vec<_>, _>>()?;
+
+        drop(stmt);
+        drop(conn);
+
+        // Sum memory for all keys
+        let mut total: u64 = 0;
+        for key_id in key_ids {
+            total += self.calculate_key_memory(key_id)?;
+        }
+
+        Ok(total)
     }
 
     /// GET key
@@ -518,6 +1148,9 @@ impl Db {
                 if key_type != KeyType::String as i32 {
                     return Err(KvError::WrongType);
                 }
+
+                // Track access for LRU/LFU eviction
+                self.track_access(key_id);
 
                 // Get the string value
                 let result: std::result::Result<Vec<u8>, _> = conn.query_row(
@@ -612,6 +1245,7 @@ impl Db {
 
         // Check if disk eviction needed
         self.maybe_evict();
+        self.maybe_flush_access_tracking();
 
         Ok(true)
     }
@@ -719,17 +1353,23 @@ impl Db {
         let db = self.selected_db;
         let now = Self::now_ms();
 
-        let result: std::result::Result<Option<i64>, _> = conn.query_row(
-            "SELECT expire_at FROM keys
+        let result: std::result::Result<(i64, Option<i64>), _> = conn.query_row(
+            "SELECT id, expire_at FROM keys
              WHERE db = ?1 AND key = ?2
              AND (expire_at IS NULL OR expire_at > ?3)",
             params![db, key, now],
-            |row| row.get(0),
+            |row| Ok((row.get(0)?, row.get(1)?)),
         );
 
         match result {
-            Ok(Some(expire_at)) => Ok((expire_at - now) / 1000),
-            Ok(None) => Ok(-1),                                  // No expiry
+            Ok((key_id, Some(expire_at))) => {
+                self.track_access(key_id);
+                Ok((expire_at - now) / 1000)
+            }
+            Ok((key_id, None)) => {
+                self.track_access(key_id);
+                Ok(-1) // No expiry
+            }
             Err(rusqlite::Error::QueryReturnedNoRows) => Ok(-2), // Key not found
             Err(e) => Err(e.into()),
         }
@@ -741,17 +1381,23 @@ impl Db {
         let db = self.selected_db;
         let now = Self::now_ms();
 
-        let result: std::result::Result<Option<i64>, _> = conn.query_row(
-            "SELECT expire_at FROM keys
+        let result: std::result::Result<(i64, Option<i64>), _> = conn.query_row(
+            "SELECT id, expire_at FROM keys
              WHERE db = ?1 AND key = ?2
              AND (expire_at IS NULL OR expire_at > ?3)",
             params![db, key, now],
-            |row| row.get(0),
+            |row| Ok((row.get(0)?, row.get(1)?)),
         );
 
         match result {
-            Ok(Some(expire_at)) => Ok(expire_at - now),
-            Ok(None) => Ok(-1),                                  // No expiry
+            Ok((key_id, Some(expire_at))) => {
+                self.track_access(key_id);
+                Ok(expire_at - now)
+            }
+            Ok((key_id, None)) => {
+                self.track_access(key_id);
+                Ok(-1) // No expiry
+            }
             Err(rusqlite::Error::QueryReturnedNoRows) => Ok(-2), // Key not found
             Err(e) => Err(e.into()),
         }
@@ -771,16 +1417,17 @@ impl Db {
         // Count each key individually (duplicates count separately per Redis semantics)
         let mut count: i64 = 0;
         for key in keys {
-            let exists: bool = conn
+            let key_id: Option<i64> = conn
                 .query_row(
-                    "SELECT 1 FROM keys
+                    "SELECT id FROM keys
                      WHERE db = ?1 AND key = ?2
                      AND (expire_at IS NULL OR expire_at > ?3)",
                     params![db, key, now],
-                    |_| Ok(true),
+                    |row| row.get(0),
                 )
-                .unwrap_or(false);
-            if exists {
+                .optional()?;
+            if let Some(id) = key_id {
+                self.track_access(id);
                 count += 1;
             }
         }
@@ -2315,6 +2962,7 @@ impl Db {
 
         // Check if disk eviction needed
         self.maybe_evict();
+        self.maybe_flush_access_tracking();
 
         Ok(new_fields)
     }
@@ -2328,6 +2976,9 @@ impl Db {
             Some(id) => id,
             None => return Ok(None),
         };
+
+        // Track access for LRU/LFU eviction
+        self.track_access(key_id);
 
         let result: std::result::Result<Vec<u8>, _> = conn.query_row(
             "SELECT value FROM hashes WHERE key_id = ?1 AND field = ?2",
@@ -2350,6 +3001,9 @@ impl Db {
             Some(id) => id,
             None => return Ok(vec![None; fields.len()]),
         };
+
+        // Track access for LRU/LFU eviction
+        self.track_access(key_id);
 
         let mut results = Vec::with_capacity(fields.len());
         for field in fields {
@@ -2377,6 +3031,9 @@ impl Db {
             Some(id) => id,
             None => return Ok(Vec::new()),
         };
+
+        // Track access for LRU/LFU eviction
+        self.track_access(key_id);
 
         let mut stmt = conn.prepare("SELECT field, value FROM hashes WHERE key_id = ?1")?;
         let rows = stmt.query_map(params![key_id], |row| {
@@ -2827,6 +3484,7 @@ impl Db {
 
         // Check if disk eviction needed
         self.maybe_evict();
+        self.maybe_flush_access_tracking();
 
         Ok(length)
     }
@@ -2905,6 +3563,7 @@ impl Db {
 
         // Check if disk eviction needed
         self.maybe_evict();
+        self.maybe_flush_access_tracking();
 
         Ok(length)
     }
@@ -3307,6 +3966,9 @@ impl Db {
             None => return Ok(vec![]),
         };
 
+        // Track access for LRU/LFU eviction
+        self.track_access(key_id);
+
         let count = count.unwrap_or(1);
 
         // Get elements from head (lowest positions)
@@ -3361,6 +4023,9 @@ impl Db {
             Some(id) => id,
             None => return Ok(vec![]),
         };
+
+        // Track access for LRU/LFU eviction
+        self.track_access(key_id);
 
         let count = count.unwrap_or(1);
 
@@ -3436,6 +4101,9 @@ impl Db {
             None => return Ok(vec![]),
         };
 
+        // Track access for LRU/LFU eviction
+        self.track_access(key_id);
+
         // Only query COUNT if we have negative indices (optimization)
         let len: i64 = if start < 0 || stop < 0 {
             conn.query_row(
@@ -3503,6 +4171,9 @@ impl Db {
             Some(id) => id,
             None => return Ok(None),
         };
+
+        // Track access for LRU/LFU eviction
+        self.track_access(key_id);
 
         // Only query list length if we have negative index (optimization)
         let index = if index < 0 {
@@ -4051,6 +4722,7 @@ impl Db {
 
         // Check if disk eviction needed
         self.maybe_evict();
+        self.maybe_flush_access_tracking();
 
         Ok(added)
     }
@@ -4108,6 +4780,9 @@ impl Db {
             None => return Ok(vec![]),
         };
 
+        // Track access for LRU/LFU eviction
+        self.track_access(key_id);
+
         let mut stmt = conn.prepare("SELECT member FROM sets WHERE key_id = ?1")?;
 
         let rows = stmt.query_map(params![key_id], |row| row.get::<_, Vec<u8>>(0))?;
@@ -4128,6 +4803,9 @@ impl Db {
             Some(id) => id,
             None => return Ok(false),
         };
+
+        // Track access for LRU/LFU eviction
+        self.track_access(key_id);
 
         let exists: bool = conn
             .query_row(
@@ -4650,6 +5328,7 @@ impl Db {
 
         // Check if disk eviction needed
         self.maybe_evict();
+        self.maybe_flush_access_tracking();
 
         Ok(added)
     }
@@ -4706,6 +5385,9 @@ impl Db {
             None => return Ok(None),
         };
 
+        // Track access for LRU/LFU eviction
+        self.track_access(key_id);
+
         let score: std::result::Result<f64, _> = conn.query_row(
             "SELECT score FROM zsets WHERE key_id = ?1 AND member = ?2",
             params![key_id, member],
@@ -4727,6 +5409,9 @@ impl Db {
             Some(id) => id,
             None => return Ok(None),
         };
+
+        // Track access for LRU/LFU eviction
+        self.track_access(key_id);
 
         // First check if member exists and get its score
         let member_score: std::result::Result<f64, _> = conn.query_row(
@@ -4816,6 +5501,9 @@ impl Db {
             Some(id) => id,
             None => return Ok(vec![]),
         };
+
+        // Track access for LRU/LFU eviction
+        self.track_access(key_id);
 
         // Only query total count if we have negative indices (optimization)
         let total: i64 = if start < 0 || stop < 0 {
@@ -5748,6 +6436,9 @@ impl Db {
             Some(id) => id,
             None => return Ok(vec![]),
         };
+
+        // Track access for LRU/LFU eviction
+        self.track_access(key_id);
 
         // Use a large default limit if no count specified
         let limit = count.unwrap_or(i64::MAX);
@@ -22437,6 +23128,156 @@ mod tests {
         assert!(result.is_none());
         // Should have waited at least ~200ms
         assert!(elapsed.as_millis() >= 180, "Should wait for timeout, elapsed: {:?}", elapsed);
+    }
+
+    // ========== Access Tracking Tests ==========
+
+    #[test]
+    fn test_access_tracking_in_memory() {
+        // Verify that access tracking HashMap is updated immediately on read
+        let db = Db::open_memory().unwrap();
+
+        // Set a key
+        db.set("tracked_key", b"value", None).unwrap();
+
+        // Read the key - this should update access tracking
+        let _ = db.get("tracked_key").unwrap();
+
+        // Check that access tracking has an entry
+        let tracking = db.core.access_tracking.read().unwrap();
+        assert!(tracking.len() >= 1, "Access tracking should have at least one entry after GET");
+    }
+
+    #[test]
+    fn test_access_tracking_multiple_reads() {
+        // Verify that access_count increments with multiple reads
+        let db = Db::open_memory().unwrap();
+
+        db.set("key1", b"value", None).unwrap();
+
+        // Read the key multiple times
+        for _ in 0..5 {
+            let _ = db.get("key1").unwrap();
+        }
+
+        // Check access tracking has been updated
+        let tracking = db.core.access_tracking.read().unwrap();
+        let mut found = false;
+        for info in tracking.values() {
+            if info.access_count >= 5 {
+                found = true;
+                break;
+            }
+        }
+        assert!(found, "At least one key should have access_count >= 5");
+    }
+
+    #[test]
+    fn test_persist_access_tracking_config() {
+        // Verify the getter and setter for persist_access_tracking
+        let db = Db::open_memory().unwrap();
+
+        // :memory: databases default to true
+        assert!(db.persist_access_tracking(), ":memory: should default to persist_access_tracking=true");
+
+        // Test setting to false
+        db.set_persist_access_tracking(false);
+        assert!(!db.persist_access_tracking(), "Should be false after set");
+
+        // Test setting back to true
+        db.set_persist_access_tracking(true);
+        assert!(db.persist_access_tracking(), "Should be true after set");
+    }
+
+    #[test]
+    fn test_access_flush_interval_config() {
+        // Verify the getter and setter for access_flush_interval
+        let db = Db::open_memory().unwrap();
+
+        // :memory: databases default to 5000ms
+        assert_eq!(db.access_flush_interval(), 5000, ":memory: should default to 5000ms flush interval");
+
+        // Test setting to a different value
+        db.set_access_flush_interval(10000);
+        assert_eq!(db.access_flush_interval(), 10000, "Should be 10000 after set");
+
+        // Test setting to 0 (immediate flush)
+        db.set_access_flush_interval(0);
+        assert_eq!(db.access_flush_interval(), 0, "Should support 0 for immediate flush");
+    }
+
+    #[test]
+    fn test_eviction_policy_config() {
+        // Verify eviction policy getter/setter
+        let db = Db::open_memory().unwrap();
+
+        // Default is noeviction
+        assert_eq!(db.eviction_policy(), EvictionPolicy::NoEviction);
+
+        // Set to LRU
+        db.set_eviction_policy(EvictionPolicy::AllKeysLRU);
+        assert_eq!(db.eviction_policy(), EvictionPolicy::AllKeysLRU);
+
+        // Set to LFU
+        db.set_eviction_policy(EvictionPolicy::AllKeysLFU);
+        assert_eq!(db.eviction_policy(), EvictionPolicy::AllKeysLFU);
+
+        // Set back to noeviction
+        db.set_eviction_policy(EvictionPolicy::NoEviction);
+        assert_eq!(db.eviction_policy(), EvictionPolicy::NoEviction);
+    }
+
+    #[test]
+    fn test_flush_disabled_no_disk_writes() {
+        // When persist_access_tracking is false, flush should be a no-op
+        let db = Db::open_memory().unwrap();
+
+        // Disable access tracking persistence
+        db.set_persist_access_tracking(false);
+
+        // Create a key and access it
+        db.set("test_key", b"value", None).unwrap();
+        let _ = db.get("test_key").unwrap();
+
+        // Force a flush attempt - should be a no-op since persist is disabled
+        db.maybe_flush_access_tracking();
+
+        // The in-memory tracking should still have entries (not drained)
+        let tracking = db.core.access_tracking.read().unwrap();
+        assert!(tracking.len() >= 1, "Tracking should still have entries when persist is disabled");
+    }
+
+    #[test]
+    fn test_eviction_policy_from_str() {
+        // Test all eviction policy string conversions
+        assert_eq!(EvictionPolicy::from_str("noeviction").unwrap(), EvictionPolicy::NoEviction);
+        assert_eq!(EvictionPolicy::from_str("allkeys-lru").unwrap(), EvictionPolicy::AllKeysLRU);
+        assert_eq!(EvictionPolicy::from_str("allkeys-lfu").unwrap(), EvictionPolicy::AllKeysLFU);
+        assert_eq!(EvictionPolicy::from_str("allkeys-random").unwrap(), EvictionPolicy::AllKeysRandom);
+        assert_eq!(EvictionPolicy::from_str("volatile-lru").unwrap(), EvictionPolicy::VolatileLRU);
+        assert_eq!(EvictionPolicy::from_str("volatile-lfu").unwrap(), EvictionPolicy::VolatileLFU);
+        assert_eq!(EvictionPolicy::from_str("volatile-ttl").unwrap(), EvictionPolicy::VolatileTTL);
+        assert_eq!(EvictionPolicy::from_str("volatile-random").unwrap(), EvictionPolicy::VolatileRandom);
+
+        // Case insensitive
+        assert_eq!(EvictionPolicy::from_str("NOEVICTION").unwrap(), EvictionPolicy::NoEviction);
+        assert_eq!(EvictionPolicy::from_str("AllKeys-LRU").unwrap(), EvictionPolicy::AllKeysLRU);
+
+        // Invalid policy
+        assert!(EvictionPolicy::from_str("invalid").is_err());
+    }
+
+    #[test]
+    fn test_eviction_policy_to_str() {
+        // Test all eviction policy to string conversions
+        assert_eq!(EvictionPolicy::NoEviction.to_str(), "noeviction");
+        assert_eq!(EvictionPolicy::AllKeysLRU.to_str(), "allkeys-lru");
+        assert_eq!(EvictionPolicy::AllKeysLFU.to_str(), "allkeys-lfu");
+        assert_eq!(EvictionPolicy::AllKeysRandom.to_str(), "allkeys-random");
+        assert_eq!(EvictionPolicy::VolatileLRU.to_str(), "volatile-lru");
+        assert_eq!(EvictionPolicy::VolatileLFU.to_str(), "volatile-lfu");
+        assert_eq!(EvictionPolicy::VolatileTTL.to_str(), "volatile-ttl");
+        assert_eq!(EvictionPolicy::VolatileRandom.to_str(), "volatile-random");
     }
 
 }

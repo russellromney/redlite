@@ -121,6 +121,101 @@ impl Server {
     }
 }
 
+/// Connection handler for multi-tenant scenarios.
+///
+/// Unlike `Server` which binds to a port and manages its own listener,
+/// `ConnectionHandler` allows external code to handle the listening and
+/// routing, then delegate individual connections here.
+///
+/// This is useful for:
+/// - Multi-tenant setups where tenant routing happens first
+/// - Proxy servers that need to identify the tenant before handing off
+/// - Custom authentication flows
+///
+/// # Example
+///
+/// ```ignore
+/// let handler = ConnectionHandler::new(None);
+///
+/// // In your accept loop:
+/// let tenant_db = get_tenant_db(tenant_id).await?;
+/// let session = tenant_db.session();
+/// let handler_clone = handler.clone();
+///
+/// tokio::spawn(async move {
+///     handler_clone.handle(socket, session, peer_addr).await
+/// });
+/// ```
+pub struct ConnectionHandler {
+    notifier: Arc<RwLock<HashMap<String, broadcast::Sender<()>>>>,
+    pubsub_channels: Arc<RwLock<HashMap<String, broadcast::Sender<PubSubMessage>>>>,
+    password: Option<Arc<String>>,
+    connection_pool: ConnectionPool,
+    pause_state: Arc<PauseState>,
+}
+
+impl Clone for ConnectionHandler {
+    fn clone(&self) -> Self {
+        Self {
+            notifier: Arc::clone(&self.notifier),
+            pubsub_channels: Arc::clone(&self.pubsub_channels),
+            password: self.password.clone(),
+            connection_pool: self.connection_pool.clone_handle(),
+            pause_state: Arc::clone(&self.pause_state),
+        }
+    }
+}
+
+impl ConnectionHandler {
+    /// Create a new connection handler with optional password authentication.
+    pub fn new(password: Option<String>) -> Self {
+        Self {
+            notifier: Arc::new(RwLock::new(HashMap::new())),
+            pubsub_channels: Arc::new(RwLock::new(HashMap::new())),
+            password: password.map(Arc::new),
+            connection_pool: ConnectionPool::new(),
+            pause_state: Arc::new(PauseState::new()),
+        }
+    }
+
+    /// Handle a single connection with the given database session.
+    ///
+    /// This is the main entry point for processing Redis commands on a connection.
+    /// The caller is responsible for:
+    /// 1. Accepting the TCP connection
+    /// 2. Any pre-connection authentication/routing (e.g., tenant identification)
+    /// 3. Obtaining the correct Db instance for this connection
+    ///
+    /// # Arguments
+    ///
+    /// * `socket` - The TCP stream for this connection
+    /// * `db` - The database session to use (typically from `Db::session()`)
+    /// * `peer_addr` - The peer address for logging and connection tracking
+    pub async fn handle(
+        &self,
+        socket: TcpStream,
+        db: Db,
+        peer_addr: SocketAddr,
+    ) -> std::io::Result<()> {
+        handle_connection(
+            socket,
+            db,
+            Arc::clone(&self.notifier),
+            Arc::clone(&self.pubsub_channels),
+            self.password.clone(),
+            self.connection_pool.clone_handle(),
+            Arc::clone(&self.pause_state),
+            peer_addr,
+        )
+        .await
+    }
+
+    /// Get the connection pool for connection tracking.
+    pub fn connection_pool(&self) -> &ConnectionPool {
+        &self.connection_pool
+    }
+}
+
 async fn handle_connection(
     socket: TcpStream,
     mut db: Db,
@@ -397,6 +492,7 @@ async fn execute_command(
         "FLUSHDB" => cmd_flushdb(db),
         "INFO" => cmd_info(db, cmd_args),
         "CONFIG" => cmd_config(db, cmd_args),
+        "MEMORY" => cmd_memory(db, cmd_args),
         // String commands
         "GET" => cmd_get(db, cmd_args),
         "SET" => cmd_set(db, cmd_args),
@@ -717,6 +813,31 @@ fn cmd_config(db: &Db, args: &[Vec<u8>]) -> RespValue {
                 result.push(RespValue::BulkString(Some(db.max_disk().to_string().into_bytes())));
             }
 
+            // Match maxmemory pattern
+            if pattern == "maxmemory" || pattern == "*" {
+                result.push(RespValue::BulkString(Some(b"maxmemory".to_vec())));
+                result.push(RespValue::BulkString(Some(db.max_memory().to_string().into_bytes())));
+            }
+
+            // Match maxmemory-policy pattern
+            if pattern == "maxmemory-policy" || pattern == "*" {
+                result.push(RespValue::BulkString(Some(b"maxmemory-policy".to_vec())));
+                result.push(RespValue::BulkString(Some(db.eviction_policy().to_str().as_bytes().to_vec())));
+            }
+
+            // Match persist-access-tracking pattern
+            if pattern == "persist-access-tracking" || pattern == "*" {
+                result.push(RespValue::BulkString(Some(b"persist-access-tracking".to_vec())));
+                let value = if db.persist_access_tracking() { "on" } else { "off" };
+                result.push(RespValue::BulkString(Some(value.as_bytes().to_vec())));
+            }
+
+            // Match access-flush-interval pattern
+            if pattern == "access-flush-interval" || pattern == "*" {
+                result.push(RespValue::BulkString(Some(b"access-flush-interval".to_vec())));
+                result.push(RespValue::BulkString(Some(db.access_flush_interval().to_string().into_bytes())));
+            }
+
             RespValue::Array(Some(result))
         }
         "SET" => {
@@ -742,10 +863,102 @@ fn cmd_config(db: &Db, args: &[Vec<u8>]) -> RespValue {
                         Err(_) => RespValue::error("invalid maxdisk value"),
                     }
                 }
+                "maxmemory" => {
+                    match value.parse::<u64>() {
+                        Ok(bytes) => {
+                            db.set_max_memory(bytes);
+                            RespValue::ok()
+                        }
+                        Err(_) => RespValue::error("invalid maxmemory value"),
+                    }
+                }
+                "maxmemory-policy" => {
+                    match crate::db::EvictionPolicy::from_str(value) {
+                        Ok(policy) => {
+                            db.set_eviction_policy(policy);
+                            RespValue::ok()
+                        }
+                        Err(_) => RespValue::error("invalid maxmemory-policy"),
+                    }
+                }
+                "persist-access-tracking" => {
+                    match value.to_lowercase().as_str() {
+                        "on" | "yes" | "true" | "1" => {
+                            db.set_persist_access_tracking(true);
+                            RespValue::ok()
+                        }
+                        "off" | "no" | "false" | "0" => {
+                            db.set_persist_access_tracking(false);
+                            RespValue::ok()
+                        }
+                        _ => RespValue::error("invalid persist-access-tracking value (use on/off)"),
+                    }
+                }
+                "access-flush-interval" => {
+                    match value.parse::<i64>() {
+                        Ok(ms) if ms >= 0 => {
+                            db.set_access_flush_interval(ms);
+                            RespValue::ok()
+                        }
+                        Ok(_) => RespValue::error("access-flush-interval must be non-negative"),
+                        Err(_) => RespValue::error("invalid access-flush-interval value"),
+                    }
+                }
                 _ => RespValue::error(format!("unsupported config parameter: {}", key)),
             }
         }
         _ => RespValue::error(format!("unknown config subcommand: {}", subcommand)),
+    }
+}
+
+fn cmd_memory(db: &Db, args: &[Vec<u8>]) -> RespValue {
+    if args.is_empty() {
+        return RespValue::error("wrong number of arguments for 'memory' command");
+    }
+
+    let subcommand = match std::str::from_utf8(&args[0]) {
+        Ok(s) => s.to_uppercase(),
+        Err(_) => return RespValue::error("invalid subcommand"),
+    };
+
+    match subcommand.as_str() {
+        "STATS" => {
+            let total_memory = db.total_memory_usage().unwrap_or(0);
+            let key_count = db.dbsize().unwrap_or(0);
+            let policy = db.eviction_policy().to_str();
+
+            let result = vec![
+                RespValue::BulkString(Some(b"total.allocated".to_vec())),
+                RespValue::Integer(total_memory as i64),
+                RespValue::BulkString(Some(b"keys.count".to_vec())),
+                RespValue::Integer(key_count as i64),
+                RespValue::BulkString(Some(b"eviction.policy".to_vec())),
+                RespValue::BulkString(Some(policy.as_bytes().to_vec())),
+            ];
+
+            RespValue::Array(Some(result))
+        }
+        "USAGE" => {
+            if args.len() != 2 {
+                return RespValue::error("wrong number of arguments for 'memory usage' command");
+            }
+
+            let key = match std::str::from_utf8(&args[1]) {
+                Ok(k) => k,
+                Err(_) => return RespValue::error("invalid key"),
+            };
+
+            // Get key_id first
+            match db.get_key_id(key) {
+                Ok(Some(key_id)) => match db.calculate_key_memory(key_id) {
+                    Ok(memory) => RespValue::Integer(memory as i64),
+                    Err(_) => RespValue::null(),
+                },
+                Ok(None) => RespValue::null(),
+                Err(_) => RespValue::error("ERR memory usage failed"),
+            }
+        }
+        _ => RespValue::error(&format!("ERR unknown MEMORY subcommand '{}'", subcommand)),
     }
 }
 
@@ -8244,6 +8457,7 @@ async fn execute_command_in_transaction(db: &mut Db, args: &[Vec<u8>]) -> RespVa
         "FLUSHDB" => cmd_flushdb(db),
         "INFO" => cmd_info(db, cmd_args),
         "CONFIG" => cmd_config(db, cmd_args),
+        "MEMORY" => cmd_memory(db, cmd_args),
         // String commands
         "GET" => cmd_get(db, cmd_args),
         "SET" => cmd_set(db, cmd_args),

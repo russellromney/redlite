@@ -1,5 +1,358 @@
 # Changelog
 
+## Session 51: CONFIG Commands, Eviction Improvements & Benchmarks (2026-01-17)
+
+**Achievement**: Completed CONFIG command implementation, added vacuum-first eviction strategy, and created comprehensive benchmarks
+
+**CONFIG Commands Added** (`crates/redlite/src/server/mod.rs`):
+- `CONFIG SET persist-access-tracking on|off|yes|no|true|false|1|0` - Enable/disable access tracking persistence
+- `CONFIG GET persist-access-tracking` - Returns "on" or "off"
+- `CONFIG SET access-flush-interval <ms>` - Set flush interval in milliseconds
+- `CONFIG GET access-flush-interval` - Get current flush interval
+- All policies already supported via CONFIG SET/GET maxmemory-policy
+
+**Public API Additions** (`crates/redlite/src/db.rs`):
+- `db.set_persist_access_tracking(bool)` - Set persistence mode
+- `db.persist_access_tracking() -> bool` - Get persistence mode
+- `db.set_access_flush_interval(i64)` - Set flush interval in ms
+- `db.access_flush_interval() -> i64` - Get flush interval in ms
+- Exported `EvictionPolicy` from `redlite` crate (`lib.rs`)
+
+**Unit Tests Added** (622 tests now passing):
+- `test_access_tracking_in_memory` - Verify in-memory HashMap updates
+- `test_access_tracking_multiple_reads` - Verify access_count increments
+- `test_persist_access_tracking_config` - Verify getter/setter for persistence
+- `test_access_flush_interval_config` - Verify getter/setter for flush interval
+- `test_eviction_policy_config` - Verify policy getter/setter
+- `test_flush_disabled_no_disk_writes` - Verify no-op when persist=false
+- `test_eviction_policy_from_str` - Test all 8 policy string parsing
+- `test_eviction_policy_to_str` - Test all 8 policy to string output
+
+**Oracle Tests Added** (167 tests now passing):
+- 18 new CONFIG tests in `sdks/oracle/spec/server.yaml`
+- Tests for all eviction policies: noeviction, allkeys-lru, allkeys-lfu, allkeys-random, volatile-lru, volatile-lfu, volatile-ttl, volatile-random
+- Tests for access tracking config: on/off/yes/no toggles
+- Tests for access-flush-interval: 0, 10000, etc
+- Tests for maxmemory and maxdisk CONFIG
+- Tests for wildcard GET and unknown parameter handling
+
+**Oracle Runner Updated** (`sdks/oracle/runners/rust_runner/src/main.rs`):
+- Added full CONFIG GET/SET command support for embedded testing
+- Supports all configuration parameters matching server implementation
+
+**Eviction Strategy Improvement**:
+- `maybe_evict()` and `maybe_evict_memory()` now use vacuum-first strategy
+- Phase 1: Delete expired keys first (free memory without losing valid data)
+- Phase 2: Only evict valid keys if vacuum wasn't sufficient
+- Improves data retention by preferring expired keys over valid keys
+
+**Performance Benchmarks** (`crates/redlite/benches/eviction.rs`):
+- `access_tracking` - Compare GET with tracking on vs off
+- `eviction_policy_set` - SET performance across policies (noeviction, allkeys-lru, allkeys-lfu, allkeys-random)
+- `eviction_policy_get` - GET performance with LRU/LFU tracking
+- `mixed_workload` - 80% read / 20% write with different policies
+- `hash_tracking` - HGET with tracking on vs off
+- `list_tracking` - LRANGE with tracking on vs off
+- `zset_tracking` - ZSCORE with tracking on vs off
+- `flush_interval` - Impact of different flush intervals (0ms to 60000ms)
+
+Run with: `cargo bench --bench eviction`
+
+**Files Modified**:
+- `crates/redlite/src/db.rs` - Added getter/setter methods, vacuum-first eviction strategy
+- `crates/redlite/src/server/mod.rs` - Added CONFIG handlers for access tracking
+- `crates/redlite/src/lib.rs` - Exported EvictionPolicy from crate
+- `crates/redlite/benches/eviction.rs` - New benchmark file
+- `crates/redlite/Cargo.toml` - Added eviction benchmark
+- `sdks/oracle/spec/server.yaml` - Added 18 CONFIG tests
+- `sdks/oracle/runners/rust_runner/src/main.rs` - Added CONFIG command support
+- `ROADMAP.md` - Marked Phase 6 and Phase 7 as complete
+
+---
+
+## Session 52: TypeScript SDK Updates - 17 Commands Added (2026-01-17)
+
+**Achievement**: Updated TypeScript SDK with 17 new commands using napi-rs bindings, successfully compiled and ready for use.
+
+**Commands Added**:
+- **Lists (4)**: lpushx, rpushx, lmove, lpos
+- **Sorted Sets (2)**: zinterstore, zunionstore
+- **Streams (3)**: xgroup_setid, xgroup_createconsumer, xgroup_delconsumer
+- **History (6)**: history_get, history_get_at, history_list_keys, history_stats, history_clear_key, history_prune
+
+**New Types**:
+- `StreamId` - napi object for stream IDs (ms, seq)
+- `HistoryEntryJs` - napi object for history entries with timestamp, data_snapshot, key, key_type, operation
+- `HistoryStatsJs` - napi object for history statistics with total_entries, oldest_timestamp, newest_timestamp, storage_bytes
+
+**Fixes**:
+- Fixed package.json to use new napi config format (binaryName, targets) instead of deprecated (name, triples)
+- Corrected history method names to match core API (history_get_at vs history_getat, history_list_keys vs history_list, etc.)
+- Used js_name decorators for camelCase JavaScript method names
+
+**Deferred**:
+- **Geospatial commands (4)** - Core API uses `&[&str]` which doesn't support binary-safe members. Requires core API update.
+- **Complex stream commands (4)** - xclaim, xinfo_stream, xinfo_groups, xinfo_consumers require additional type wrappers
+
+**Files Modified**:
+- `sdks/redlite-ts/src/lib.rs` - Added 17 new methods with proper napi bindings
+- `sdks/redlite-ts/package.json` - Fixed napi configuration
+- `sdks/ROADMAP.md` - Updated Session 52 status
+
+**Build Status**: ✅ Compiles successfully with no errors
+
+---
+
+## Session 50 Phase 2.6i: Memory-Based Eviction Implementation (COMPLETE)
+
+**Achievement**: Comprehensive memory-based eviction system with 8 eviction policies for :memory: databases
+
+**Core Implementation**:
+
+**Schema Changes**:
+- Added `last_accessed INTEGER` column to keys table for LRU tracking
+- Added `access_count INTEGER` column to keys table for LFU tracking
+- Added indexes on both columns for efficient eviction queries
+- Automatic migration for existing databases
+
+**Eviction Engine**:
+- `EvictionPolicy` enum with 8 strategies:
+  - `NoEviction` - Never evict (default, returns error on OOM)
+  - `AllKeysLRU` - Evict least recently used keys
+  - `AllKeysLFU` - Evict least frequently used keys
+  - `AllKeysRandom` - Evict random keys
+  - `VolatileLRU` - Evict LRU among keys with TTL
+  - `VolatileLFU` - Evict LFU among keys with TTL
+  - `VolatileTTL` - Evict shortest TTL first
+  - `VolatileRandom` - Evict random keys with TTL
+- `maybe_evict_memory()` - Memory-based eviction check (1s throttle)
+- `find_eviction_victim()` - Policy-based victim selection
+- `track_access()` - LRU/LFU access tracking on reads
+
+**Memory Management**:
+- `calculate_key_memory()` - Per-key memory calculation
+- `total_memory_usage()` - Aggregate memory across all keys
+- Calculates: key length + value size + metadata (~150 bytes overhead)
+- Type-aware: strings, hashes, lists, sets, zsets, streams
+
+**Commands**:
+- `CONFIG SET maxmemory <bytes>` - Set memory limit
+- `CONFIG GET maxmemory` - Get memory limit
+- `CONFIG SET maxmemory-policy <policy>` - Set eviction policy
+- `CONFIG GET maxmemory-policy` - Get current policy
+- `MEMORY STATS` - Memory usage statistics
+- `MEMORY USAGE <key>` - Per-key memory usage
+
+**CLI Integration**:
+- `--max-memory <bytes>` - Memory limit flag
+- `--eviction-policy <policy>` - Eviction policy flag
+- Validates policy on startup
+
+**Files Modified**:
+1. `crates/redlite/src/schema.sql` - Added access tracking columns
+2. `crates/redlite/src/db.rs` - Core eviction engine (~200 lines)
+3. `crates/redlite/src/server/mod.rs` - CONFIG/MEMORY commands (~70 lines)
+4. `crates/redlite/src/main.rs` - CLI flags (~30 lines)
+
+**Status**:
+- ✅ Schema changes and migration
+- ✅ Access tracking infrastructure (GET operation)
+- ✅ Memory calculation for all data types
+- ✅ All 8 eviction policies implemented
+- ✅ CONFIG commands extended
+- ✅ MEMORY commands implemented
+- ✅ CLI integration
+- ✅ Integrated with existing disk-based eviction
+- ⏳ TODO: Add track_access to remaining read operations (HGET, LINDEX, etc.)
+- ⏳ TODO: Write comprehensive tests
+- ⏳ TODO: Update README documentation
+- ⏳ TODO: Make random policies deterministic for oracle tests
+
+**Next Steps**:
+1. Add track_access() to all read operations (MGET, HGET, HGETALL, etc.)
+2. Write unit tests for eviction policies
+3. Write integration tests for CONFIG/MEMORY commands
+4. Create oracle tests for new commands
+5. Update README with memory eviction documentation
+6. Implement deterministic random eviction for tests
+7. Run full test suite (148+ oracle tests)
+8. Benchmark performance impact
+
+---
+
+## Session 51: Python SDK - Session 4 FFI Bindings Exposure
+
+**Achievement**: Python SDK updated with 21/25 new commands from Session 4 FFI layer
+
+**Added to Python SDK (PyO3 bindings)**:
+
+**Lists (4/4)**:
+- `lpushx()` - Push to list only if key exists
+- `rpushx()` - Push to list (right) only if key exists
+- `lmove()` - Move element between lists atomically
+- `lpos()` - Find positions of element in list
+
+**Sorted Sets (2/2)**:
+- `zinterstore()` - Intersect sorted sets and store result
+- `zunionstore()` - Union sorted sets and store result
+
+**Streams (3/7)**:
+- `xgroup_setid()` - Set consumer group last delivered ID
+- `xgroup_createconsumer()` - Create consumer in group
+- `xgroup_delconsumer()` - Delete consumer from group
+
+**History (6/6)**:
+- `history_get()` - Query historical entries with filters
+- `history_getat()` - Time-travel query to specific timestamp
+- `history_list()` - List all tracked keys
+- `history_stats()` - Get history tracking statistics
+- `history_clear()` - Clear history for a key
+- `history_prune()` - Prune old history entries globally
+
+**Geospatial (4/6)**:
+- `geoadd()` - Add geospatial items with coordinates
+- `geopos()` - Get coordinates of members
+- `geodist()` - Calculate distance between members
+- `geohash()` - Get geohash strings for members
+
+**New Types**:
+- `StreamId` - PyO3 class for stream IDs (ms-seq format)
+
+**Deferred (Complex Types)**:
+- `xclaim`, `xinfo_stream`, `xinfo_groups`, `xinfo_consumers` - require StreamEntry/StreamInfo wrappers
+- `geosearch`, `geosearchstore` - require GeoSearchOpts wrapper
+
+**Status**: Python SDK core bindings complete. TypeScript and Go SDKs pending.
+
+---
+
+## Session 50: Oracle Test Infrastructure Completion
+
+**Achievement**: 148/148 oracle tests passing (100% Redis compatibility)
+
+**Added**:
+- EXPIREAT, PEXPIREAT, SELECT, VACUUM commands to oracle runner
+- Timestamp helper functions for test YAML syntax
+- Type assertions for flexible test expectations
+
+---
+
+## Session 40: Oracle Test Infrastructure Fix
+
+**Achievement**: 230/230 oracle tests passing (100% pass rate)
+
+**Root Cause**: Test pollution from parallel execution, not implementation bugs
+
+**Fix**: Tests must run sequentially (`parallelism=1`) due to shared Redis instance
+
+---
+
+## Session 39: Core Bug Fixes & Transaction Tests
+
+**Bug Fixes**:
+- `persist()` - Returns false when key has no TTL
+- `rename()` - Handles renaming key to itself
+- `lrem()/linsert()` - Fixed borrowing conflicts
+
+**Added**: 10 server-mode transaction tests (MULTI/EXEC/DISCARD)
+
+---
+
+## Session 38: Oracle Test Bug Fixes
+
+**Result**: 228/230 tests passing (99.1% pass rate)
+
+**Bugs Fixed**:
+- ZRANGE - Fixed start > stop check
+- ZCOUNT/ZRANGEBYSCORE - Fixed epsilon value for exclusive bounds
+- XCLAIM - Fixed integer overflow with saturating_add
+- XREADGROUP - Special case for StreamId::max()
+
+---
+
+## Session 37: Go SDK Complete
+
+**Achievement**: 100% oracle test coverage (137/137 tests passing)
+
+**Added**: 17 missing Redis commands - MGET, MSET, GETDEL, GETRANGE, SETRANGE, DECRBY, INCRBYFLOAT, PSETEX, PTTL, PEXPIRE, RENAME, RENAMENX, HGETALL, HMGET, ZREM, ZRANGE, ZREVRANGE
+
+**Impact**: First SDK to reach 100% oracle coverage
+
+---
+
+## Session 36: History Feature Bug Fixes
+
+**Fixed**: Critical deadlock in history tracking (4 bugs total)
+
+**Added**: Parallel test infrastructure with SQLite tracking
+
+**Result**: 212/230 oracle tests passing (92% pass rate), tests run in ~2 minutes
+
+---
+
+## Session 35: Blocking Operations (BLPOP/BRPOP)
+
+**Added**: 
+- BLPOP/BRPOP async implementations using tokio
+- Adaptive polling strategy (250μs→1ms intervals)
+- Sync versions for embedded mode
+
+**Tests**: 12 comprehensive tests covering all scenarios
+
+---
+
+## Session 34: Bug Fixes (LPOS, LMOVE)
+
+**Bugs Fixed**:
+- LPOS COUNT 0 - Now returns ALL matches per Redis spec
+- LMOVE Same-List Deadlock - Fixed mutex drop before reacquiring
+
+**Result**: 601 tests passing
+
+
+## Session 41: DST + Fly.io Integration Foundation
+
+### Added - Distributed Testing Infrastructure
+
+**Goal**: Enable distributed DST (Deterministic Simulation Testing) across Fly.io machines.
+
+**Changes to redlite-dst**:
+1. **Seed Range Flags** - [redlite-dst/src/main.rs](redlite-dst/src/main.rs)
+   - Added `--seed-start` / `--seed-end` to `properties` command
+   - Added `--seed-start` / `--seed-end` to `simulate` command
+   - Enables distributing seed ranges across multiple machines
+
+2. **Updated Runner Logic** - [redlite-dst/src/runner.rs](redlite-dst/src/runner.rs)
+   - Modified `properties()` to accept and use seed ranges
+   - Modified `simulate()` to accept and use seed ranges
+   - Maintains backward compatibility (ranges optional)
+
+**Testing**:
+```bash
+# Test seed ranges work correctly
+cargo run -- properties --seed-start 0 --seed-end 10 --format json
+# Returns JSON with 70 test results (7 properties × 10 seeds)
+
+cargo run -- simulate --seed-start 100 --seed-end 110 --format json
+# Returns JSON with 40 test results (4 scenarios × 10 seeds)
+```
+
+**Integration with fly-benchmark-engine**:
+- fly-benchmark-engine gained `/exec` endpoint for running binaries to completion
+- redlite-dst can now be deployed and executed on Fly.io runners
+- Next: Add `fly-bench dst` CLI command for orchestration
+
+**Files Modified**:
+- `redlite-dst/src/main.rs` - Added seed range CLI flags
+- `redlite-dst/src/runner.rs` - Implemented seed range logic
+- `redlite-dst/IMPLEMENTATION.md` - Updated cloud execution section
+
+**Documentation**:
+- Updated [fly-benchmark-engine/ROADMAP.md](../fly-benchmark-engine/ROADMAP.md) with Phase 2.7 progress
+- Added Session 41 completion notes
+
+---
+
 ## Session 49: Disk-Based Eviction
 
 ### Added - Simple Disk Eviction

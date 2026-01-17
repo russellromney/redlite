@@ -753,6 +753,118 @@ impl Runner {
                     .map_err(|e| e.to_string())
             }
 
+            // CONFIG command
+            "config" => {
+                if args.is_empty() {
+                    return Err("wrong number of arguments for 'config' command".to_string());
+                }
+                let subcommand = get_string(args, 0)?.to_uppercase();
+                match subcommand.as_str() {
+                    "GET" => {
+                        if args.len() < 2 {
+                            return Err("wrong number of arguments for 'config get' command".to_string());
+                        }
+                        let pattern = get_string(args, 1)?.to_lowercase();
+                        let mut result: Vec<Value> = Vec::new();
+
+                        // Match maxdisk pattern
+                        if pattern == "maxdisk" || pattern == "*" {
+                            result.push(Value::String("maxdisk".to_string()));
+                            result.push(Value::String(db.max_disk().to_string()));
+                        }
+
+                        // Match maxmemory pattern
+                        if pattern == "maxmemory" || pattern == "*" {
+                            result.push(Value::String("maxmemory".to_string()));
+                            result.push(Value::String(db.max_memory().to_string()));
+                        }
+
+                        // Match maxmemory-policy pattern
+                        if pattern == "maxmemory-policy" || pattern == "*" {
+                            result.push(Value::String("maxmemory-policy".to_string()));
+                            result.push(Value::String(db.eviction_policy().to_str().to_string()));
+                        }
+
+                        // Match persist-access-tracking pattern
+                        if pattern == "persist-access-tracking" || pattern == "*" {
+                            result.push(Value::String("persist-access-tracking".to_string()));
+                            let value = if db.persist_access_tracking() { "on" } else { "off" };
+                            result.push(Value::String(value.to_string()));
+                        }
+
+                        // Match access-flush-interval pattern
+                        if pattern == "access-flush-interval" || pattern == "*" {
+                            result.push(Value::String("access-flush-interval".to_string()));
+                            result.push(Value::String(db.access_flush_interval().to_string()));
+                        }
+
+                        Ok(Value::List(result))
+                    }
+                    "SET" => {
+                        if args.len() < 3 {
+                            return Err("wrong number of arguments for 'config set' command".to_string());
+                        }
+                        let key = get_string(args, 1)?.to_lowercase();
+                        let value = get_string(args, 2)?;
+
+                        match key.as_str() {
+                            "maxdisk" => {
+                                match value.parse::<u64>() {
+                                    Ok(bytes) => {
+                                        db.set_max_disk(bytes);
+                                        Ok(Value::String("OK".to_string()))
+                                    }
+                                    Err(_) => Err("invalid maxdisk value".to_string()),
+                                }
+                            }
+                            "maxmemory" => {
+                                match value.parse::<u64>() {
+                                    Ok(bytes) => {
+                                        db.set_max_memory(bytes);
+                                        Ok(Value::String("OK".to_string()))
+                                    }
+                                    Err(_) => Err("invalid maxmemory value".to_string()),
+                                }
+                            }
+                            "maxmemory-policy" => {
+                                match redlite::EvictionPolicy::from_str(&value) {
+                                    Ok(policy) => {
+                                        db.set_eviction_policy(policy);
+                                        Ok(Value::String("OK".to_string()))
+                                    }
+                                    Err(_) => Err("invalid maxmemory-policy".to_string()),
+                                }
+                            }
+                            "persist-access-tracking" => {
+                                match value.to_lowercase().as_str() {
+                                    "on" | "yes" | "true" | "1" => {
+                                        db.set_persist_access_tracking(true);
+                                        Ok(Value::String("OK".to_string()))
+                                    }
+                                    "off" | "no" | "false" | "0" => {
+                                        db.set_persist_access_tracking(false);
+                                        Ok(Value::String("OK".to_string()))
+                                    }
+                                    _ => Err("invalid persist-access-tracking value (use on/off)".to_string()),
+                                }
+                            }
+                            "access-flush-interval" => {
+                                match value.parse::<i64>() {
+                                    Ok(ms) if ms >= 0 => {
+                                        db.set_access_flush_interval(ms);
+                                        Ok(Value::String("OK".to_string()))
+                                    }
+                                    Ok(_) => Err("access-flush-interval must be non-negative".to_string()),
+                                    Err(_) => Err("invalid access-flush-interval value".to_string()),
+                                }
+                            }
+                            _ => Err(format!("unsupported config parameter: {}", key)),
+                        }
+                    }
+                    _ => Err(format!("unknown config subcommand: {}", subcommand)),
+                }
+            }
+
             _ => Err(format!("Unknown command: {}", cmd)),
         }
     }

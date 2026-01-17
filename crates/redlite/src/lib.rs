@@ -24,10 +24,10 @@ pub mod turso_db;
 pub mod types;
 
 pub use backend::Backend;
-pub use db::Db;
+pub use db::{Db, EvictionPolicy};
 pub use error::{KvError, Result};
 pub use resp::RespValue;
-pub use server::Server;
+pub use server::{ConnectionHandler, Server};
 #[cfg(feature = "turso")]
 pub use turso_db::TursoDb;
 pub use types::{
