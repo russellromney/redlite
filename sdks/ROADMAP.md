@@ -635,11 +635,1408 @@ make test-oracle-compare --seed 12345
 
 ---
 
+---
+
+## Upcoming SDKs
+
+### SDK Status Overview
+
+| Language | Status | Binding Type | Priority |
+|----------|--------|--------------|----------|
+| **Rust** | ✅ Native | Use `redlite` crate directly | - |
+| **Python** | ✅ Complete | PyO3 | - |
+| **TypeScript** | ✅ Complete | napi-rs | - |
+| **Go** | ✅ Complete | CGO | - |
+| **Dart** | ✅ Complete | FFI | - |
+| **Kotlin** | ✅ Complete | JNI | - |
+| **Java** | ✅ Complete | JNI | - |
+| **Swift** | 📋 Planned | C FFI | HIGH |
+| **C#/.NET** | 📋 Planned | P/Invoke | HIGH |
+| **WASM** | 📋 Planned | wasm-bindgen | MEDIUM |
+| **Ruby** | 📋 Planned | FFI gem / magnus | MEDIUM |
+| **C/C++** | 📋 Planned | Native header | MEDIUM |
+| **Zig** | 📋 Planned | C ABI | LOW |
+| **PHP** | 📋 Planned | PHP FFI | LOW |
+| **Elixir** | 📋 Planned | Rustler NIFs | LOW |
+| **Lua** | 📋 Planned | LuaJIT FFI | LOW |
+| **Scala** | 📋 Planned | JNI (reuse Java) | LOW |
+| **Clojure** | 📋 Planned | JNI (reuse Java) | LOW |
+| **F#** | 📋 Planned | P/Invoke (reuse .NET) | LOW |
+| **OCaml** | 📋 Planned | ctypes | LOW |
+| **Haskell** | 📋 Planned | C FFI | LOW |
+| **Julia** | 📋 Planned | ccall | LOW |
+| **R** | 📋 Planned | .Call / extendr | LOW |
+| **Nim** | 📋 Planned | C FFI | LOW |
+| **Crystal** | 📋 Planned | C bindings | LOW |
+| **V** | 📋 Planned | C interop | LOW |
+| **D** | 📋 Planned | extern(C) | LOW |
+| **Perl** | 📋 Planned | FFI::Platypus | LOW |
+| **Common Lisp** | 📋 Planned | CFFI | LOW |
+| **Racket** | 📋 Planned | FFI | LOW |
+| **Erlang** | 📋 Planned | NIFs | LOW |
+| **Objective-C** | 📋 Planned | C interop | LOW |
+| **Fortran** | 📋 Planned | ISO_C_BINDING | LOW |
+| **COBOL** | 📋 Planned | GnuCOBOL C interop | ENTERPRISE |
+| **Ada** | 📋 Planned | pragma Import | LOW |
+| **Prolog** | 📋 Planned | SWI-Prolog FFI | LOW |
+| **Tcl** | 📋 Planned | Tcl C extension | LOW |
+| **APL/J/K** | 📋 Planned | Dyalog FFI | LOW |
+| **Forth** | 📋 Planned | C FFI | LOW |
+| **MATLAB** | 📋 Planned | MEX | MEDIUM |
+| **PowerShell** | 📋 Planned | .NET wrapper | LOW |
+| **Bash** | 📋 Planned | CLI/builtin | LOW |
+| **GDScript** | 📋 Planned | GDExtension | LOW |
+| **x86 Assembly** | 📋 Planned | C ABI | HARDCORE |
+| **Brainfuck** | 📋 Planned | C transpiler | MEME |
+| **LOLCODE** | 📋 Planned | Interpreter ext | MEME |
+| **Rockstar** | 📋 Planned | Interpreter ext | MEME |
+| **Shakespeare** | 📋 Planned | Transpiler | MEME |
+| **Piet** | 📋 Planned | Image generator | MEME |
+| **Whitespace** | 📋 Planned | Interpreter ext | MEME |
+| **Scratch** | 📋 Planned | Scratch Extension | EDUCATIONAL |
+| **Tabloid** | 📋 Planned | Interpreter ext | MEME |
+
+**Total: 7 complete + 47 planned = 54 SDKs**
+
+### Planned SDK Details
+
+---
+
+#### Swift SDK
+
+**Status**: PLANNED
+**Priority**: HIGH
+**Location**: `sdks/redlite-swift/`
+**Binding Type**: Swift Package with C FFI
+
+**Structure**:
+```
+sdks/redlite-swift/
+├── Package.swift
+├── Sources/
+│   └── Redlite/
+│       ├── Redlite.swift          # Main client
+│       ├── EmbeddedDb.swift       # FFI wrapper
+│       ├── Commands/
+│       │   ├── StringCommands.swift
+│       │   ├── HashCommands.swift
+│       │   ├── ListCommands.swift
+│       │   ├── SetCommands.swift
+│       │   └── ZSetCommands.swift
+│       └── Namespaces/
+│           ├── FTSNamespace.swift
+│           ├── VectorNamespace.swift
+│           ├── GeoNamespace.swift
+│           └── HistoryNamespace.swift
+└── Tests/
+    └── RedliteTests/
+```
+
+**Implementation Notes**:
+- Use `@_cdecl` or C interop for FFI bindings
+- Support iOS, macOS, tvOS, watchOS
+- Async/await support for modern Swift
+- Consider Swift-C++ interop (Swift 5.9+) as alternative
+
+---
+
+#### C#/.NET SDK
+
+**Status**: PLANNED
+**Priority**: HIGH
+**Location**: `sdks/redlite-dotnet/`
+**Binding Type**: P/Invoke with native library
+
+**Structure**:
+```
+sdks/redlite-dotnet/
+├── Redlite.csproj
+├── src/
+│   ├── Redlite.cs               # Main client
+│   ├── EmbeddedDb.cs            # P/Invoke wrapper
+│   ├── NativeMethods.cs         # DllImport declarations
+│   ├── SetOptions.cs
+│   ├── ZMember.cs
+│   └── Namespaces/
+│       ├── FTSNamespace.cs
+│       ├── VectorNamespace.cs
+│       ├── GeoNamespace.cs
+│       └── HistoryNamespace.cs
+└── tests/
+    ├── StringsTest.cs
+    ├── HashesTest.cs
+    └── ...
+```
+
+**Implementation Notes**:
+- Target .NET 6+ and .NET Standard 2.1
+- Use `LibraryImport` (source-generated) for .NET 7+
+- NuGet package with native binaries for win-x64, linux-x64, osx-arm64, osx-x64
+- Consider StackExchange.Redis compatibility layer for server mode
+
+---
+
+#### Ruby SDK
+
+**Status**: PLANNED
+**Priority**: MEDIUM
+**Location**: `sdks/redlite-ruby/`
+**Binding Type**: FFI gem or native C extension
+
+**Structure**:
+```
+sdks/redlite-ruby/
+├── redlite.gemspec
+├── lib/
+│   ├── redlite.rb               # Main entry
+│   ├── redlite/
+│   │   ├── client.rb            # Unified client
+│   │   ├── embedded_db.rb       # FFI wrapper
+│   │   ├── namespaces/
+│   │   │   ├── fts.rb
+│   │   │   ├── vector.rb
+│   │   │   ├── geo.rb
+│   │   │   └── history.rb
+│   │   └── version.rb
+├── ext/                         # If using native extension
+│   └── redlite/
+│       └── extconf.rb
+└── spec/
+    ├── strings_spec.rb
+    ├── hashes_spec.rb
+    └── ...
+```
+
+**Implementation Notes**:
+- Option A: `ffi` gem (simpler, portable)
+- Option B: Native C extension with `rb_define_*` (faster)
+- Consider magnus (Rust → Ruby bindings) as alternative
+- Gem should include prebuilt binaries for common platforms
+
+---
+
+#### C/C++ SDK
+
+**Status**: PLANNED
+**Priority**: MEDIUM
+**Location**: `sdks/redlite-c/`
+**Binding Type**: C header with static/dynamic library
+
+**Structure**:
+```
+sdks/redlite-c/
+├── include/
+│   └── redlite.h                # Public C API
+├── src/
+│   └── redlite.c                # Thin wrapper (if needed)
+├── examples/
+│   ├── basic.c
+│   └── CMakeLists.txt
+├── CMakeLists.txt
+└── tests/
+    └── test_strings.c
+```
+
+**C API Design**:
+```c
+// redlite.h
+typedef struct redlite_db redlite_db_t;
+typedef struct redlite_result redlite_result_t;
+
+redlite_db_t* redlite_open(const char* path);
+redlite_db_t* redlite_open_memory(void);
+void redlite_close(redlite_db_t* db);
+
+int redlite_set(redlite_db_t* db, const char* key,
+                const uint8_t* value, size_t value_len);
+redlite_result_t* redlite_get(redlite_db_t* db, const char* key);
+
+const uint8_t* redlite_result_bytes(redlite_result_t* r, size_t* len);
+void redlite_result_free(redlite_result_t* r);
+```
+
+**Implementation Notes**:
+- Base layer for other FFI bindings
+- cbindgen to generate header from Rust
+- Provide both static (.a) and dynamic (.so/.dylib/.dll) libraries
+- CMake + pkg-config support
+
+---
+
+#### Zig SDK
+
+**Status**: PLANNED
+**Priority**: LOW
+**Location**: `sdks/redlite-zig/`
+**Binding Type**: C ABI interop
+
+**Structure**:
+```
+sdks/redlite-zig/
+├── build.zig
+├── src/
+│   ├── redlite.zig              # Main module
+│   └── c.zig                    # C bindings import
+└── tests/
+    └── test_basic.zig
+```
+
+**Implementation Notes**:
+- Zig has excellent C interop, use C SDK as base
+- `@cImport` to import redlite.h directly
+- Provide Zig-idiomatic wrapper with slices and optionals
+- Cross-compile support for all targets
+
+---
+
+#### PHP SDK
+
+**Status**: PLANNED
+**Priority**: LOW
+**Location**: `sdks/redlite-php/`
+**Binding Type**: PHP FFI (PHP 7.4+) or native extension
+
+**Structure**:
+```
+sdks/redlite-php/
+├── composer.json
+├── src/
+│   ├── Redlite.php              # Main client
+│   ├── EmbeddedDb.php           # FFI wrapper
+│   └── Namespaces/
+│       ├── FTSNamespace.php
+│       ├── VectorNamespace.php
+│       ├── GeoNamespace.php
+│       └── HistoryNamespace.php
+└── tests/
+    ├── StringsTest.php
+    └── ...
+```
+
+**Implementation Notes**:
+- PHP FFI is cleanest approach (PHP 7.4+)
+- Alternative: PECL extension (more complex, better performance)
+- Composer package with bundled binaries
+- Consider Laravel/Symfony integration
+
+---
+
+#### Elixir SDK
+
+**Status**: PLANNED
+**Priority**: LOW
+**Location**: `sdks/redlite-elixir/`
+**Binding Type**: Rustler (Rust NIFs)
+
+**Structure**:
+```
+sdks/redlite-elixir/
+├── mix.exs
+├── lib/
+│   ├── redlite.ex               # Main module
+│   ├── redlite/
+│   │   ├── native.ex            # NIF wrapper
+│   │   └── namespaces/
+│   │       ├── fts.ex
+│   │       ├── vector.ex
+│   │       ├── geo.ex
+│   │       └── history.ex
+├── native/
+│   └── redlite_nif/
+│       ├── Cargo.toml
+│       └── src/lib.rs           # Rustler NIFs
+└── test/
+    ├── strings_test.exs
+    └── ...
+```
+
+**Implementation Notes**:
+- Rustler is the standard for Rust → Elixir
+- NIFs run in BEAM VM, need to be careful about blocking
+- Consider dirty schedulers for long operations
+- Hex package with precompiled NIFs
+
+---
+
+#### Lua SDK
+
+**Status**: PLANNED
+**Priority**: LOW
+**Location**: `sdks/redlite-lua/`
+**Binding Type**: LuaJIT FFI or C module
+
+**Structure**:
+```
+sdks/redlite-lua/
+├── redlite.lua                  # FFI wrapper (LuaJIT)
+├── redlite/
+│   ├── init.lua
+│   ├── client.lua
+│   └── namespaces/
+│       ├── fts.lua
+│       ├── vector.lua
+│       ├── geo.lua
+│       └── history.lua
+├── src/                         # If using C module
+│   └── redlite.c
+└── spec/
+    └── redlite_spec.lua
+```
+
+**Implementation Notes**:
+- LuaJIT FFI for best performance (LuaJIT only)
+- C module for standard Lua 5.x compatibility
+- LuaRocks package
+- Common use case: Redis replacement in game servers
+
+---
+
+---
+
+#### Scala SDK
+
+**Status**: PLANNED
+**Priority**: LOW
+**Location**: `sdks/redlite-scala/`
+**Binding Type**: JNI (reuse Java bindings)
+
+**Structure**:
+```
+sdks/redlite-scala/
+├── build.sbt
+├── src/main/scala/com/redlite/
+│   ├── Redlite.scala
+│   ├── EmbeddedDb.scala
+│   └── namespaces/
+└── src/test/scala/com/redlite/
+```
+
+**Implementation Notes**:
+- Reuse `redlite-jni` native library from Java SDK
+- Scala-idiomatic wrapper with Option, Try, implicits
+- sbt build with Maven Central publishing
+
+---
+
+#### Clojure SDK
+
+**Status**: PLANNED
+**Priority**: LOW
+**Location**: `sdks/redlite-clojure/`
+**Binding Type**: JNI (reuse Java bindings)
+
+**Structure**:
+```
+sdks/redlite-clojure/
+├── deps.edn
+├── src/redlite/
+│   ├── core.clj
+│   └── namespaces.clj
+└── test/redlite/
+```
+
+**Implementation Notes**:
+- Wrap Java SDK with Clojure idioms
+- Use `with-open` for resource management
+- Keywords and maps for options
+- Clojars publishing
+
+---
+
+#### F# SDK
+
+**Status**: PLANNED
+**Priority**: LOW
+**Location**: `sdks/redlite-fsharp/`
+**Binding Type**: P/Invoke (reuse .NET bindings)
+
+**Structure**:
+```
+sdks/redlite-fsharp/
+├── Redlite.FSharp.fsproj
+├── src/
+│   ├── Redlite.fs
+│   └── Namespaces.fs
+└── tests/
+```
+
+**Implementation Notes**:
+- Wrap C# SDK with F# idioms
+- Option types, Result types, computation expressions
+- Async workflows support
+- NuGet package
+
+---
+
+#### OCaml SDK
+
+**Status**: PLANNED
+**Priority**: LOW
+**Location**: `sdks/redlite-ocaml/`
+**Binding Type**: C FFI via ctypes
+
+**Structure**:
+```
+sdks/redlite-ocaml/
+├── dune-project
+├── lib/
+│   ├── redlite.ml
+│   ├── redlite.mli
+│   └── stubs/
+└── test/
+```
+
+**Implementation Notes**:
+- Use `ctypes` library for C FFI
+- Or `ocaml-rust` for direct Rust bindings
+- opam package
+
+---
+
+#### Haskell SDK
+
+**Status**: PLANNED
+**Priority**: LOW
+**Location**: `sdks/redlite-haskell/`
+**Binding Type**: C FFI
+
+**Structure**:
+```
+sdks/redlite-haskell/
+├── redlite.cabal
+├── src/
+│   ├── Database/Redlite.hs
+│   ├── Database/Redlite/FFI.hs
+│   └── Database/Redlite/Commands.hs
+└── test/
+```
+
+**Implementation Notes**:
+- Use `hsc2hs` or inline-c for FFI
+- ByteString for binary data
+- ResourceT for safe resource management
+- Hackage publishing
+
+---
+
+#### Julia SDK
+
+**Status**: PLANNED
+**Priority**: LOW
+**Location**: `sdks/redlite-julia/`
+**Binding Type**: ccall / CBinding.jl
+
+**Structure**:
+```
+sdks/redlite-julia/
+├── Project.toml
+├── src/
+│   ├── Redlite.jl
+│   └── commands.jl
+└── test/
+```
+
+**Implementation Notes**:
+- Julia's `ccall` is excellent for C interop
+- Good for data science / ML workflows
+- JuliaHub / General registry publishing
+
+---
+
+#### R SDK
+
+**Status**: PLANNED
+**Priority**: LOW
+**Location**: `sdks/redlite-r/`
+**Binding Type**: C via .Call interface
+
+**Structure**:
+```
+sdks/redlite-r/
+├── DESCRIPTION
+├── NAMESPACE
+├── R/
+│   ├── redlite.R
+│   └── commands.R
+├── src/
+│   └── init.c
+└── tests/
+```
+
+**Implementation Notes**:
+- Use `.Call` interface to C
+- Or `extendr` for Rust → R bindings
+- CRAN package
+- Pairs well with data.table / tidyverse workflows
+
+---
+
+#### Nim SDK
+
+**Status**: PLANNED
+**Priority**: LOW
+**Location**: `sdks/redlite-nim/`
+**Binding Type**: C FFI
+
+**Structure**:
+```
+sdks/redlite-nim/
+├── redlite.nimble
+├── src/
+│   ├── redlite.nim
+│   └── redlite/
+│       ├── ffi.nim
+│       └── commands.nim
+└── tests/
+```
+
+**Implementation Notes**:
+- Nim has excellent C interop with `{.importc.}`
+- Nimble package
+
+---
+
+#### Crystal SDK
+
+**Status**: PLANNED
+**Priority**: LOW
+**Location**: `sdks/redlite-crystal/`
+**Binding Type**: C bindings
+
+**Structure**:
+```
+sdks/redlite-crystal/
+├── shard.yml
+├── src/
+│   ├── redlite.cr
+│   └── redlite/
+│       ├── lib.cr
+│       └── commands.cr
+└── spec/
+```
+
+**Implementation Notes**:
+- Crystal has clean C binding syntax with `@[Link]`
+- Ruby-like syntax, easy to learn
+- shards package manager
+
+---
+
+#### V SDK
+
+**Status**: PLANNED
+**Priority**: LOW
+**Location**: `sdks/redlite-v/`
+**Binding Type**: C interop
+
+**Structure**:
+```
+sdks/redlite-v/
+├── v.mod
+├── redlite.v
+└── tests/
+```
+
+**Implementation Notes**:
+- V has simple C interop
+- Single file is often sufficient
+- Very fast compilation
+
+---
+
+#### D SDK
+
+**Status**: PLANNED
+**Priority**: LOW
+**Location**: `sdks/redlite-d/`
+**Binding Type**: C interface / extern(C)
+
+**Structure**:
+```
+sdks/redlite-d/
+├── dub.json
+├── source/
+│   └── redlite.d
+└── tests/
+```
+
+**Implementation Notes**:
+- D has excellent C interop
+- `extern(C)` for function declarations
+- DUB package registry
+
+---
+
+#### Perl SDK
+
+**Status**: PLANNED
+**Priority**: LOW
+**Location**: `sdks/redlite-perl/`
+**Binding Type**: XS or FFI::Platypus
+
+**Structure**:
+```
+sdks/redlite-perl/
+├── Makefile.PL
+├── lib/
+│   └── Redlite.pm
+├── xs/                          # If using XS
+│   └── Redlite.xs
+└── t/
+```
+
+**Implementation Notes**:
+- FFI::Platypus is cleaner than XS
+- CPAN distribution
+
+---
+
+#### Common Lisp SDK
+
+**Status**: PLANNED
+**Priority**: LOW
+**Location**: `sdks/redlite-cl/`
+**Binding Type**: CFFI
+
+**Structure**:
+```
+sdks/redlite-cl/
+├── redlite.asd
+├── src/
+│   ├── package.lisp
+│   ├── ffi.lisp
+│   └── redlite.lisp
+└── tests/
+```
+
+**Implementation Notes**:
+- CFFI is the standard for C interop
+- Works across SBCL, CCL, ECL, etc.
+- Quicklisp distribution
+
+---
+
+#### Racket SDK
+
+**Status**: PLANNED
+**Priority**: LOW
+**Location**: `sdks/redlite-racket/`
+**Binding Type**: FFI
+
+**Structure**:
+```
+sdks/redlite-racket/
+├── info.rkt
+├── main.rkt
+├── private/
+│   └── ffi.rkt
+└── tests/
+```
+
+**Implementation Notes**:
+- Racket FFI is well-documented
+- Package server distribution
+
+---
+
+#### Erlang SDK
+
+**Status**: PLANNED
+**Priority**: LOW
+**Location**: `sdks/redlite-erlang/`
+**Binding Type**: NIFs (like Elixir)
+
+**Structure**:
+```
+sdks/redlite-erlang/
+├── rebar.config
+├── src/
+│   ├── redlite.erl
+│   └── redlite_nif.erl
+├── c_src/
+│   └── redlite_nif.c
+└── test/
+```
+
+**Implementation Notes**:
+- Similar to Elixir but pure Erlang
+- Rustler also supports Erlang
+- hex.pm publishing
+
+---
+
+#### WASM SDK
+
+**Status**: PLANNED
+**Priority**: MEDIUM
+**Location**: `sdks/redlite-wasm/`
+**Binding Type**: wasm-bindgen
+
+**Structure**:
+```
+sdks/redlite-wasm/
+├── Cargo.toml
+├── src/
+│   └── lib.rs
+├── pkg/                         # Generated
+│   ├── redlite.js
+│   ├── redlite.d.ts
+│   └── redlite_bg.wasm
+└── examples/
+    └── web/
+```
+
+**Implementation Notes**:
+- Compile Redlite to WebAssembly
+- wasm-bindgen for JS interop
+- In-browser embedded database
+- npm package for distribution
+- Consider memory limitations
+
+---
+
+#### Objective-C SDK
+
+**Status**: PLANNED
+**Priority**: LOW
+**Location**: `sdks/redlite-objc/`
+**Binding Type**: C interop (bridging header)
+
+**Structure**:
+```
+sdks/redlite-objc/
+├── Redlite.xcodeproj
+├── Sources/
+│   ├── RDLDatabase.h
+│   ├── RDLDatabase.m
+│   └── Redlite-Bridging-Header.h
+└── Tests/
+```
+
+**Implementation Notes**:
+- Objective-C has seamless C interop
+- CocoaPods / SPM distribution
+- Legacy iOS/macOS support (Swift preferred for new projects)
+
+---
+
+#### Fortran SDK
+
+**Status**: PLANNED
+**Priority**: LOW
+**Location**: `sdks/redlite-fortran/`
+**Binding Type**: ISO_C_BINDING
+
+**Structure**:
+```
+sdks/redlite-fortran/
+├── fpm.toml
+├── src/
+│   └── redlite.f90
+└── test/
+```
+
+**Implementation Notes**:
+- Modern Fortran (2003+) has good C interop via ISO_C_BINDING
+- Niche but useful for scientific computing
+- fpm (Fortran Package Manager)
+
+---
+
+---
+
+### Esoteric & Unusual SDKs
+
+These languages rarely (or never) get Redis client support. Why not be first?
+
+---
+
+#### Brainfuck SDK
+
+**Status**: PLANNED
+**Priority**: MEME
+**Location**: `sdks/redlite-brainfuck/`
+**Binding Type**: Transpile to C, link with C SDK
+
+**Example Usage**:
+```brainfuck
+Memory layout:
+[0] = db pointer (via C interop hack)
+[1] = key buffer
+[2] = value buffer
+
+SET "a" "hello":
+++++++++[>+++++++++++++<-]>. (print 'h')
+... (this would be insane)
+```
+
+**Implementation Notes**:
+- Serious answer: Write a Brainfuck-to-C transpiler, link with C SDK
+- Or: Create a Brainfuck interpreter in Rust that has Redlite built-in
+- The real SDK is the friends we made along the way
+- Would be world's first Brainfuck Redis client
+
+---
+
+#### COBOL SDK
+
+**Status**: PLANNED
+**Priority**: ENTERPRISE
+**Location**: `sdks/redlite-cobol/`
+**Binding Type**: C interop via GnuCOBOL
+
+**Structure**:
+```
+sdks/redlite-cobol/
+├── copybooks/
+│   └── REDLITE.cpy
+├── src/
+│   └── REDLITE.cob
+└── examples/
+    └── SETGET.cob
+```
+
+**Example Usage**:
+```cobol
+       IDENTIFICATION DIVISION.
+       PROGRAM-ID. REDIS-EXAMPLE.
+       DATA DIVISION.
+       WORKING-STORAGE SECTION.
+       01 WS-KEY    PIC X(50) VALUE "CUSTOMER-001".
+       01 WS-VALUE  PIC X(100) VALUE "JOHN DOE".
+       01 WS-RESULT PIC X(100).
+       PROCEDURE DIVISION.
+           CALL "REDLITE-SET" USING WS-KEY WS-VALUE.
+           CALL "REDLITE-GET" USING WS-KEY WS-RESULT.
+           DISPLAY "VALUE: " WS-RESULT.
+           STOP RUN.
+```
+
+**Implementation Notes**:
+- GnuCOBOL compiles to C, so C interop is possible
+- Banks still run COBOL - they might actually want this
+- First Redis client for mainframe migration projects
+
+---
+
+#### Ada SDK
+
+**Status**: PLANNED
+**Priority**: LOW
+**Location**: `sdks/redlite-ada/`
+**Binding Type**: C interface pragma
+
+**Structure**:
+```
+sdks/redlite-ada/
+├── redlite.gpr
+├── src/
+│   ├── redlite.ads
+│   └── redlite.adb
+└── tests/
+```
+
+**Implementation Notes**:
+- Ada has strong C interop via `pragma Import`
+- Used in aerospace, defense, rail systems
+- SPARK subset for formally verified Redis operations (overkill but cool)
+
+---
+
+#### Prolog SDK
+
+**Status**: PLANNED
+**Priority**: LOW
+**Location**: `sdks/redlite-prolog/`
+**Binding Type**: SWI-Prolog FFI
+
+**Example Usage**:
+```prolog
+:- use_module(redlite).
+
+store_user(Id, Name) :-
+    redlite_set(user(Id), Name).
+
+get_user(Id, Name) :-
+    redlite_get(user(Id), Name).
+
+?- store_user(1, "Alice"), get_user(1, X).
+X = "Alice".
+```
+
+**Implementation Notes**:
+- SWI-Prolog has C FFI
+- Logic programming + key-value store = interesting patterns
+- Query your Redis with backtracking!
+
+---
+
+#### Tcl SDK
+
+**Status**: PLANNED
+**Priority**: LOW
+**Location**: `sdks/redlite-tcl/`
+**Binding Type**: Tcl C extension
+
+**Example Usage**:
+```tcl
+package require redlite
+
+set db [redlite::open ":memory:"]
+$db set mykey "hello world"
+puts [$db get mykey]
+$db close
+```
+
+**Implementation Notes**:
+- Tcl is still heavily used in EDA (chip design) tools
+- Simple C extension API
+- Could replace Redis in Tcl-based automation scripts
+
+---
+
+#### APL/J/K SDK
+
+**Status**: PLANNED
+**Priority**: LOW
+**Location**: `sdks/redlite-apl/`
+**Binding Type**: Dyalog APL FFI or J/K C interface
+
+**Example Usage (J)**:
+```j
+load 'redlite'
+db =: redlite_open ':memory:'
+'key' redlite_set db 'value'
+redlite_get db 'key'
+```
+
+**Implementation Notes**:
+- Array languages used in finance
+- Dyalog APL has decent C FFI
+- J and K also have C interfaces
+- Store vectors and matrices efficiently
+
+---
+
+#### Forth SDK
+
+**Status**: PLANNED
+**Priority**: LOW
+**Location**: `sdks/redlite-forth/`
+**Binding Type**: C FFI
+
+**Example Usage**:
+```forth
+: test-redlite
+  s" :memory:" redlite-open  ( db )
+  dup s" key" s" value" redlite-set drop
+  dup s" key" redlite-get type cr
+  redlite-close ;
+```
+
+**Implementation Notes**:
+- Stack-based, very minimal
+- Used in embedded systems, boot loaders
+- gforth has C interface
+
+---
+
+#### LOLCODE SDK
+
+**Status**: PLANNED
+**Priority**: MEME
+**Location**: `sdks/redlite-lolcode/`
+**Binding Type**: Interpreter extension
+
+**Example Usage**:
+```lolcode
+HAI 1.2
+  CAN HAS REDLITE?
+
+  I HAS A db ITZ OPENZ ":memory:"
+  db SETZ "kitteh" 2 "cheezburger"
+
+  I HAS A val
+  val R db GETZ "kitteh"
+  VISIBLE val BTW prints "cheezburger"
+
+  db CLOSEZ
+KTHXBYE
+```
+
+**Implementation Notes**:
+- Would need to extend a LOLCODE interpreter
+- Or transpile to another language
+- Internet points guaranteed
+
+---
+
+#### Rockstar SDK
+
+**Status**: PLANNED
+**Priority**: MEME
+**Location**: `sdks/redlite-rockstar/`
+**Binding Type**: Interpreter extension
+
+**Example Usage**:
+```rockstar
+Redis is calling
+The database is mysterious
+Put ":memory:" into the path
+Knock on the database with the path
+
+My key is "love"
+My value is "all you need"
+Whisper my key, my value to the database
+
+The answer is silence
+Listen to the database for my key
+Say the answer
+```
+
+**Implementation Notes**:
+- Rockstar: write code that looks like song lyrics
+- Would need interpreter extension
+- Perfect for DevOps karaoke
+
+---
+
+#### Shakespeare SDK
+
+**Status**: PLANNED
+**Priority**: MEME
+**Location**: `sdks/redlite-shakespeare/`
+**Binding Type**: Transpiler
+
+**Example Usage**:
+```
+The Tragedy of Redis, a Key-Value Play.
+
+Romeo, a key.
+Juliet, a value.
+The Database, a persistent store.
+
+Act I: The Setting.
+Scene I: The Connection.
+
+[Enter The Database]
+
+The Database:
+  Open thyself to memory!
+
+[Enter Romeo and Juliet]
+
+Romeo:
+  Thou art as lovely as the sum of thyself and a warm summer's day.
+
+Juliet:
+  Remember thyself.
+
+The Database:
+  Store Romeo's essence with Juliet's heart!
+```
+
+**Implementation Notes**:
+- Shakespeare Programming Language is Turing-complete
+- Transpile to C or another language
+- Redis, but make it theatrical
+
+---
+
+#### Piet SDK
+
+**Status**: PLANNED
+**Priority**: MEME
+**Location**: `sdks/redlite-piet/`
+**Binding Type**: Image-based programming
+
+**Implementation Notes**:
+- Piet: programs are images
+- Would need to generate images that represent Redis commands
+- `SET key value` = specific color pattern
+- The most beautiful Redis client ever made
+
+---
+
+#### Whitespace SDK
+
+**Status**: PLANNED
+**Priority**: MEME
+**Location**: `sdks/redlite-whitespace/`
+**Binding Type**: Interpreter extension
+
+**Implementation Notes**:
+- Whitespace: only spaces, tabs, and newlines
+- The invisible Redis client
+- Code reviews become impossible
+
+---
+
+#### MATLAB SDK
+
+**Status**: PLANNED
+**Priority**: MEDIUM
+**Location**: `sdks/redlite-matlab/`
+**Binding Type**: MEX (MATLAB Executable)
+
+**Example Usage**:
+```matlab
+db = redlite.open(':memory:');
+db.set('matrix', magic(5));
+result = db.get('matrix');
+disp(result);
+db.close();
+```
+
+**Implementation Notes**:
+- MEX files link C code into MATLAB
+- Huge in academia and engineering
+- Store matrices, time series, experiment data
+
+---
+
+#### Scratch SDK
+
+**Status**: PLANNED
+**Priority**: EDUCATIONAL
+**Location**: `sdks/redlite-scratch/`
+**Binding Type**: Scratch Extension
+
+**Implementation Notes**:
+- Visual programming for kids
+- Custom Scratch blocks for Redis operations
+- "When green flag clicked → SET score to 0"
+- Learn databases at age 8
+
+---
+
+#### PowerShell SDK
+
+**Status**: PLANNED
+**Priority**: LOW
+**Location**: `sdks/redlite-powershell/`
+**Binding Type**: P/Invoke or C# wrapper
+
+**Example Usage**:
+```powershell
+Import-Module Redlite
+
+$db = Open-RedliteDb -Path ":memory:"
+Set-RedliteValue -Db $db -Key "server" -Value "DC01"
+Get-RedliteValue -Db $db -Key "server"
+Close-RedliteDb -Db $db
+```
+
+**Implementation Notes**:
+- Wrap the .NET SDK
+- Native PowerShell cmdlets
+- Useful for Windows automation
+
+---
+
+#### Bash SDK
+
+**Status**: PLANNED
+**Priority**: LOW
+**Location**: `sdks/redlite-bash/`
+**Binding Type**: CLI wrapper or loadable builtin
+
+**Example Usage**:
+```bash
+source redlite.sh
+
+redlite_open db ":memory:"
+redlite_set $db "key" "value"
+result=$(redlite_get $db "key")
+echo "$result"
+redlite_close $db
+```
+
+**Implementation Notes**:
+- Option A: Shell functions wrapping CLI
+- Option B: Bash loadable builtin (enable -f)
+- For the truly dedicated shell scripter
+
+---
+
+#### GDScript SDK (Godot)
+
+**Status**: PLANNED
+**Priority**: LOW
+**Location**: `sdks/redlite-godot/`
+**Binding Type**: GDExtension (C++)
+
+**Example Usage**:
+```gdscript
+extends Node
+
+var db: Redlite
+
+func _ready():
+    db = Redlite.open(":memory:")
+    db.set("player_score", 100)
+    print(db.get("player_score"))
+
+func _exit_tree():
+    db.close()
+```
+
+**Implementation Notes**:
+- GDExtension for Godot 4.x
+- Embedded database for games
+- Save games, leaderboards, game state
+
+---
+
+#### Tabloid SDK
+
+**Status**: PLANNED
+**Priority**: MEME
+**Location**: `sdks/redlite-tabloid/`
+**Binding Type**: Interpreter extension
+
+**Example Usage**:
+```tabloid
+DISCOVER HOW TO testRedis WITH nothing
+RUMOR HAS IT
+    EXPERTS CLAIM db TO BE REDLITE OPEN OF ":memory:"
+
+    YOU WON'T BELIEVE WHAT HAPPENS WHEN
+        db SET OF "user" AND "Alice"
+    END OF STORY
+
+    EXPERTS CLAIM result TO BE db GET OF "user"
+
+    YOU WON'T WANT TO MISS "SHOCKING: Database returned " PLUS result
+
+    WHAT IF result IS ACTUALLY "Alice"
+    RUMOR HAS IT
+        YOU WON'T WANT TO MISS "TOTALLY RIGHT: Test passed!"
+    END OF STORY
+    LIES!
+    RUMOR HAS IT
+        YOU WON'T WANT TO MISS "COMPLETELY WRONG: Test failed!"
+    END OF STORY
+
+    db CLOSE OF nothing
+END OF STORY
+
+testRedis OF nothing
+```
+
+**Implementation Notes**:
+- Tabloid: clickbait-headline programming language by @thesephist
+- Extend interpreter with Redis bindings
+- `YOU WON'T BELIEVE WHAT HAPPENS WHEN` for mutations
+- `EXPERTS CLAIM` for variable assignment
+- Perfect for engagement-driven development
+- Your Redis operations will go VIRAL
+
+---
+
+#### x86 Assembly SDK
+
+**Status**: PLANNED
+**Priority**: HARDCORE
+**Location**: `sdks/redlite-asm/`
+**Binding Type**: Direct C ABI calls
+
+**Example Usage (NASM)**:
+```nasm
+section .data
+    path db ":memory:", 0
+    key db "count", 0
+    value db "42", 0
+
+section .text
+    extern redlite_open
+    extern redlite_set
+    extern redlite_get
+    extern redlite_close
+
+    global _start
+
+_start:
+    ; Open database
+    mov rdi, path
+    call redlite_open
+    mov [db_handle], rax
+
+    ; SET key value
+    mov rdi, [db_handle]
+    mov rsi, key
+    mov rdx, value
+    mov rcx, 2
+    call redlite_set
+
+    ; ... more assembly ...
+```
+
+**Implementation Notes**:
+- Pure assembly, calling C ABI
+- For embedded systems or the criminally insane
+- Maximum performance, minimum sanity
+
+---
+
+### Rust Usage (No Separate SDK Needed)
+
+Rust applications use the `redlite` crate directly:
+
+```toml
+# Cargo.toml
+[dependencies]
+redlite = { path = "../crates/redlite" }
+# or when published:
+# redlite = "0.1"
+```
+
+```rust
+use redlite::Db;
+
+fn main() -> Result<(), redlite::Error> {
+    let db = Db::open(":memory:")?;
+
+    db.set("key", b"value", None)?;
+    let value = db.get("key")?;
+
+    Ok(())
+}
+```
+
+No wrapper SDK is needed since Rust is the native implementation.
+
+---
+
+### SDK Implementation Checklist Template
+
+For each new SDK:
+
+- [ ] Project structure and build configuration
+- [ ] Native bindings (FFI/JNI/etc.)
+- [ ] Main client class with mode detection (embedded vs server)
+- [ ] String commands (GET, SET, MGET, MSET, INCR, etc.)
+- [ ] Key commands (DEL, EXISTS, TYPE, TTL, EXPIRE, etc.)
+- [ ] Hash commands (HSET, HGET, HGETALL, etc.)
+- [ ] List commands (LPUSH, RPUSH, LPOP, RPOP, LRANGE, etc.)
+- [ ] Set commands (SADD, SREM, SMEMBERS, etc.)
+- [ ] Sorted set commands (ZADD, ZREM, ZSCORE, ZRANGE, etc.)
+- [ ] Namespace classes (FTS, Vector, Geo, History)
+- [ ] Oracle test runner
+- [ ] Unit tests
+- [ ] Documentation / README
+- [ ] Package/distribution setup
+
+---
+
 ## References
 
 - [PyO3 User Guide](https://pyo3.rs)
 - [Maturin Documentation](https://maturin.rs)
 - [uniffi-rs Documentation](https://mozilla.github.io/uniffi-rs/)
 - [napi-rs (TypeScript SDK reference)](https://napi.rs)
+- [Rustler (Elixir NIFs)](https://github.com/rusterlium/rustler)
+- [magnus (Ruby bindings)](https://github.com/matsadler/magnus)
+- [cbindgen (C header generation)](https://github.com/mozilla/cbindgen)
 - TypeScript SDK implementation: `sdks/redlite-ts/src/lib.rs`
 - redlite-dst Oracle Tests: `redlite-dst/tests/oracle.rs`
