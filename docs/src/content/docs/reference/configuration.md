@@ -15,9 +15,10 @@ Redlite operates with default settings that can be overridden via command-line a
 | `--addr` | `-a` | `127.0.0.1:6379` | Listen address and port |
 | `--password` | | (none) | Require password for connections (like Redis `requirepass`) |
 | `--storage` | | `file` | Storage type: `file` or `memory` |
-| `--backend` | | `sqlite` | Backend type: `sqlite` or `turso` |
 | `--cache` | | `64` | SQLite page cache size in MB (larger = faster reads) |
+| `--max-memory` | | `0` | Maximum memory size in bytes (0 = unlimited). Evicts keys based on policy |
 | `--max-disk` | | `0` | Maximum disk size in bytes (0 = unlimited). Evicts oldest keys when exceeded |
+| `--eviction-policy` | | `noeviction` | Memory eviction policy: `noeviction`, `allkeys-lru`, `allkeys-lfu`, `allkeys-random`, `volatile-lru`, `volatile-lfu`, `volatile-ttl`, `volatile-random` |
 
 ### Database Path
 
@@ -61,6 +62,38 @@ Redlite operates with default settings that can be overridden via command-line a
 
 The `--cache` flag sets SQLite's page cache size. Larger values keep more data in RAM for faster reads while maintaining full durability.
 
+### Memory Eviction
+
+```bash
+# Limit to 100MB with LRU eviction
+./redlite --db mydata.db --max-memory 104857600 --eviction-policy allkeys-lru
+
+# LFU policy for frequency-based eviction
+./redlite --db mydata.db --max-memory 104857600 --eviction-policy allkeys-lfu
+```
+
+When `--max-memory` is set, redlite tracks access patterns and evicts keys based on the configured policy. The eviction process uses a vacuum-first strategy: expired keys are removed before evicting valid keys.
+
+**Available policies:**
+- `noeviction` - Return errors when memory limit is reached (default)
+- `allkeys-lru` - Evict least recently used keys
+- `allkeys-lfu` - Evict least frequently used keys
+- `allkeys-random` - Evict random keys
+- `volatile-lru` - Evict least recently used keys with TTL
+- `volatile-lfu` - Evict least frequently used keys with TTL
+- `volatile-ttl` - Evict keys closest to expiration
+- `volatile-random` - Evict random keys with TTL
+
+Runtime adjustment:
+```bash
+# Via redis-cli or any Redis client
+CONFIG SET maxmemory 52428800           # Change to 50MB
+CONFIG SET maxmemory-policy allkeys-lfu # Switch to LFU
+CONFIG GET maxmemory                    # Check current limit
+```
+
+See [Eviction](/reference/eviction/) for detailed documentation.
+
 ### Disk Eviction
 
 ```bash
@@ -100,6 +133,15 @@ db.set_cache_mb(1024)?;
 // Select database (0-15)
 let mut db = Db::open("/path/to/data.db")?;
 db.select(1)?;
+
+// Configure memory eviction
+use redlite::EvictionPolicy;
+db.set_max_memory(100 * 1024 * 1024)?;  // 100MB limit
+db.set_eviction_policy(EvictionPolicy::AllKeysLru);
+
+// Configure access tracking persistence
+db.set_persist_access_tracking(true);   // Persist LRU/LFU data to SQLite
+db.set_access_flush_interval(5000);     // Flush every 5 seconds
 ```
 
 ## SQLite Settings
