@@ -863,6 +863,169 @@ db.FTS.Search(ctx, "hello world")
 
 ## Planned
 
+### Eviction Policies (Cache Mode)
+
+**Goal**: Enable redlite as a proper cache with automatic eviction when memory/key limits are reached.
+
+**Use Case**: Local-first mobile apps, API response caching, session storage with automatic cleanup.
+
+#### Eviction Configuration
+
+```rust
+pub struct EvictionConfig {
+    /// Maximum memory usage before eviction triggers (bytes)
+    pub max_memory: Option<usize>,
+    /// Maximum number of keys before eviction triggers
+    pub max_keys: Option<usize>,
+    /// Eviction strategy when limits are reached
+    pub strategy: EvictionStrategy,
+    /// How many keys to evict per cycle (default: 10)
+    pub eviction_batch_size: usize,
+}
+
+pub enum EvictionStrategy {
+    /// Evict least recently used keys
+    LRU,
+    /// Evict least frequently used keys
+    LFU,
+    /// Evict random keys
+    Random,
+    /// Evict keys with shortest TTL first
+    TTL,
+    /// Evict volatile keys (with TTL) using LRU
+    VolatileLRU,
+}
+```
+
+#### Implementation Plan
+
+**Phase 1: Access Tracking**
+- Add `last_accessed` and `access_count` columns to key metadata
+- Update on every GET/read operation
+- Lightweight: single UPDATE per access, batched if needed
+
+**Phase 2: Memory Tracking**
+- Track approximate memory usage per key (key length + value length + overhead)
+- Global counter updated on SET/DEL
+- `MEMORY USAGE key` command for introspection
+
+**Phase 3: Eviction Engine**
+- Background thread or on-demand during writes
+- Sample N random keys, evict best candidate per strategy
+- `MEMORY DOCTOR` for cache health analysis
+
+**Phase 4: Commands**
+```
+CONFIG SET maxmemory 100mb
+CONFIG SET maxmemory-policy allkeys-lru
+MEMORY USAGE key
+MEMORY STATS
+MEMORY DOCTOR
+```
+
+#### SQLite Schema Addition
+
+```sql
+ALTER TABLE key_metadata ADD COLUMN last_accessed INTEGER DEFAULT 0;
+ALTER TABLE key_metadata ADD COLUMN access_count INTEGER DEFAULT 0;
+ALTER TABLE key_metadata ADD COLUMN size_bytes INTEGER DEFAULT 0;
+```
+
+---
+
+### Mobile SDKs (Local-First)
+
+**Goal**: Enable redlite as the local cache/store for mobile apps - Redis semantics without a server.
+
+**Value Proposition**:
+- Structured data (hashes, lists, sorted sets) without SQL boilerplate
+- Automatic TTL expiration for cache invalidation
+- Familiar Redis API for developers
+- Single file, zero config, works offline
+
+#### SDK Priority Order
+
+| Priority | Language | Binding Tool | Platform | Status |
+|----------|----------|--------------|----------|--------|
+| 1 | **Dart** | [flutter_rust_bridge](https://github.com/aspect-build/aspect-dev) | iOS + Android + Web | Planned |
+| 2 | **Swift** | [swift-bridge](https://github.com/chinedufn/swift-bridge) | Native iOS | Planned |
+| 3 | **Kotlin** | [jni-rs](https://github.com/jni-rs/jni-rs) | Native Android | Planned |
+| 4 | **Ruby** | [magnus](https://github.com/matsadler/magnus) | Server-side | Planned |
+
+#### Dart/Flutter SDK (Highest Priority)
+
+**Rationale**: Single codebase covers iOS, Android, and Web. flutter_rust_bridge auto-generates Dart bindings from Rust with minimal boilerplate.
+
+**Architecture**:
+```
+Flutter App
+    │
+    ▼
+redlite_flutter (Dart package)
+    │
+    ▼
+flutter_rust_bridge (generated FFI)
+    │
+    ▼
+redlite-dart (Rust crate)
+    │
+    ▼
+redlite core
+```
+
+**API Design**:
+```dart
+final db = await Redlite.open('app_cache.db');
+
+// Caching with TTL
+await db.setex('user:123', jsonEncode(userData), 3600); // 1 hour TTL
+final user = await db.get('user:123');
+
+// Sorted sets for leaderboards
+await db.zadd('leaderboard', {'alice': 100, 'bob': 85});
+final top10 = await db.zrevrange('leaderboard', 0, 9);
+
+// Lists for activity feeds
+await db.lpush('feed:123', newActivity);
+final feed = await db.lrange('feed:123', 0, 49);
+```
+
+**Build**:
+```bash
+cd sdks/redlite-dart
+flutter_rust_bridge_codegen generate
+flutter pub get
+```
+
+#### Swift SDK
+
+**Binding Options**:
+1. **swift-bridge** - Pure Rust, generates Swift bindings
+2. **C FFI** - Use existing libredlite_ffi.dylib with Swift C interop
+3. **UniFFI** - Mozilla's cross-language binding generator
+
+**Recommendation**: swift-bridge for best Swift ergonomics.
+
+#### Kotlin SDK
+
+**Binding Options**:
+1. **jni-rs** - Direct JNI bindings from Rust
+2. **UniFFI** - Generates Kotlin bindings from UDL
+3. **JNI via C** - Use existing C FFI layer
+
+**Recommendation**: jni-rs for direct Rust→Kotlin path.
+
+#### Ruby SDK
+
+**Binding Options**:
+1. **magnus** - Modern Ruby bindings, similar to PyO3
+2. **rutie** - Alternative Ruby bindings
+3. **C FFI** - Use existing libredlite_ffi.dylib with Ruby FFI gem
+
+**Recommendation**: magnus for PyO3-like developer experience.
+
+---
+
 ### Server Mode HA (High Availability)
 
 **Goal**: Dead-simple failover for server mode with ~5 second recovery time.

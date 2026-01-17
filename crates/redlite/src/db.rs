@@ -5929,10 +5929,17 @@ impl Db {
             return Err(KvError::BusyGroup);
         }
 
+        // Resolve StreamId::max() (representing "$") to the actual last entry ID
+        let resolved_id = if id.ms == i64::MAX && id.seq == i64::MAX {
+            self.get_last_stream_id(&conn, key_id)
+        } else {
+            id
+        };
+
         // Create the group
         conn.execute(
             "INSERT INTO stream_groups (key_id, name, last_ms, last_seq) VALUES (?1, ?2, ?3, ?4)",
-            params![key_id, group, id.ms, id.seq],
+            params![key_id, group, resolved_id.ms, resolved_id.seq],
         )?;
 
         Ok(true)
@@ -6172,19 +6179,8 @@ impl Db {
             self.get_or_create_consumer(&conn, group_id, consumer)?;
 
             let entries: Vec<StreamEntry> = if *id_str == ">" {
-                // Special case: if last_delivered_id is StreamId::max(), return empty
-                // (group created with "$" but no entries have been delivered yet)
-                if last_ms == i64::MAX && last_seq == i64::MAX {
-                    results.push((key.to_string(), Vec::new()));
-                    continue;
-                }
-
                 // Read new entries (after last_delivered_id)
-                let start = if last_seq == i64::MAX {
-                    StreamId::new(last_ms.saturating_add(1), 0)
-                } else {
-                    StreamId::new(last_ms, last_seq.saturating_add(1))
-                };
+                let start = StreamId::new(last_ms, last_seq.saturating_add(1));
 
                 let limit = count.unwrap_or(i64::MAX);
 
