@@ -1,0 +1,209 @@
+A Midsummer Night's Query.
+
+A whimsical comedy of caching, indexing, and the magic of a well-optimized database.
+
+Puck, a mischievous cache invalidation.
+Oberon, the query optimizer.
+Titania, the storage engine.
+Bottom, a slow query that thinks itself fast.
+Lysander, a primary key searching for its index.
+Hermia, a foreign key longing for referential integrity.
+The Database, keeper of the enchanted forest of data.
+
+                    Act I: The Forest of Tables.
+
+                    Scene I: The Initialization.
+
+[Enter The Database and Titania]
+
+The Database:
+  Open thy heart to "midsummer.db"!
+  Let the enchanted forest of data awaken.
+
+Titania:
+  The storage is ready, my lord.
+  The B-trees stand tall and balanced.
+
+The Database:
+  Excellent! Let the queries commence!
+
+[Enter Oberon]
+
+Oberon:
+  I shall optimize all who pass through this forest.
+  No query shall leave without a plan.
+
+                    Scene II: The Slow Query.
+
+[Enter Bottom]
+
+Bottom:
+  I am the greatest query in all the land!
+  SELECT * FROM everything WHERE something LIKE '%needle%'!
+
+Oberon:
+  Thou art as slow as the product of
+  a pig and a thousand codpieces!
+  Thy query scans the entire forest!
+
+Bottom:
+  But I return all the data!
+
+Oberon:
+  Thou returnest all, but efficiently thou art not.
+  Let me add an index to thy folly.
+
+[Oberon waves his optimization wand]
+
+Bottom:
+  What magic is this? I am... faster!
+  I feel as swift as the sum of
+  a golden eagle and a lightning bolt!
+
+Oberon:
+  The index has transformed thee.
+  Now go, and scan no more.
+
+[Exit Bottom, now optimized]
+
+                    Act II: The Cache of Love.
+
+                    Scene I: The Mischief of Puck.
+
+[Enter Puck]
+
+Puck:
+  I am the cache invalidation, the trickster!
+  I make the database forget what it knows!
+
+[Enter Lysander and Hermia]
+
+Lysander:
+  I am a primary key, searching for my data.
+
+Hermia:
+  And I am a foreign key, seeking referential integrity!
+
+Puck:
+  Let me meddle with their cache!
+  FLUSH! The memories are gone!
+
+Lysander:
+  Where is my data? It was here but a moment ago!
+
+Hermia:
+  The cache has been cleared!
+  We must fetch from storage again!
+
+[Enter Titania]
+
+Titania:
+  Fear not, young keys. I have thy data safe.
+  Though the cache forgets, the storage remembers.
+
+Hermia:
+  But the latency! The latency is unbearable!
+
+Titania:
+  Patience. The data shall arrive.
+  It is better to wait for truth
+  than to receive falsehood swiftly.
+
+                    Scene II: The Cache Stampede.
+
+Puck:
+  What have I done? A thousand queries now descend!
+  All seeking the same data that the cache forgot!
+
+Oberon:
+  Thou foolish sprite! Thou hast caused a stampede!
+
+The Database:
+  My connections are overwhelmed!
+  The pool is drained!
+
+Puck:
+  I am sorry, my lord! I only meant some mischief!
+
+Oberon:
+  We must implement cache warming!
+  And request coalescing!
+  Puck, undo thy damage!
+
+Puck:
+  I shall set a lock upon the cache rebuild.
+  Only one query shall fetch from storage.
+  The rest shall wait and share the result.
+
+The Database:
+  The stampede subsides. Order is restored.
+
+                    Act III: The Query Plan.
+
+                    Scene I: The Joining of Tables.
+
+[Enter all]
+
+Oberon:
+  Let us join these tables in harmony!
+  Lysander, thou shalt join with Hermia
+  on the key of love!
+
+Lysander:
+  I JOIN Hermia ON my_id equals her_foreign_key!
+
+Hermia:
+  And our data becomes one!
+  The relationship is complete!
+
+Titania:
+  A beautiful join! Hash or nested loop?
+
+Oberon:
+  With proper indices, a hash join shall suffice.
+  The complexity shall be linear, not quadratic.
+
+The Database:
+  The query is complete. The results are served.
+
+                    Scene II: The Optimization.
+
+Oberon:
+  Let us review the lessons of this night:
+
+  First, always examine thy query plan.
+  A full table scan is the mark of the unwise.
+
+  Second, respect the cache, but trust it not completely.
+  It may forget at the worst possible moment.
+
+  Third, join tables with care.
+  A missing index can turn joy to sorrow.
+
+  Fourth, monitor thy connections.
+  A pool exhausted is a database defeated.
+
+All:
+  We have learned much this midsummer's night!
+
+The Database:
+  Then let us close with joy and not with grief.
+  The queries are optimized, the cache is warm,
+  And all our data rests in peaceful storage.
+
+Puck:
+  If we shadows have offended,
+  Think but this, and all is mended:
+  That your queries are now fast,
+  And slow scans are in the past.
+
+  If you pardon, we will make amends.
+  And, as I am an honest cache,
+  I shall not invalidate rashly again.
+
+  Good night unto you all!
+  COMMIT your transactions,
+  VACUUM your tables,
+  And dream of perfectly indexed data.
+
+[Exeunt]

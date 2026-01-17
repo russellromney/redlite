@@ -1,0 +1,227 @@
+Redlite COW Library
+Moo moo moo moo moo
+
+This file contains helper routines for Redlite database operations
+All operations are expressed in the sacred language of moo
+
+MEMORY LAYOUT:
+  Cell 0:      Database handle (set after OPEN)
+  Cell 1:      Syscall result (1 = success, 0 = failure)
+  Cell 2-10:   Key buffer (null-terminated)
+  Cell 11-50:  Value buffer (null-terminated)
+  Cell 51+:    General purpose / scratch space
+
+SYSCALLS (OOM followed by moos):
+  OOM moo           = OPEN database
+  OOM moo moo       = SET key value
+  OOM moo moo moo   = GET key (result in value buffer)
+  OOM moo moo moo moo = DEL key
+  OOM mooo          = INCR key
+  OOM moooo         = DECR key
+  OOM mooooo        = EXPIRE key seconds
+  OOM moooooo       = HSET hash field value
+  OOM mooooooo      = HGET hash field
+  OOM moooooooo     = LPUSH list value
+  OOM mooooooooo    = RPUSH list value
+  OOM moooooooooo   = LPOP list
+  OOM mooooooooooo  = RPOP list
+  OOM moooooooooooo = CLOSE database
+
+=== ROUTINE: OPEN DATABASE ===
+Opens test.db database and stores handle in cell 0
+
+Moo moo moo moo moo
+This routine should be called first
+
+Clear cell 0 first
+OOO
+
+Now prepare the path "test.db" starting at cell 2
+We need: t(116) e(101) s(115) t(116) .(46) d(100) b(98) \0
+
+moo moo      Move to cell 2
+
+Build 't' = 116
+MoO MoO MoO MoO MoO MoO MoO MoO MoO MoO
+MoO MoO MoO MoO MoO MoO MoO MoO MoO MoO
+MoO MoO MoO MoO MoO MoO MoO MoO MoO MoO
+MoO MoO MoO MoO MoO MoO MoO MoO MoO MoO
+MoO MoO MoO MoO MoO MoO MoO MoO MoO MoO
+MoO MoO MoO MoO MoO MoO MoO MoO MoO MoO
+MoO MoO MoO MoO MoO MoO MoO MoO MoO MoO
+MoO MoO MoO MoO MoO MoO MoO MoO MoO MoO
+MoO MoO MoO MoO MoO MoO MoO MoO MoO MoO
+MoO MoO MoO MoO MoO MoO MoO MoO MoO MoO
+MoO MoO MoO MoO MoO MoO
+
+moo          Move to cell 3
+
+Build 'e' = 101
+MoO MoO MoO MoO MoO MoO MoO MoO MoO MoO
+MoO MoO MoO MoO MoO MoO MoO MoO MoO MoO
+MoO MoO MoO MoO MoO MoO MoO MoO MoO MoO
+MoO MoO MoO MoO MoO MoO MoO MoO MoO MoO
+MoO MoO MoO MoO MoO MoO MoO MoO MoO MoO
+MoO MoO MoO MoO MoO MoO MoO MoO MoO MoO
+MoO MoO MoO MoO MoO MoO MoO MoO MoO MoO
+MoO MoO MoO MoO MoO MoO MoO MoO MoO MoO
+MoO MoO MoO MoO MoO MoO MoO MoO MoO MoO
+MoO MoO MoO MoO MoO MoO MoO MoO MoO MoO
+MoO
+
+moo          Move to cell 4
+
+Build 's' = 115
+MoO MoO MoO MoO MoO MoO MoO MoO MoO MoO
+MoO MoO MoO MoO MoO MoO MoO MoO MoO MoO
+MoO MoO MoO MoO MoO MoO MoO MoO MoO MoO
+MoO MoO MoO MoO MoO MoO MoO MoO MoO MoO
+MoO MoO MoO MoO MoO MoO MoO MoO MoO MoO
+MoO MoO MoO MoO MoO MoO MoO MoO MoO MoO
+MoO MoO MoO MoO MoO MoO MoO MoO MoO MoO
+MoO MoO MoO MoO MoO MoO MoO MoO MoO MoO
+MoO MoO MoO MoO MoO MoO MoO MoO MoO MoO
+MoO MoO MoO MoO MoO MoO MoO MoO MoO MoO
+MoO MoO MoO MoO MoO MoO MoO MoO MoO MoO
+MoO MoO MoO MoO MoO
+
+moo          Move to cell 5
+
+Build 't' = 116 again
+MoO MoO MoO MoO MoO MoO MoO MoO MoO MoO
+MoO MoO MoO MoO MoO MoO MoO MoO MoO MoO
+MoO MoO MoO MoO MoO MoO MoO MoO MoO MoO
+MoO MoO MoO MoO MoO MoO MoO MoO MoO MoO
+MoO MoO MoO MoO MoO MoO MoO MoO MoO MoO
+MoO MoO MoO MoO MoO MoO MoO MoO MoO MoO
+MoO MoO MoO MoO MoO MoO MoO MoO MoO MoO
+MoO MoO MoO MoO MoO MoO MoO MoO MoO MoO
+MoO MoO MoO MoO MoO MoO MoO MoO MoO MoO
+MoO MoO MoO MoO MoO MoO MoO MoO MoO MoO
+MoO MoO MoO MoO MoO MoO
+
+moo          Move to cell 6
+
+Build '.' = 46
+MoO MoO MoO MoO MoO MoO MoO MoO MoO MoO
+MoO MoO MoO MoO MoO MoO MoO MoO MoO MoO
+MoO MoO MoO MoO MoO MoO MoO MoO MoO MoO
+MoO MoO MoO MoO MoO MoO MoO MoO MoO MoO
+MoO MoO MoO MoO MoO MoO
+
+moo          Move to cell 7
+
+Build 'd' = 100
+MoO MoO MoO MoO MoO MoO MoO MoO MoO MoO
+MoO MoO MoO MoO MoO MoO MoO MoO MoO MoO
+MoO MoO MoO MoO MoO MoO MoO MoO MoO MoO
+MoO MoO MoO MoO MoO MoO MoO MoO MoO MoO
+MoO MoO MoO MoO MoO MoO MoO MoO MoO MoO
+MoO MoO MoO MoO MoO MoO MoO MoO MoO MoO
+MoO MoO MoO MoO MoO MoO MoO MoO MoO MoO
+MoO MoO MoO MoO MoO MoO MoO MoO MoO MoO
+MoO MoO MoO MoO MoO MoO MoO MoO MoO MoO
+MoO MoO MoO MoO MoO MoO MoO MoO MoO MoO
+
+moo          Move to cell 8
+
+Build 'b' = 98
+MoO MoO MoO MoO MoO MoO MoO MoO MoO MoO
+MoO MoO MoO MoO MoO MoO MoO MoO MoO MoO
+MoO MoO MoO MoO MoO MoO MoO MoO MoO MoO
+MoO MoO MoO MoO MoO MoO MoO MoO MoO MoO
+MoO MoO MoO MoO MoO MoO MoO MoO MoO MoO
+MoO MoO MoO MoO MoO MoO MoO MoO MoO MoO
+MoO MoO MoO MoO MoO MoO MoO MoO MoO MoO
+MoO MoO MoO MoO MoO MoO MoO MoO MoO MoO
+MoO MoO MoO MoO MoO MoO MoO MoO MoO MoO
+MoO MoO MoO MoO MoO MoO MoO MoO
+
+moo          Move to cell 9 - null terminator already 0
+
+Go back to cell 0
+moO moO moO moO moO moO moO moO moO
+
+Execute OPEN syscall
+OOM moo
+
+Result is now in cell 1
+moo
+Moo          Print result (1 = success, 0 = failure)
+
+=== END OPEN DATABASE ===
+
+=== ROUTINE: SET KEY VALUE ===
+Sets key "A" to value "1"
+
+Go to cell 2 for key
+moo
+
+Clear and set 'A' = 65
+OOO
+MoO MoO MoO MoO MoO MoO MoO MoO MoO MoO
+MoO MoO MoO MoO MoO MoO MoO MoO MoO MoO
+MoO MoO MoO MoO MoO MoO MoO MoO MoO MoO
+MoO MoO MoO MoO MoO MoO MoO MoO MoO MoO
+MoO MoO MoO MoO MoO MoO MoO MoO MoO MoO
+MoO MoO MoO MoO MoO MoO MoO MoO MoO MoO
+MoO MoO MoO MoO MoO
+
+moo          Move to cell 3 - null terminator
+
+Go to cell 11 for value
+moo moo moo moo moo moo moo moo
+
+Clear and set '1' = 49
+OOO
+MoO MoO MoO MoO MoO MoO MoO MoO MoO MoO
+MoO MoO MoO MoO MoO MoO MoO MoO MoO MoO
+MoO MoO MoO MoO MoO MoO MoO MoO MoO MoO
+MoO MoO MoO MoO MoO MoO MoO MoO MoO MoO
+MoO MoO MoO MoO MoO MoO MoO MoO MoO
+
+moo          Move to cell 12 - null terminator
+
+Go back to cell 0
+moO moO moO moO moO moO moO moO moO moO moO moO
+
+Execute SET syscall
+OOM moo moo
+
+Check result
+moo
+Moo          Print result
+
+=== END SET ===
+
+=== ROUTINE: GET KEY ===
+Gets value for key "A" (already in key buffer)
+Result will be in value buffer (cells 11+)
+
+Go to cell 0
+moO
+
+Execute GET syscall
+OOM moo moo moo
+
+Result is in value buffer
+Go to cell 11 and print
+moo moo moo moo moo moo moo moo moo moo moo
+Moo          Print first character of value
+
+=== END GET ===
+
+=== ROUTINE: CLOSE DATABASE ===
+Closes the database connection
+
+Go to cell 0
+moO moO moO moO moO moO moO moO moO moO moO
+
+Execute CLOSE syscall
+OOM mooooooooooooo
+
+Moo moo complete
+=== END CLOSE ===
+
+End of Redlite COW Library
+Mooooooooooo

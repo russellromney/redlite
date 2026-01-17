@@ -1,5 +1,5 @@
 # Build
-/target/
+target/
 **/*.rs.bk
 
 # Database files
@@ -95,6 +95,7 @@ coverage/
 
 # Session planning (local reference, not part of repo)
 NEXT_SESSION_PROMPT.md
+SESSION_PROMPTS.md
 
 *.rdb
 
@@ -294,3 +295,9 @@ libredlite_ffi.*
 *.chef.out
 *.spl.out
 *.piet.ppm
+# Oracle test runner binaries and artifacts
+sdks/oracle/runners/*_runner
+sdks/oracle/runners/*.exe
+sdks/oracle/runners/.zig-cache/
+sdks/oracle/runners/bin/
+sdks/oracle/runners/obj/

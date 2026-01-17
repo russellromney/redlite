@@ -1,0 +1,50 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <TargetFrameworks>net6.0;net7.0;net8.0;net10.0</TargetFrameworks>
+    <LangVersion>12.0</LangVersion>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
+    <EnableDefaultCompileItems>false</EnableDefaultCompileItems>
+
+    <!-- Package metadata -->
+    <PackageId>Redlite</PackageId>
+    <Version>0.1.0</Version>
+    <Authors>Redlite Contributors</Authors>
+    <Description>Redis-compatible embedded database with SQLite durability</Description>
+    <PackageReadmeFile>README.md</PackageReadmeFile>
+    <PackageLicenseExpression>MIT</PackageLicenseExpression>
+    <PackageTags>redis;database;embedded;sqlite;key-value</PackageTags>
+    <RepositoryUrl>https://github.com/redlite/redlite</RepositoryUrl>
+    <RepositoryType>git</RepositoryType>
+
+    <!-- Root namespace -->
+    <RootNamespace>Redlite</RootNamespace>
+    <AssemblyName>Redlite</AssemblyName>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <Compile Include="src/**/*.cs" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <None Include="README.md" Pack="true" PackagePath="\" />
+    <!-- Native libraries - uncomment when binaries are available -->
+    <!-- <None Include="runtimes\**" Pack="true" PackagePath="runtimes" /> -->
+  </ItemGroup>
+
+  <!-- Native library paths by platform -->
+  <ItemGroup Condition="'$(RuntimeIdentifier)' == 'win-x64' OR '$(RuntimeIdentifier)' == ''">
+    <!-- <None Include="runtimes\win-x64\native\redlite_ffi.dll" CopyToOutputDirectory="PreserveNewest" /> -->
+  </ItemGroup>
+
+  <ItemGroup Condition="'$(RuntimeIdentifier)' == 'linux-x64' OR '$(RuntimeIdentifier)' == ''">
+    <!-- <None Include="runtimes\linux-x64\native\libredlite_ffi.so" CopyToOutputDirectory="PreserveNewest" /> -->
+  </ItemGroup>
+
+  <ItemGroup Condition="'$(RuntimeIdentifier)' == 'osx-x64' OR '$(RuntimeIdentifier)' == 'osx-arm64' OR '$(RuntimeIdentifier)' == ''">
+    <!-- <None Include="runtimes\osx-arm64\native\libredlite_ffi.dylib" CopyToOutputDirectory="PreserveNewest" /> -->
+  </ItemGroup>
+
+</Project>

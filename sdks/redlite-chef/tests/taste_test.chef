@@ -1,0 +1,95 @@
+Taste Test Suite.
+
+A comprehensive tasting menu to verify all Redlite operations.
+The discerning palate will detect any off flavors in the implementation.
+
+Prep time: Variable
+Cook time: Fast
+Difficulty: Chef's choice
+Allergens: May contain traces of bugs
+
+Ingredients.
+1 pass counter
+1 fail counter
+116 g t
+101 g e
+115 g s
+116 g t2
+46 g dot
+100 g d
+98 g b
+107 g k
+121 g y
+118 g v
+97 g a
+108 g l
+117 g u
+101 g e2
+
+Method.
+Open the refrigerator with "taste_test.db".
+Put t into 1st mixing bowl.
+Put e into 1st mixing bowl.
+Put s into 1st mixing bowl.
+Put t2 into 1st mixing bowl.
+Put underscore into 1st mixing bowl.
+Put k into 1st mixing bowl.
+Put e into 1st mixing bowl.
+Put y into 1st mixing bowl.
+Liquefy contents of 1st mixing bowl.
+Fold the test_key from the 1st mixing bowl.
+Put t into 2nd mixing bowl.
+Put e into 2nd mixing bowl.
+Put s into 2nd mixing bowl.
+Put t2 into 2nd mixing bowl.
+Put underscore into 2nd mixing bowl.
+Put v into 2nd mixing bowl.
+Put a into 2nd mixing bowl.
+Put l into 2nd mixing bowl.
+Put u into 2nd mixing bowl.
+Put e2 into 2nd mixing bowl.
+Liquefy contents of the 2nd mixing bowl.
+Fold the test_value from the 2nd mixing bowl.
+Put test_key with test_value into the refrigerator.
+Stir pass counter.
+Take test_key from the refrigerator into the 3rd mixing bowl.
+Compare contents of the 3rd mixing bowl with test_value.
+If same then stir pass counter otherwise stir fail counter.
+Put test_key with different_value into the refrigerator.
+Stir pass counter.
+Take test_key from the refrigerator into the 4th mixing bowl.
+Compare contents of the 4th mixing bowl with different_value.
+If same then stir pass counter otherwise stir fail counter.
+Throw away test_key from the refrigerator.
+Stir pass counter.
+Take test_key from the refrigerator into the 5th mixing bowl.
+If the 5th mixing bowl is empty then stir pass counter otherwise stir fail counter.
+Add "field1" with "value1" to "test_hash" in the refrigerator.
+Stir pass counter.
+Take "field1" from "test_hash" in the refrigerator into the 6th mixing bowl.
+Compare contents of the 6th mixing bowl with "value1".
+If same then stir pass counter otherwise stir fail counter.
+Push "item1" left onto "test_list" in the refrigerator.
+Push "item2" left onto "test_list" in the refrigerator.
+Stir pass counter.
+Stir pass counter.
+Pop left from "test_list" in the refrigerator into the 7th mixing bowl.
+Compare contents of the 7th mixing bowl with "item2".
+If same then stir pass counter otherwise stir fail counter.
+Add "member1" to "test_set" in the refrigerator.
+Stir pass counter.
+Check if "member1" is in "test_set" in the refrigerator.
+If found then stir pass counter otherwise stir fail counter.
+Check if "member2" is in "test_set" in the refrigerator.
+If not found then stir pass counter otherwise stir fail counter.
+Clean the refrigerator.
+Stir pass counter.
+Close the refrigerator.
+Pour pass counter into the 1st baking dish.
+Pour fail counter into the 2nd baking dish.
+
+Serves 2.
+
+The first serving is passed tests.
+The second serving is failed tests.
+If the second serving is 0, the meal was a success.

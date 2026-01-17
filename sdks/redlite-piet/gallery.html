@@ -1,0 +1,290 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Redlite Piet Gallery - Where Code Becomes Art</title>
+    <style>
+        :root {
+            --piet-red: #ff0000;
+            --piet-yellow: #ffff00;
+            --piet-green: #00ff00;
+            --piet-cyan: #00ffff;
+            --piet-blue: #0000ff;
+            --piet-magenta: #ff00ff;
+            --piet-white: #ffffff;
+            --piet-black: #000000;
+        }
+
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: 'Georgia', serif;
+            background: linear-gradient(135deg, #1a1a2e 0%, #16213e 100%);
+            color: #ffffff;
+            min-height: 100vh;
+        }
+
+        header {
+            text-align: center;
+            padding: 60px 20px;
+            background: rgba(0,0,0,0.3);
+        }
+
+        h1 {
+            font-size: 3rem;
+            font-weight: 300;
+            letter-spacing: 0.3em;
+            margin-bottom: 10px;
+        }
+
+        .subtitle {
+            font-style: italic;
+            opacity: 0.8;
+            font-size: 1.2rem;
+        }
+
+        .gallery {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(400px, 1fr));
+            gap: 40px;
+            padding: 40px;
+            max-width: 1400px;
+            margin: 0 auto;
+        }
+
+        .artwork {
+            background: rgba(255,255,255,0.05);
+            border-radius: 10px;
+            overflow: hidden;
+            transition: transform 0.3s ease;
+        }
+
+        .artwork:hover {
+            transform: translateY(-5px);
+        }
+
+        .artwork-image {
+            aspect-ratio: 1;
+            display: grid;
+            grid-template-columns: repeat(10, 1fr);
+            grid-template-rows: repeat(10, 1fr);
+            padding: 20px;
+            background: #ffffff;
+        }
+
+        .codel {
+            border: 1px solid rgba(0,0,0,0.1);
+        }
+
+        .artwork-info {
+            padding: 30px;
+        }
+
+        .artwork-title {
+            font-size: 1.5rem;
+            margin-bottom: 5px;
+        }
+
+        .artwork-meta {
+            opacity: 0.6;
+            font-size: 0.9rem;
+            margin-bottom: 15px;
+        }
+
+        .artwork-description {
+            line-height: 1.8;
+            opacity: 0.9;
+        }
+
+        .color-legend {
+            display: flex;
+            gap: 10px;
+            margin-top: 20px;
+            flex-wrap: wrap;
+        }
+
+        .color-sample {
+            display: flex;
+            align-items: center;
+            gap: 5px;
+            font-size: 0.8rem;
+        }
+
+        .color-box {
+            width: 20px;
+            height: 20px;
+            border-radius: 3px;
+            border: 1px solid rgba(255,255,255,0.3);
+        }
+
+        footer {
+            text-align: center;
+            padding: 40px;
+            opacity: 0.6;
+            font-style: italic;
+        }
+
+        /* Artwork 1: Database Open */
+        .art1 .c1 { background: var(--piet-red); }
+        .art1 .c2 { background: var(--piet-yellow); }
+        .art1 .c3 { background: var(--piet-green); }
+        .art1 .c4 { background: var(--piet-blue); }
+        .art1 .c5 { background: var(--piet-magenta); }
+        .art1 .c6 { background: var(--piet-cyan); }
+        .art1 .c7 { background: var(--piet-white); }
+        .art1 .c8 { background: var(--piet-black); }
+
+        /* Artwork 2: SET Operation */
+        .art2 .c1 { background: #ff6666; }
+        .art2 .c2 { background: #ffcc00; }
+        .art2 .c3 { background: #66ff66; }
+        .art2 .c4 { background: #6666ff; }
+        .art2 .c5 { background: #cc66ff; }
+        .art2 .c7 { background: var(--piet-white); }
+
+        /* Artwork 3: GET Operation */
+        .art3 .c1 { background: #0066cc; }
+        .art3 .c2 { background: #0099ff; }
+        .art3 .c3 { background: #00ccff; }
+        .art3 .c4 { background: #66ffff; }
+        .art3 .c7 { background: var(--piet-white); }
+        .art3 .c8 { background: var(--piet-black); }
+
+        /* Artwork 4: Hash Operations */
+        .art4 .c1 { background: #ff3366; }
+        .art4 .c2 { background: #ff6633; }
+        .art4 .c3 { background: #ffcc33; }
+        .art4 .c4 { background: #33ff66; }
+        .art4 .c5 { background: #3366ff; }
+        .art4 .c6 { background: #9933ff; }
+        .art4 .c7 { background: var(--piet-white); }
+    </style>
+</head>
+<body>
+    <header>
+        <h1>REDLITE PIET GALLERY</h1>
+        <p class="subtitle">Where Database Operations Become Art</p>
+    </header>
+
+    <main class="gallery">
+        <!-- Artwork 1: Database Open -->
+        <article class="artwork">
+            <div class="artwork-image art1">
+                <div class="codel c1"></div><div class="codel c1"></div><div class="codel c1"></div><div class="codel c2"></div><div class="codel c2"></div><div class="codel c3"></div><div class="codel c3"></div><div class="codel c4"></div><div class="codel c4"></div><div class="codel c4"></div>
+                <div class="codel c1"></div><div class="codel c1"></div><div class="codel c1"></div><div class="codel c2"></div><div class="codel c2"></div><div class="codel c3"></div><div class="codel c3"></div><div class="codel c4"></div><div class="codel c4"></div><div class="codel c4"></div>
+                <div class="codel c7"></div><div class="codel c7"></div><div class="codel c5"></div><div class="codel c5"></div><div class="codel c5"></div><div class="codel c5"></div><div class="codel c6"></div><div class="codel c6"></div><div class="codel c7"></div><div class="codel c7"></div>
+                <div class="codel c7"></div><div class="codel c7"></div><div class="codel c5"></div><div class="codel c5"></div><div class="codel c5"></div><div class="codel c5"></div><div class="codel c6"></div><div class="codel c6"></div><div class="codel c7"></div><div class="codel c7"></div>
+                <div class="codel c8"></div><div class="codel c8"></div><div class="codel c8"></div><div class="codel c7"></div><div class="codel c7"></div><div class="codel c7"></div><div class="codel c7"></div><div class="codel c8"></div><div class="codel c8"></div><div class="codel c8"></div>
+                <div class="codel c8"></div><div class="codel c8"></div><div class="codel c8"></div><div class="codel c7"></div><div class="codel c7"></div><div class="codel c7"></div><div class="codel c7"></div><div class="codel c8"></div><div class="codel c8"></div><div class="codel c8"></div>
+                <div class="codel c3"></div><div class="codel c3"></div><div class="codel c4"></div><div class="codel c4"></div><div class="codel c4"></div><div class="codel c1"></div><div class="codel c1"></div><div class="codel c2"></div><div class="codel c2"></div><div class="codel c2"></div>
+                <div class="codel c3"></div><div class="codel c3"></div><div class="codel c4"></div><div class="codel c4"></div><div class="codel c4"></div><div class="codel c1"></div><div class="codel c1"></div><div class="codel c2"></div><div class="codel c2"></div><div class="codel c2"></div>
+                <div class="codel c5"></div><div class="codel c5"></div><div class="codel c5"></div><div class="codel c6"></div><div class="codel c6"></div><div class="codel c6"></div><div class="codel c5"></div><div class="codel c5"></div><div class="codel c5"></div><div class="codel c5"></div>
+                <div class="codel c5"></div><div class="codel c5"></div><div class="codel c5"></div><div class="codel c6"></div><div class="codel c6"></div><div class="codel c6"></div><div class="codel c5"></div><div class="codel c5"></div><div class="codel c5"></div><div class="codel c5"></div>
+            </div>
+            <div class="artwork-info">
+                <h2 class="artwork-title">"The Opening"</h2>
+                <p class="artwork-meta">database_open.png | 10×10 codels | 2024</p>
+                <p class="artwork-description">
+                    This piece represents the moment of connection—when code reaches out to storage
+                    and a relationship is formed. The warm reds flow into cool blues, symbolizing
+                    the transition from request to response. The black barriers represent the
+                    boundaries we must respect in our data journey.
+                </p>
+                <div class="color-legend">
+                    <span class="color-sample"><span class="color-box" style="background:var(--piet-red)"></span>Push</span>
+                    <span class="color-sample"><span class="color-box" style="background:var(--piet-green)"></span>Execute</span>
+                    <span class="color-sample"><span class="color-box" style="background:var(--piet-blue)"></span>Syscall</span>
+                </div>
+            </div>
+        </article>
+
+        <!-- Artwork 2: SET Operation -->
+        <article class="artwork">
+            <div class="artwork-image art2">
+                <div class="codel c1"></div><div class="codel c1"></div><div class="codel c1"></div><div class="codel c1"></div><div class="codel c2"></div><div class="codel c2"></div><div class="codel c2"></div><div class="codel c2"></div><div class="codel c7"></div><div class="codel c7"></div>
+                <div class="codel c1"></div><div class="codel c1"></div><div class="codel c1"></div><div class="codel c1"></div><div class="codel c2"></div><div class="codel c2"></div><div class="codel c2"></div><div class="codel c2"></div><div class="codel c7"></div><div class="codel c7"></div>
+                <div class="codel c1"></div><div class="codel c1"></div><div class="codel c3"></div><div class="codel c3"></div><div class="codel c3"></div><div class="codel c3"></div><div class="codel c2"></div><div class="codel c2"></div><div class="codel c7"></div><div class="codel c7"></div>
+                <div class="codel c7"></div><div class="codel c7"></div><div class="codel c3"></div><div class="codel c3"></div><div class="codel c3"></div><div class="codel c3"></div><div class="codel c7"></div><div class="codel c7"></div><div class="codel c4"></div><div class="codel c4"></div>
+                <div class="codel c7"></div><div class="codel c7"></div><div class="codel c3"></div><div class="codel c3"></div><div class="codel c3"></div><div class="codel c3"></div><div class="codel c7"></div><div class="codel c7"></div><div class="codel c4"></div><div class="codel c4"></div>
+                <div class="codel c4"></div><div class="codel c4"></div><div class="codel c7"></div><div class="codel c7"></div><div class="codel c7"></div><div class="codel c7"></div><div class="codel c5"></div><div class="codel c5"></div><div class="codel c4"></div><div class="codel c4"></div>
+                <div class="codel c4"></div><div class="codel c4"></div><div class="codel c7"></div><div class="codel c7"></div><div class="codel c7"></div><div class="codel c7"></div><div class="codel c5"></div><div class="codel c5"></div><div class="codel c7"></div><div class="codel c7"></div>
+                <div class="codel c4"></div><div class="codel c4"></div><div class="codel c5"></div><div class="codel c5"></div><div class="codel c5"></div><div class="codel c5"></div><div class="codel c5"></div><div class="codel c5"></div><div class="codel c7"></div><div class="codel c7"></div>
+                <div class="codel c7"></div><div class="codel c7"></div><div class="codel c5"></div><div class="codel c5"></div><div class="codel c5"></div><div class="codel c5"></div><div class="codel c7"></div><div class="codel c7"></div><div class="codel c7"></div><div class="codel c7"></div>
+                <div class="codel c7"></div><div class="codel c7"></div><div class="codel c7"></div><div class="codel c7"></div><div class="codel c7"></div><div class="codel c7"></div><div class="codel c7"></div><div class="codel c7"></div><div class="codel c7"></div><div class="codel c7"></div>
+            </div>
+            <div class="artwork-info">
+                <h2 class="artwork-title">"Persistence"</h2>
+                <p class="artwork-meta">set_value.png | 10×10 codels | 2024</p>
+                <p class="artwork-description">
+                    A meditation on storage. The key (warm tones, top) descends to meet its value
+                    (cool tones, bottom). Where they intersect in the central green block, the
+                    SET operation occurs. The white space represents the peace that comes from
+                    knowing your data is safely stored.
+                </p>
+            </div>
+        </article>
+
+        <!-- Artwork 3: GET Operation -->
+        <article class="artwork">
+            <div class="artwork-image art3">
+                <div class="codel c8"></div><div class="codel c8"></div><div class="codel c8"></div><div class="codel c1"></div><div class="codel c1"></div><div class="codel c1"></div><div class="codel c8"></div><div class="codel c8"></div><div class="codel c8"></div><div class="codel c8"></div>
+                <div class="codel c8"></div><div class="codel c7"></div><div class="codel c7"></div><div class="codel c1"></div><div class="codel c1"></div><div class="codel c1"></div><div class="codel c7"></div><div class="codel c7"></div><div class="codel c8"></div><div class="codel c8"></div>
+                <div class="codel c8"></div><div class="codel c7"></div><div class="codel c2"></div><div class="codel c2"></div><div class="codel c2"></div><div class="codel c2"></div><div class="codel c2"></div><div class="codel c7"></div><div class="codel c8"></div><div class="codel c8"></div>
+                <div class="codel c8"></div><div class="codel c7"></div><div class="codel c2"></div><div class="codel c3"></div><div class="codel c3"></div><div class="codel c3"></div><div class="codel c2"></div><div class="codel c7"></div><div class="codel c7"></div><div class="codel c8"></div>
+                <div class="codel c8"></div><div class="codel c7"></div><div class="codel c2"></div><div class="codel c3"></div><div class="codel c4"></div><div class="codel c3"></div><div class="codel c2"></div><div class="codel c7"></div><div class="codel c7"></div><div class="codel c8"></div>
+                <div class="codel c8"></div><div class="codel c7"></div><div class="codel c2"></div><div class="codel c3"></div><div class="codel c3"></div><div class="codel c3"></div><div class="codel c2"></div><div class="codel c7"></div><div class="codel c7"></div><div class="codel c8"></div>
+                <div class="codel c8"></div><div class="codel c7"></div><div class="codel c2"></div><div class="codel c2"></div><div class="codel c2"></div><div class="codel c2"></div><div class="codel c2"></div><div class="codel c7"></div><div class="codel c8"></div><div class="codel c8"></div>
+                <div class="codel c8"></div><div class="codel c7"></div><div class="codel c7"></div><div class="codel c7"></div><div class="codel c7"></div><div class="codel c7"></div><div class="codel c7"></div><div class="codel c7"></div><div class="codel c8"></div><div class="codel c8"></div>
+                <div class="codel c8"></div><div class="codel c8"></div><div class="codel c7"></div><div class="codel c7"></div><div class="codel c7"></div><div class="codel c7"></div><div class="codel c7"></div><div class="codel c8"></div><div class="codel c8"></div><div class="codel c8"></div>
+                <div class="codel c8"></div><div class="codel c8"></div><div class="codel c8"></div><div class="codel c8"></div><div class="codel c8"></div><div class="codel c8"></div><div class="codel c8"></div><div class="codel c8"></div><div class="codel c8"></div><div class="codel c8"></div>
+            </div>
+            <div class="artwork-info">
+                <h2 class="artwork-title">"Retrieval"</h2>
+                <p class="artwork-meta">get_value.png | 10×10 codels | 2024</p>
+                <p class="artwork-description">
+                    Data emerges from darkness. The black border represents the unknown—keys that
+                    may or may not exist. The concentric rings of blue draw the eye inward, to
+                    the center where the value is found. Or perhaps not found. The art does not
+                    tell us; we must run it to discover the truth.
+                </p>
+            </div>
+        </article>
+
+        <!-- Artwork 4: Hash Operations -->
+        <article class="artwork">
+            <div class="artwork-image art4">
+                <div class="codel c1"></div><div class="codel c2"></div><div class="codel c3"></div><div class="codel c4"></div><div class="codel c5"></div><div class="codel c6"></div><div class="codel c1"></div><div class="codel c2"></div><div class="codel c3"></div><div class="codel c4"></div>
+                <div class="codel c2"></div><div class="codel c3"></div><div class="codel c4"></div><div class="codel c5"></div><div class="codel c6"></div><div class="codel c1"></div><div class="codel c2"></div><div class="codel c3"></div><div class="codel c4"></div><div class="codel c5"></div>
+                <div class="codel c3"></div><div class="codel c4"></div><div class="codel c7"></div><div class="codel c7"></div><div class="codel c7"></div><div class="codel c7"></div><div class="codel c7"></div><div class="codel c7"></div><div class="codel c5"></div><div class="codel c6"></div>
+                <div class="codel c4"></div><div class="codel c5"></div><div class="codel c7"></div><div class="codel c1"></div><div class="codel c1"></div><div class="codel c2"></div><div class="codel c2"></div><div class="codel c7"></div><div class="codel c6"></div><div class="codel c1"></div>
+                <div class="codel c5"></div><div class="codel c6"></div><div class="codel c7"></div><div class="codel c1"></div><div class="codel c1"></div><div class="codel c2"></div><div class="codel c2"></div><div class="codel c7"></div><div class="codel c1"></div><div class="codel c2"></div>
+                <div class="codel c6"></div><div class="codel c1"></div><div class="codel c7"></div><div class="codel c3"></div><div class="codel c3"></div><div class="codel c4"></div><div class="codel c4"></div><div class="codel c7"></div><div class="codel c2"></div><div class="codel c3"></div>
+                <div class="codel c1"></div><div class="codel c2"></div><div class="codel c7"></div><div class="codel c3"></div><div class="codel c3"></div><div class="codel c4"></div><div class="codel c4"></div><div class="codel c7"></div><div class="codel c3"></div><div class="codel c4"></div>
+                <div class="codel c2"></div><div class="codel c3"></div><div class="codel c7"></div><div class="codel c7"></div><div class="codel c7"></div><div class="codel c7"></div><div class="codel c7"></div><div class="codel c7"></div><div class="codel c4"></div><div class="codel c5"></div>
+                <div class="codel c3"></div><div class="codel c4"></div><div class="codel c5"></div><div class="codel c6"></div><div class="codel c1"></div><div class="codel c2"></div><div class="codel c3"></div><div class="codel c4"></div><div class="codel c5"></div><div class="codel c6"></div>
+                <div class="codel c4"></div><div class="codel c5"></div><div class="codel c6"></div><div class="codel c1"></div><div class="codel c2"></div><div class="codel c3"></div><div class="codel c4"></div><div class="codel c5"></div><div class="codel c6"></div><div class="codel c1"></div>
+            </div>
+            <div class="artwork-info">
+                <h2 class="artwork-title">"The Many Becoming One"</h2>
+                <p class="artwork-meta">hash_operations.png | 10×10 codels | 2024</p>
+                <p class="artwork-description">
+                    A celebration of structure. The chaotic rainbow border represents the many
+                    fields that can exist within a hash. The calm white center with its organized
+                    color blocks represents the structured storage of HSET. Field and value,
+                    together as one, within the container of the key.
+                </p>
+            </div>
+        </article>
+    </main>
+
+    <footer>
+        <p>"Every line of code is a brushstroke. Every database query, a composition."</p>
+        <p>— The Redlite Piet Gallery, Est. 2024</p>
+    </footer>
+</body>
+</html>

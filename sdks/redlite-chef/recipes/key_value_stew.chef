@@ -1,0 +1,77 @@
+Key Value Stew.
+
+A hearty recipe demonstrating basic string operations with Redlite.
+This comfort food of database operations will warm your soul and persist your data.
+
+Prep time: Instantaneous
+Cook time: O(1)
+Difficulty: Easy
+Serves: Multiple key-value pairs
+
+Ingredients.
+1 db handle
+100 g user
+95 g underscore
+110 g n
+97 g a
+109 g m
+101 g e
+65 g A
+108 g l
+105 g i
+99 g c
+101 g e2
+0 g null
+
+Method.
+Open the refrigerator with "stew.db".
+Put u into the 1st mixing bowl.
+Put s into the 1st mixing bowl.
+Put e into the 1st mixing bowl.
+Put r into the 1st mixing bowl.
+Put underscore into the 1st mixing bowl.
+Put n into the 1st mixing bowl.
+Put a into the 1st mixing bowl.
+Put m into the 1st mixing bowl.
+Put e into the 1st mixing bowl.
+Liquefy contents of the 1st mixing bowl.
+Fold the key from the 1st mixing bowl.
+Put A into the 2nd mixing bowl.
+Put l into the 2nd mixing bowl.
+Put i into the 2nd mixing bowl.
+Put c into the 2nd mixing bowl.
+Put e2 into the 2nd mixing bowl.
+Liquefy contents of the 2nd mixing bowl.
+Fold the value from the 2nd mixing bowl.
+Put the key with the value into the refrigerator.
+Take the key from the refrigerator into the 3rd mixing bowl.
+Liquefy contents of the 3rd mixing bowl.
+Pour contents of the 3rd mixing bowl into the 1st baking dish.
+Throw away the key from the refrigerator.
+Take the key from the refrigerator into the 4th mixing bowl.
+The 4th mixing bowl is empty suggests the key was deleted.
+Close the refrigerator.
+
+Serves 1.
+
+
+
+Counter Increment Reduction.
+
+A side dish for incrementing numeric values.
+
+Ingredients.
+1 counter
+10 l increment
+
+Method.
+Open the refrigerator with "counter.db".
+Put counter into the refrigerator with value 0.
+Stir the counter in the refrigerator.
+Stir the counter in the refrigerator.
+Stir the counter in the refrigerator.
+Take counter from the refrigerator into the 1st mixing bowl.
+The counter should now be 3.
+Close the refrigerator.
+
+Serves 1.

@@ -1,0 +1,17 @@
+[package]
+name = "redlite_nif"
+version = "0.1.0"
+edition = "2021"
+authors = ["Russell Romney"]
+license = "Apache-2.0"
+
+[lib]
+name = "redlite_nif"
+crate-type = ["cdylib"]
+
+[dependencies]
+redlite = { path = "../../../../crates/redlite", features = ["full"] }
+rustler = "0.30"
+
+[features]
+default = []

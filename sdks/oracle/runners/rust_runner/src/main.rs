@@ -122,7 +122,7 @@ impl Runner {
         }
 
         // Create fresh in-memory database
-        let db = match Db::open_memory() {
+        let mut db = match Db::open_memory() {
             Ok(db) => db,
             Err(e) => {
                 self.failed += 1;
@@ -143,7 +143,7 @@ impl Runner {
 
         // Run setup operations
         for op in &test.setup {
-            if let Err(e) = self.execute_cmd(&db, op) {
+            if let Err(e) = self.execute_cmd(&mut db, op) {
                 self.failed += 1;
                 self.errors.push(TestError {
                     spec: spec_name.to_string(),
@@ -162,7 +162,7 @@ impl Runner {
 
         // Run test operations
         for op in &test.operations {
-            let actual = match self.execute_cmd(&db, op) {
+            let actual = match self.execute_cmd(&mut db, op) {
                 Ok(v) => v,
                 Err(e) => {
                     self.failed += 1;
@@ -208,7 +208,7 @@ impl Runner {
         }
     }
 
-    fn execute_cmd(&self, db: &Db, op: &Operation) -> Result<Value, String> {
+    fn execute_cmd(&self, db: &mut Db, op: &Operation) -> Result<Value, String> {
         let cmd = op.cmd.to_lowercase();
         let args = &op.args;
 
@@ -386,6 +386,20 @@ impl Runner {
             "persist" => {
                 let key = get_string(args, 0)?;
                 db.persist(&key)
+                    .map(Value::Bool)
+                    .map_err(|e| e.to_string())
+            }
+            "expireat" => {
+                let key = get_string(args, 0)?;
+                let timestamp = get_timestamp_seconds(args, 1)?;
+                db.expireat(&key, timestamp)
+                    .map(Value::Bool)
+                    .map_err(|e| e.to_string())
+            }
+            "pexpireat" => {
+                let key = get_string(args, 0)?;
+                let timestamp = get_timestamp_ms(args, 1)?;
+                db.pexpireat(&key, timestamp)
                     .map(Value::Bool)
                     .map_err(|e| e.to_string())
             }
@@ -728,6 +742,16 @@ impl Runner {
                     Err(e) => Err(e.to_string()),
                 }
             }
+            "select" => {
+                let db_num = get_i64(args, 0)?;
+                db.select(db_num as i32).map_err(|e| e.to_string())?;
+                Ok(Value::Bool(true))
+            }
+            "vacuum" => {
+                db.vacuum()
+                    .map(Value::Int)
+                    .map_err(|e| e.to_string())
+            }
 
             _ => Err(format!("Unknown command: {}", cmd)),
         }
@@ -831,6 +855,24 @@ impl Runner {
             return false;
         }
 
+        // Handle type assertions: {"type": "integer"}, {"type": "string"}, etc.
+        if let Some(type_val) = map.get(&serde_yaml::Value::String("type".to_string())) {
+            if let serde_yaml::Value::String(expected_type) = type_val {
+                return match expected_type.as_str() {
+                    "integer" => matches!(actual, Value::Int(_)),
+                    "float" => matches!(actual, Value::Float(_)),
+                    "string" => matches!(actual, Value::String(_) | Value::Bytes(_)),
+                    "bool" => matches!(actual, Value::Bool(_)),
+                    "null" => matches!(actual, Value::Null),
+                    "list" => matches!(actual, Value::List(_)),
+                    "set" => matches!(actual, Value::Set(_)),
+                    "dict" => matches!(actual, Value::Dict(_)),
+                    _ => false,
+                };
+            }
+            return false;
+        }
+
         false
     }
 
@@ -877,6 +919,48 @@ fn get_bytes_list(args: &[serde_yaml::Value], idx: usize) -> Result<Vec<Vec<u8>>
         .and_then(|v| v.as_sequence())
         .map(|seq| seq.iter().map(yaml_to_bytes).collect())
         .ok_or_else(|| format!("Missing list argument at index {}", idx))
+}
+
+fn get_timestamp_seconds(args: &[serde_yaml::Value], idx: usize) -> Result<i64, String> {
+    let val = args
+        .get(idx)
+        .ok_or_else(|| format!("Missing argument at index {}", idx))?;
+
+    // Check if it's a special { future_seconds: N } object
+    if let serde_yaml::Value::Mapping(map) = val {
+        if let Some(future_val) = map.get(&serde_yaml::Value::String("future_seconds".to_string())) {
+            let offset = yaml_to_i64(future_val);
+            let now = std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_secs() as i64;
+            return Ok(now + offset);
+        }
+    }
+
+    // Otherwise, treat as direct timestamp
+    Ok(yaml_to_i64(val))
+}
+
+fn get_timestamp_ms(args: &[serde_yaml::Value], idx: usize) -> Result<i64, String> {
+    let val = args
+        .get(idx)
+        .ok_or_else(|| format!("Missing argument at index {}", idx))?;
+
+    // Check if it's a special { future_ms: N } object
+    if let serde_yaml::Value::Mapping(map) = val {
+        if let Some(future_val) = map.get(&serde_yaml::Value::String("future_ms".to_string())) {
+            let offset = yaml_to_i64(future_val);
+            let now = std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_millis() as i64;
+            return Ok(now + offset);
+        }
+    }
+
+    // Otherwise, treat as direct timestamp
+    Ok(yaml_to_i64(val))
 }
 
 fn yaml_to_string(v: &serde_yaml::Value) -> String {

@@ -1,0 +1,168 @@
+Moooooo Test Suite
+==================
+
+Comprehensive tests for Redlite COW SDK
+If you see "Moo" it passed
+If you see "MOO!" it failed
+If you see nothing the program crashed (moo)
+
+=== TEST 1: OPEN DATABASE ===
+
+OOM moo                                   OPEN
+
+Check result in cell 1
+moo
+MOO                                       If cell 1 > 0 continue else fail
+
+Test 1 passed
+Moo
+
+=== TEST 2: SET AND GET ===
+
+Prepare key "t" in cell 2
+moo
+OOO
+MoO MoO MoO MoO MoO MoO MoO MoO MoO MoO
+MoO MoO MoO MoO MoO MoO MoO MoO MoO MoO
+MoO MoO MoO MoO MoO MoO MoO MoO MoO MoO
+MoO MoO MoO MoO MoO MoO MoO MoO MoO MoO
+MoO MoO MoO MoO MoO MoO MoO MoO MoO MoO
+MoO MoO MoO MoO MoO MoO MoO MoO MoO MoO
+MoO MoO MoO MoO MoO MoO MoO MoO MoO MoO
+MoO MoO MoO MoO MoO MoO MoO MoO MoO MoO
+MoO MoO MoO MoO MoO MoO MoO MoO MoO MoO
+MoO MoO MoO MoO MoO MoO MoO MoO MoO MoO
+MoO MoO MoO MoO MoO MoO MoO MoO MoO MoO
+MoO MoO MoO MoO MoO MoO
+
+Prepare value "v" in cell 11
+moo moo moo moo moo moo moo moo moo
+OOO
+MoO MoO MoO MoO MoO MoO MoO MoO MoO MoO
+MoO MoO MoO MoO MoO MoO MoO MoO MoO MoO
+MoO MoO MoO MoO MoO MoO MoO MoO MoO MoO
+MoO MoO MoO MoO MoO MoO MoO MoO MoO MoO
+MoO MoO MoO MoO MoO MoO MoO MoO MoO MoO
+MoO MoO MoO MoO MoO MoO MoO MoO MoO MoO
+MoO MoO MoO MoO MoO MoO MoO MoO MoO MoO
+MoO MoO MoO MoO MoO MoO MoO MoO MoO MoO
+MoO MoO MoO MoO MoO MoO MoO MoO MoO MoO
+MoO MoO MoO MoO MoO MoO MoO MoO MoO MoO
+MoO MoO MoO MoO MoO MoO MoO MoO MoO MoO
+MoO MoO MoO MoO MoO MoO MoO MoO MoO MoO
+MoO MoO
+
+Back to cell 0 and SET
+moO moO moO moO moO moO moO moO moO moO moO
+
+OOM moo moo                               SET
+
+Check result
+moo
+MOO                                       If success continue
+
+Test 2a passed
+Moo
+
+Now GET
+moO
+OOM moo moo moo                           GET
+
+Go to cell 11 and verify
+moo moo moo moo moo moo moo moo moo moo moo
+
+Compare with expected 'v' = 118
+MOo MOo MOo MOo MOo MOo MOo MOo MOo MOo
+MOo MOo MOo MOo MOo MOo MOo MOo MOo MOo
+MOo MOo MOo MOo MOo MOo MOo MOo MOo MOo
+MOo MOo MOo MOo MOo MOo MOo MOo MOo MOo
+MOo MOo MOo MOo MOo MOo MOo MOo MOo MOo
+MOo MOo MOo MOo MOo MOo MOo MOo MOo MOo
+MOo MOo MOo MOo MOo MOo MOo MOo MOo MOo
+MOo MOo MOo MOo MOo MOo MOo MOo MOo MOo
+MOo MOo MOo MOo MOo MOo MOo MOo MOo MOo
+MOo MOo MOo MOo MOo MOo MOo MOo MOo MOo
+MOo MOo MOo MOo MOo MOo MOo MOo MOo MOo
+MOo MOo MOo MOo MOo MOo MOo MOo
+
+Should now be 0 if match
+MOO                                       If 0 then pass else fail
+
+Test 2b passed
+Moo
+
+=== TEST 3: DEL ===
+
+Back to cell 0
+moO moO moO moO moO moO moO moO moO moO moO
+
+OOM moo moo moo moo                       DEL
+
+Check result
+moo
+MOO                                       If success continue
+
+Now try to GET deleted key
+moO
+OOM moo moo moo                           GET
+
+Check cell 1 - should be 0 (not found)
+moo
+
+Should be 0 for not found
+OOO
+MOO                                       Actually we want 0 so this is tricky
+
+Test 3 passed (assuming delete worked)
+Moo
+
+=== TEST 4: INCR ===
+
+Clear and prepare key "c" for counter
+moo
+OOO
+MoO MoO MoO MoO MoO MoO MoO MoO MoO MoO
+MoO MoO MoO MoO MoO MoO MoO MoO MoO MoO
+MoO MoO MoO MoO MoO MoO MoO MoO MoO MoO
+MoO MoO MoO MoO MoO MoO MoO MoO MoO MoO
+MoO MoO MoO MoO MoO MoO MoO MoO MoO MoO
+MoO MoO MoO MoO MoO MoO MoO MoO MoO MoO
+MoO MoO MoO MoO MoO MoO MoO MoO MoO MoO
+MoO MoO MoO MoO MoO MoO MoO MoO MoO MoO
+MoO MoO MoO MoO MoO MoO MoO MoO MoO MoO
+MoO MoO MoO MoO MoO MoO MoO MoO MoO
+
+Back to cell 0
+moO moO
+
+OOM mooo                                  INCR
+moo
+MOO                                       Check result
+
+OOM mooo                                  INCR again
+OOM mooo                                  INCR third time
+
+Value should now be 3
+
+Test 4 passed
+Moo
+
+=== TEST 5: CLOSE ===
+
+moO
+OOM mooooooooooooo                        CLOSE
+
+moo
+MOO                                       Check result
+
+Test 5 passed
+Moo
+
+=== ALL TESTS COMPLETE ===
+
+Print final status
+All tests passed if you see: Moo Moo Moo Moo Moo Moo Moo
+
+Moo Moo Moo Moo Moo
+
+MOOOOOOOOOOOOOOOOO

@@ -1,0 +1,180 @@
+The Tragedy of Dropped Tables.
+
+A cautionary tale of hubris, hot fixes, and the DELETE without WHERE.
+
+Romeo, a production database full of important data.
+Juliet, a careless developer with root access.
+The Ghost, a backup that was never tested.
+Hamlet, the on-call engineer at 3 AM.
+Ophelia, a corrupted transaction log.
+The Database, keeper of all that was once precious.
+
+                    Act I: The Setup.
+
+                    Scene I: A Peaceful Production Environment.
+
+[Enter Romeo and The Database]
+
+The Database:
+  Open thy heart to "production.db"!
+  Thou art my most treasured possession.
+
+Romeo:
+  I contain the sum of a king and the product of
+  a beautiful golden summer's day and a lovely rose
+  and the square of a fair flower.
+
+The Database:
+  Romeo, remember thyself!
+  Let thy data persist for all eternity.
+
+Romeo:
+  Am I better than nothing?
+
+The Database:
+  If so, speak thy mind!
+  Thou art irreplaceable.
+
+[Exit Romeo]
+
+                    Scene II: The Fateful Commit.
+
+[Enter Juliet]
+
+Juliet:
+  I shall make a small change to production.
+  What could possibly go wrong?
+
+The Database:
+  Art thou certain of thy actions?
+
+Juliet:
+  Thou art as cautious as a frightened pig!
+  I have done this a thousand times before.
+
+The Database:
+  Let us proceed then, though my heart trembles.
+
+Juliet:
+  Romeo, thou art banished from my heart!
+
+[The DELETE without WHERE is executed]
+
+The Database:
+  What hast thou done?!
+  Romeo is no more!
+
+[Exit Juliet, pursued by consequences]
+
+                    Act II: The Discovery.
+
+                    Scene I: The On-Call Alert.
+
+[Enter Hamlet]
+
+Hamlet:
+  What noise is this that wakes me from my slumber?
+  The pager screams like a wounded beast!
+
+[Enter The Database]
+
+The Database:
+  Hamlet, a terrible thing has happened!
+  Romeo, our precious production data,
+  has been banished to the void!
+
+Hamlet:
+  Art thou jesting? Tell me it is not so!
+
+The Database:
+  Would that I were jesting.
+  The truth is darker than a winter's night.
+
+Hamlet:
+  Where are the backups? The Ghost must save us!
+
+                    Scene II: The Untested Backup.
+
+[Enter The Ghost]
+
+The Ghost:
+  Thou callest for me, but I am but a phantom.
+  A backup that was never restored.
+  A safety net with holes wide as the sea.
+
+Hamlet:
+  Speak thy mind! Can we recover?
+
+The Ghost:
+  I contain the difference of nothing and nothing.
+  I am empty, like the promises of "I'll fix it later."
+
+Hamlet:
+  Then we are truly lost.
+
+[Exit The Ghost]
+
+                    Act III: The Post-Mortem.
+
+                    Scene I: The Blame.
+
+[Enter Juliet and Ophelia]
+
+Juliet:
+  I did not mean for this to happen!
+  The documentation was unclear!
+
+Ophelia:
+  Thou art as guilty as the difference of
+  a foul bastard and a beautiful rose!
+
+The Database:
+  Speak not of blame, but of prevention.
+  What safeguards shall we implement?
+
+Hamlet:
+  We shall add confirmations for dangerous queries.
+  We shall test our backups weekly.
+  We shall never again trust a developer with
+  unchecked production access.
+
+The Database:
+  These are wise words. Let them be remembered.
+
+                    Scene II: The Resolution.
+
+[Enter Romeo, reborn from a partial log]
+
+Romeo:
+  I have returned, though not whole.
+  Some data is lost forever,
+  like tears in rain.
+
+Juliet:
+  Forgive me, Romeo! I have learned my lesson!
+
+Romeo:
+  Thou art forgiven, but never forgotten
+  shall be this day.
+
+The Database:
+  Let this be a lesson to all who follow.
+  ALWAYS use WHERE in your DELETE.
+  ALWAYS test your backups.
+  NEVER deploy on Friday.
+
+[Exeunt omnes]
+
+                    Epilogue.
+
+The Database:
+  And so ends our tragedy.
+  The data was mostly recovered,
+  the developer was given read-only access,
+  and the on-call engineer finally got some sleep.
+
+  Go forth and remember:
+  With great power comes great responsibility.
+  And always, ALWAYS, have a rollback plan.
+
+[Curtain falls]

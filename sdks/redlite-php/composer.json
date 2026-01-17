@@ -1,0 +1,43 @@
+{
+    "name": "redlite/redlite",
+    "description": "Redis API + SQLite durability. Embedded Redis-compatible database for PHP.",
+    "type": "library",
+    "license": "MIT",
+    "keywords": [
+        "redis",
+        "sqlite",
+        "database",
+        "embedded",
+        "cache",
+        "key-value"
+    ],
+    "authors": [
+        {
+            "name": "Russell Romney"
+        }
+    ],
+    "require": {
+        "php": ">=7.4",
+        "ext-ffi": "*"
+    },
+    "require-dev": {
+        "phpunit/phpunit": "^9.0 || ^10.0"
+    },
+    "autoload": {
+        "psr-4": {
+            "Redlite\\": "src/"
+        }
+    },
+    "autoload-dev": {
+        "psr-4": {
+            "Redlite\\Tests\\": "tests/"
+        }
+    },
+    "scripts": {
+        "test": "phpunit"
+    },
+    "config": {
+        "sort-packages": true
+    },
+    "minimum-stability": "stable"
+}

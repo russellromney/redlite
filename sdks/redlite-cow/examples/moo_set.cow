@@ -1,0 +1,126 @@
+Moo Set Example
+===============
+
+This example opens a database sets a key and gets it back
+All in the beautiful language of moo
+
+Step 1: Open database
+OOM moo
+
+Step 2: Prepare key "hi" in cells 2-3
+moo moo                                   Move to cell 2
+
+Build 'h' = 104
+MoO MoO MoO MoO MoO MoO MoO MoO MoO MoO
+MoO MoO MoO MoO MoO MoO MoO MoO MoO MoO
+MoO MoO MoO MoO MoO MoO MoO MoO MoO MoO
+MoO MoO MoO MoO MoO MoO MoO MoO MoO MoO
+MoO MoO MoO MoO MoO MoO MoO MoO MoO MoO
+MoO MoO MoO MoO MoO MoO MoO MoO MoO MoO
+MoO MoO MoO MoO MoO MoO MoO MoO MoO MoO
+MoO MoO MoO MoO MoO MoO MoO MoO MoO MoO
+MoO MoO MoO MoO MoO MoO MoO MoO MoO MoO
+MoO MoO MoO MoO MoO MoO MoO MoO MoO MoO
+MoO MoO MoO MoO
+
+moo                                       Move to cell 3
+
+Build 'i' = 105
+MoO MoO MoO MoO MoO MoO MoO MoO MoO MoO
+MoO MoO MoO MoO MoO MoO MoO MoO MoO MoO
+MoO MoO MoO MoO MoO MoO MoO MoO MoO MoO
+MoO MoO MoO MoO MoO MoO MoO MoO MoO MoO
+MoO MoO MoO MoO MoO MoO MoO MoO MoO MoO
+MoO MoO MoO MoO MoO MoO MoO MoO MoO MoO
+MoO MoO MoO MoO MoO MoO MoO MoO MoO MoO
+MoO MoO MoO MoO MoO MoO MoO MoO MoO MoO
+MoO MoO MoO MoO MoO MoO MoO MoO MoO MoO
+MoO MoO MoO MoO MoO MoO MoO MoO MoO MoO
+MoO MoO MoO MoO MoO
+
+moo                                       Cell 4 = 0 (null term)
+
+Step 3: Prepare value "moo" in cells 11-13
+moo moo moo moo moo moo moo               Move to cell 11
+
+Build 'm' = 109
+MoO MoO MoO MoO MoO MoO MoO MoO MoO MoO
+MoO MoO MoO MoO MoO MoO MoO MoO MoO MoO
+MoO MoO MoO MoO MoO MoO MoO MoO MoO MoO
+MoO MoO MoO MoO MoO MoO MoO MoO MoO MoO
+MoO MoO MoO MoO MoO MoO MoO MoO MoO MoO
+MoO MoO MoO MoO MoO MoO MoO MoO MoO MoO
+MoO MoO MoO MoO MoO MoO MoO MoO MoO MoO
+MoO MoO MoO MoO MoO MoO MoO MoO MoO MoO
+MoO MoO MoO MoO MoO MoO MoO MoO MoO MoO
+MoO MoO MoO MoO MoO MoO MoO MoO MoO MoO
+MoO MoO MoO MoO MoO MoO MoO MoO MoO
+
+moo                                       Move to cell 12
+
+Build 'o' = 111
+MoO MoO MoO MoO MoO MoO MoO MoO MoO MoO
+MoO MoO MoO MoO MoO MoO MoO MoO MoO MoO
+MoO MoO MoO MoO MoO MoO MoO MoO MoO MoO
+MoO MoO MoO MoO MoO MoO MoO MoO MoO MoO
+MoO MoO MoO MoO MoO MoO MoO MoO MoO MoO
+MoO MoO MoO MoO MoO MoO MoO MoO MoO MoO
+MoO MoO MoO MoO MoO MoO MoO MoO MoO MoO
+MoO MoO MoO MoO MoO MoO MoO MoO MoO MoO
+MoO MoO MoO MoO MoO MoO MoO MoO MoO MoO
+MoO MoO MoO MoO MoO MoO MoO MoO MoO MoO
+MoO MoO MoO MoO MoO MoO MoO MoO MoO MoO
+MoO
+
+moo                                       Move to cell 13
+
+Build 'o' = 111 again
+MoO MoO MoO MoO MoO MoO MoO MoO MoO MoO
+MoO MoO MoO MoO MoO MoO MoO MoO MoO MoO
+MoO MoO MoO MoO MoO MoO MoO MoO MoO MoO
+MoO MoO MoO MoO MoO MoO MoO MoO MoO MoO
+MoO MoO MoO MoO MoO MoO MoO MoO MoO MoO
+MoO MoO MoO MoO MoO MoO MoO MoO MoO MoO
+MoO MoO MoO MoO MoO MoO MoO MoO MoO MoO
+MoO MoO MoO MoO MoO MoO MoO MoO MoO MoO
+MoO MoO MoO MoO MoO MoO MoO MoO MoO MoO
+MoO MoO MoO MoO MoO MoO MoO MoO MoO MoO
+MoO MoO MoO MoO MoO MoO MoO MoO MoO MoO
+MoO
+
+moo                                       Cell 14 = 0 (null term)
+
+Step 4: Go back to cell 0 and execute SET
+moO moO moO moO moO moO moO moO moO moO
+moO moO moO moO
+
+OOM moo moo                               Execute SET syscall
+
+Step 5: Check result in cell 1
+moo
+Moo                                       Print result (should be 1)
+
+Step 6: Now GET the value back
+Clear value buffer first
+moo moo moo moo moo moo moo moo moo moo
+OOO moo OOO moo OOO moo OOO
+
+Go back to cell 0
+moO moO moO moO moO moO moO moO moO moO
+moO moO moO moO
+
+OOM moo moo moo                           Execute GET syscall
+
+Step 7: Print the retrieved value
+moo moo moo moo moo moo moo moo moo moo moo
+Moo moo Moo moo Moo                       Print "moo" character by character
+
+Step 8: Close database
+moO moO moO moO moO moO moO moO moO moO
+moO moO moO moO
+OOM mooooooooooooo                        Execute CLOSE syscall
+
+Moo                                       Print final status
+
+End of example
+MOOOOOOOOOOO

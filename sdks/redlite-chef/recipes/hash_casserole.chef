@@ -1,0 +1,87 @@
+Hash Casserole.
+
+A layered dish demonstrating hash operations, where multiple fields combine
+into a single delicious key.
+
+Prep time: 2ms
+Cook time: O(1) per field
+Difficulty: Medium
+Serves: All fields in the hash
+
+Ingredients.
+117 g u
+115 g s
+101 g e
+114 g r
+58 g colon
+49 g one
+110 g n
+97 g a
+109 g m
+65 g A
+108 g l
+105 g i
+99 g c
+101 g e2
+97 g a2
+103 g g
+50 g two
+53 g five
+
+Method.
+Open the refrigerator with "casserole.db".
+Put u into 1st mixing bowl.
+Put s into 1st mixing bowl.
+Put e into 1st mixing bowl.
+Put r into 1st mixing bowl.
+Put colon into 1st mixing bowl.
+Put one into 1st mixing bowl.
+Liquefy contents of the 1st mixing bowl.
+Fold the hash_key from the 1st mixing bowl.
+Put n into 2nd mixing bowl.
+Put a into 2nd mixing bowl.
+Put m into 2nd mixing bowl.
+Put e into 2nd mixing bowl.
+Liquefy contents of the 2nd mixing bowl.
+Fold the field_name from the 2nd mixing bowl.
+Put A into 3rd mixing bowl.
+Put l into 3rd mixing bowl.
+Put i into 3rd mixing bowl.
+Put c into 3rd mixing bowl.
+Put e2 into 3rd mixing bowl.
+Liquefy contents of the 3rd mixing bowl.
+Fold the field_value from the 3rd mixing bowl.
+Add field_name with field_value to hash_key in the refrigerator.
+Put a2 into 4th mixing bowl.
+Put g into 4th mixing bowl.
+Put e into 4th mixing bowl.
+Liquefy contents of the 4th mixing bowl.
+Fold the age_field from the 4th mixing bowl.
+Put two into 5th mixing bowl.
+Put five into 5th mixing bowl.
+Liquefy contents of the 5th mixing bowl.
+Fold the age_value from the 5th mixing bowl.
+Add age_field with age_value to hash_key in the refrigerator.
+Retrieve all from hash_key in the refrigerator into the 6th mixing bowl.
+Pour contents of the 6th mixing bowl into the 1st baking dish.
+Close the refrigerator.
+
+Serves 2.
+
+
+
+Field Extraction Garnish.
+
+A simple garnish to retrieve a single field from a hash.
+
+Ingredients.
+1 hash
+1 field
+
+Method.
+Open the refrigerator with "casserole.db".
+Take "name" from "user:1" in the refrigerator into the 1st mixing bowl.
+The 1st mixing bowl now contains "Alice".
+Close the refrigerator.
+
+Serves 1.

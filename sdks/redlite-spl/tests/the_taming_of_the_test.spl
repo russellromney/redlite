@@ -1,0 +1,331 @@
+The Taming of the Test.
+
+A comprehensive test suite for the Redlite Shakespeare SDK,
+performed in five acts with assertions most dramatic.
+
+Petruchio, the test runner, bold and assertive.
+Katherine, the database, initially resistant but ultimately cooperative.
+Bianca, the expected result, fair and correct.
+Lucentio, the actual result, seeking to match Bianca.
+Grumio, the error handler, ever prepared for failure.
+The Pass Counter, who tallies our victories.
+The Fail Counter, who laments our defeats.
+
+                    Act I: The Setup.
+
+                    Scene I: Opening the Database.
+
+[Enter Petruchio and Katherine]
+
+Petruchio:
+  Katherine! Open thy heart to "test.db"!
+  We shall test thy very soul this day!
+
+Katherine:
+  I refuse to cooperate!
+
+Petruchio:
+  Open thy heart, I say!
+
+Katherine:
+  Very well. I am opened.
+  But I shall not make this easy.
+
+Petruchio:
+  Let The Pass Counter be nothing.
+  Let The Fail Counter be nothing.
+
+[Enter The Pass Counter and The Fail Counter]
+
+The Pass Counter:
+  I am zero. I await victories.
+
+The Fail Counter:
+  I am zero. I dread defeats.
+
+                    Scene II: Test 1 - SET and GET.
+
+Petruchio:
+  Katherine! Let Romeo be "test_key"!
+  Let Juliet be "test_value"!
+  Romeo and Juliet, remember thyselves!
+
+Katherine:
+  The data is stored.
+
+Petruchio:
+  Now, Katherine, recall Romeo's grief!
+  Let Lucentio be what is retrieved!
+
+[Enter Lucentio and Bianca]
+
+Lucentio:
+  I am "test_value"!
+
+Bianca:
+  And I am "test_value"!
+
+Petruchio:
+  Art thou, Lucentio, equal to Bianca?
+
+Lucentio:
+  We are the same!
+
+Petruchio:
+  Then let The Pass Counter increase by one!
+
+The Pass Counter:
+  I am now one!
+
+Grumio:
+  No errors to report, my lord.
+
+                    Act II: The Deletion.
+
+                    Scene I: Test 2 - DEL.
+
+Petruchio:
+  Katherine! Let "delete_me" be stored with value "goodbye"!
+
+Katherine:
+  It is done.
+
+Petruchio:
+  Now banish "delete_me" from thy heart!
+
+Katherine:
+  It is banished.
+
+Petruchio:
+  Recall "delete_me"!
+  Let Lucentio be what is retrieved!
+
+Lucentio:
+  I am nothing!
+
+Bianca:
+  And I am nothing!
+
+Petruchio:
+  Art thou, Lucentio, equal to Bianca in nothingness?
+
+Lucentio:
+  We are both nothing!
+
+Petruchio:
+  Let The Pass Counter increase by one!
+
+The Pass Counter:
+  I am now two!
+
+                    Scene II: Test 3 - EXISTS.
+
+Petruchio:
+  Katherine! Store "i_exist" with "present"!
+
+Katherine:
+  Done.
+
+Petruchio:
+  Now tell me, is "i_exist" thy beloved?
+
+Katherine:
+  Yes, "i_exist" is in my heart.
+
+Petruchio:
+  Let The Pass Counter increase by one!
+
+The Pass Counter:
+  I am now three!
+
+Petruchio:
+  And is "i_do_not_exist" thy beloved?
+
+Katherine:
+  No, I know not "i_do_not_exist".
+
+Petruchio:
+  Let The Pass Counter increase by one!
+
+The Pass Counter:
+  I am now four!
+
+                    Act III: The Hash.
+
+                    Scene I: Test 4 - HSET and HGET.
+
+Petruchio:
+  Katherine! In the bucket "user:1",
+  let the field "name" be "Alice"!
+
+Katherine:
+  The hash is set.
+
+Petruchio:
+  Now retrieve "name" from "user:1"!
+  Let Lucentio be what is retrieved!
+
+Lucentio:
+  I am "Alice"!
+
+Bianca:
+  And I am "Alice"!
+
+Petruchio:
+  Equal! Let The Pass Counter increase!
+
+The Pass Counter:
+  I am now five!
+
+                    Scene II: Test 5 - HGETALL.
+
+Petruchio:
+  Katherine! In "user:1", also set "age" to "25"!
+
+Katherine:
+  It is done.
+
+Petruchio:
+  Retrieve all from "user:1"!
+
+Katherine:
+  I return: name="Alice", age="25".
+
+Petruchio:
+  Two fields returned. Let The Pass Counter increase!
+
+The Pass Counter:
+  I am now six!
+
+                    Act IV: The List.
+
+                    Scene I: Test 6 - LPUSH and LPOP.
+
+Petruchio:
+  Katherine! Push "first" to the left of "mylist"!
+  Then push "second" to the left!
+  Then push "third" to the left!
+
+Katherine:
+  The list has three items: third, second, first.
+
+Petruchio:
+  Pop from the left of "mylist"!
+  Let Lucentio be what is popped!
+
+Lucentio:
+  I am "third"!
+
+Bianca:
+  And I am "third"!
+
+Petruchio:
+  Correct! Let The Pass Counter increase!
+
+The Pass Counter:
+  I am now seven!
+
+                    Scene II: Test 7 - LRANGE.
+
+Petruchio:
+  Retrieve elements 0 through -1 from "mylist"!
+
+Katherine:
+  I return: second, first.
+
+Petruchio:
+  Two elements remain. Let The Pass Counter increase!
+
+The Pass Counter:
+  I am now eight!
+
+                    Act V: The Finale.
+
+                    Scene I: Test 8 - INCR and DECR.
+
+Petruchio:
+  Katherine! Set "counter" to "0"!
+  Then increase "counter"!
+  Then increase "counter" again!
+  Then increase "counter" once more!
+
+Katherine:
+  The counter is now 3.
+
+Petruchio:
+  Let The Pass Counter increase!
+
+The Pass Counter:
+  I am now nine!
+
+Petruchio:
+  Now decrease "counter"!
+
+Katherine:
+  The counter is now 2.
+
+Petruchio:
+  Let The Pass Counter increase!
+
+The Pass Counter:
+  I am now ten!
+
+                    Scene II: The Cleanup.
+
+Petruchio:
+  Katherine! Flush thy entire heart!
+  Remove all data!
+
+Katherine:
+  I am cleansed. All data is gone.
+
+Petruchio:
+  Close thy heart!
+
+Katherine:
+  I am closed.
+
+                    Scene III: The Report.
+
+[Enter all]
+
+Petruchio:
+  The testing is complete!
+  Pass Counter, what is thy count?
+
+The Pass Counter:
+  I am ten! Ten tests have passed!
+
+Petruchio:
+  Fail Counter, what is thy count?
+
+The Fail Counter:
+  I remain zero! No tests have failed!
+
+Petruchio:
+  Then our testing is a complete success!
+  Katherine, thou hast been tamed!
+
+Katherine:
+  I am not tamed. I am simply... well-tested.
+
+All:
+  Huzzah! The tests pass!
+  Let the builds be green!
+  Let the deployments proceed!
+  Let the PagerDuty remain silent!
+
+[Exeunt, with much celebration]
+
+                    Epilogue.
+
+Grumio:
+  If any tests should fail in future runs,
+  Check first thy data, then thy expectations.
+  A failing test is not a curse,
+  But an opportunity to make things right.
+
+  Remember: red tests are not defeat,
+  But guides to bugs we're yet to meet.
+
+[Curtain]

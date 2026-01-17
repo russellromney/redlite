@@ -1,0 +1,265 @@
+Much Ado About Caching.
+
+A comedy in which two engineers debate the merits of various caching strategies,
+ultimately discovering that the real cache was the friends they made along the way.
+
+Benedick, a backend engineer who trusts no cache.
+Beatrice, a systems architect who caches everything.
+Claudio, a junior developer caught in the middle.
+Hero, a perfectly consistent database transaction.
+Don Pedro, the tech lead trying to keep peace.
+Dogberry, a well-meaning but confused cache policy.
+The Database, keeper of truth and source of all authority.
+
+                    Act I: The Great Cache Debate.
+
+                    Scene I: The Architecture Meeting.
+
+[Enter Don Pedro, Benedick, and Beatrice]
+
+Don Pedro:
+  Let us discuss the caching strategy
+  for our new service. What say you?
+
+Benedick:
+  I trust no cache! They are fickle,
+  inconsistent, and full of lies!
+  Query the database directly, I say!
+
+Beatrice:
+  Thou art as slow as an unindexed query!
+  Without caching, our latency shall be
+  the product of a thousand codpieces
+  and ten thousand worthless queries!
+
+Benedick:
+  Better slow and correct than fast and wrong!
+  Cache invalidation is one of the two hard problems!
+
+Beatrice:
+  And the other is naming things,
+  which thou art also terrible at!
+  "AbstractSingletonProxyFactoryBean"?
+
+Benedick:
+  That name is self-documenting!
+
+Don Pedro:
+  Peace! We shall find a middle ground.
+
+                    Scene II: The Junior Developer's Confusion.
+
+[Enter Claudio]
+
+Claudio:
+  What is cache? I have heard it mentioned
+  but understand it not.
+
+Benedick:
+  Cache is a trap! A siren song!
+  It promises speed but delivers stale data!
+
+Beatrice:
+  Cache is salvation! Without it,
+  thy database shall weep under the load
+  of a million requests per second!
+
+Claudio:
+  But how do I know when data is stale?
+
+[Enter Dogberry]
+
+Dogberry:
+  Fear not! I am the cache policy!
+  I shall explain with great wisdom!
+
+Beatrice:
+  Oh no, not Dogberry...
+
+Dogberry:
+  First, there is the TTL - Time To Lunch!
+  After lunch, all data must be refreshed!
+
+Benedick:
+  That is Time To LIVE, you fool.
+
+Dogberry:
+  Precisely what I said! Time To Live Lunch!
+  Then there is LFU - Least Frequently Updated!
+
+Beatrice:
+  USED. Least Frequently USED.
+
+Dogberry:
+  That too! And finally, there is LRU -
+  Last Recently Utilized!
+
+Claudio:
+  I am more confused than before.
+
+                    Act II: The Caching Strategies.
+
+                    Scene I: Write-Through vs Write-Behind.
+
+[Enter Hero and The Database]
+
+Hero:
+  I am a write-through strategy!
+  Every write goes to cache AND database simultaneously!
+  Consistency is my middle name!
+
+Beatrice:
+  Hero speaks wisely! But the latency...
+
+Benedick:
+  See? Even thou admittest the flaw!
+
+[Enter a Messenger]
+
+Messenger:
+  A wild write-behind approaches!
+
+Don Pedro:
+  What manner of strategy is this?
+
+Hero:
+  Write-behind caches the write first,
+  then lazily persists to database later.
+  Fast, but dangerous!
+
+Benedick:
+  If the cache dies before persisting,
+  the data is lost! I told thee so!
+
+Beatrice:
+  But the performance gains!
+  Think of the microseconds!
+
+The Database:
+  I care not for thy strategies.
+  I am the source of truth.
+  All roads must eventually lead to me.
+
+                    Scene II: The Read-Through Pattern.
+
+Claudio:
+  What of reading data?
+
+Beatrice:
+  Read-through is elegant!
+  First, check the cache.
+  If found, return immediately!
+  If not, fetch from database and store in cache.
+
+Benedick:
+  And what of the thundering herd?
+  When the cache expires, a thousand
+  simultaneous requests shall overwhelm
+  the database like locusts!
+
+Beatrice:
+  We shall use request coalescing!
+  Only one request fetches; the rest wait!
+
+Benedick:
+  And what of cache stampede prevention?
+
+Beatrice:
+  Probabilistic early expiration!
+
+Benedick:
+  And distributed cache invalidation?
+
+Beatrice:
+  Pub/sub notification channels!
+
+Don Pedro:
+  The lady has an answer for everything!
+
+Benedick:
+  I... am impressed against my will.
+
+                    Act III: The Resolution.
+
+                    Scene I: The Hybrid Approach.
+
+[Enter all]
+
+Don Pedro:
+  After much debate, I propose this:
+  A hybrid caching strategy!
+
+Benedick:
+  I am listening, though skeptically.
+
+Don Pedro:
+  For frequently-read, rarely-changed data:
+  Cache aggressively with long TTL.
+
+  For user-specific data:
+  Short TTL with write-through.
+
+  For critical transactions:
+  No cache. Query the database directly.
+
+Beatrice:
+  This... is reasonable.
+
+Benedick:
+  I find myself in reluctant agreement.
+
+Claudio:
+  So caching is neither good nor evil?
+
+The Database:
+  Correct, young developer.
+  Caching is a tool. Like any tool,
+  it can build or destroy,
+  depending on the wisdom of its wielder.
+
+                    Scene II: The Epilogue.
+
+Beatrice:
+  Benedick, I must confess...
+  thy concerns about consistency
+  have merit.
+
+Benedick:
+  And I admit... thy performance
+  optimizations are not without value.
+
+Don Pedro:
+  Do my ears deceive me?
+  Are Beatrice and Benedick agreeing?
+
+Beatrice:
+  We agree on the solution.
+  The debate was much ado about...
+
+Benedick:
+  ...caching.
+
+[They shake hands]
+
+Dogberry:
+  I understood everything perfectly!
+  Cache is like a refrigerator!
+  You put leftovers in, and later
+  they might still be good!
+
+All:
+  ...
+
+Dogberry:
+  Or moldy! Either way!
+
+The Database:
+  Let us end on this note:
+  Cache wisely, invalidate carefully,
+  and always, ALWAYS have monitoring
+  to tell thee when things go wrong.
+
+All:
+  COMMIT!
+
+[Exeunt]
