@@ -1,0 +1,17 @@
+# frozen_string_literal: true
+
+require "rspec/core/rake_task"
+
+RSpec::Core::RakeTask.new(:spec)
+
+task default: :spec
+
+desc "Run oracle tests"
+task :oracle do
+  ruby "#{__dir__}/../oracle/runners/ruby_runner.rb"
+end
+
+desc "Run oracle tests (verbose)"
+task "oracle:verbose" do
+  ruby "#{__dir__}/../oracle/runners/ruby_runner.rb", "-v"
+end
