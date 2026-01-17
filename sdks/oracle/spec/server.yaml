@@ -1,0 +1,51 @@
+# Oracle Test Specification: Server Commands
+
+name: Server Commands
+version: "1.0"
+
+tests:
+  # ==========================================================================
+  # VACUUM
+  # ==========================================================================
+
+  - name: VACUUM empty database
+    operations:
+      - { cmd: VACUUM, args: [], expect: { type: "integer" } }
+
+  - name: VACUUM after insertions
+    setup:
+      - { cmd: SET, args: ["k1", "value1"] }
+      - { cmd: SET, args: ["k2", "value2"] }
+      - { cmd: SET, args: ["k3", "value3"] }
+    operations:
+      - { cmd: VACUUM, args: [], expect: { type: "integer" } }
+      # Data should still be accessible after vacuum
+      - { cmd: GET, args: ["k1"], expect: "value1" }
+      - { cmd: GET, args: ["k2"], expect: "value2" }
+      - { cmd: GET, args: ["k3"], expect: "value3" }
+
+  - name: VACUUM after deletions
+    setup:
+      - { cmd: SET, args: ["k1", "value1"] }
+      - { cmd: SET, args: ["k2", "value2"] }
+      - { cmd: DEL, args: [["k1"]] }
+    operations:
+      - { cmd: VACUUM, args: [], expect: { type: "integer" } }
+      - { cmd: GET, args: ["k1"], expect: null }
+      - { cmd: GET, args: ["k2"], expect: "value2" }
+
+  - name: VACUUM with mixed data types
+    setup:
+      - { cmd: SET, args: ["string", "value"] }
+      - { cmd: HSET, args: ["hash", "field", "value"] }
+      - { cmd: LPUSH, args: ["list", ["a", "b", "c"]] }
+      - { cmd: SADD, args: ["set", ["x", "y", "z"]] }
+      - { cmd: ZADD, args: ["zset", [[1.0, "a"], [2.0, "b"]]] }
+    operations:
+      - { cmd: VACUUM, args: [], expect: { type: "integer" } }
+      # Verify all data types intact
+      - { cmd: GET, args: ["string"], expect: "value" }
+      - { cmd: HGET, args: ["hash", "field"], expect: "value" }
+      - { cmd: LLEN, args: ["list"], expect: 3 }
+      - { cmd: SCARD, args: ["set"], expect: 3 }
+      - { cmd: ZCARD, args: ["zset"], expect: 2 }

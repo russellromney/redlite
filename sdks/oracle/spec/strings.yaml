@@ -11,6 +11,13 @@
 #   expect: { range: [59, 60] }  - Numeric range (inclusive)
 #   expect: { approx: 3.14, tol: 0.01 }  - Float with tolerance
 #   expect: { type: "bytes" }    - Type check only
+#   expect: { type: "integer" }  - Type check for integer
+#   expect: { dict: {...} }      - Dictionary/hash map match
+#
+# Special argument markers:
+#   { bytes: [0, 1, 255] }       - Binary data as byte array
+#   { future_seconds: 60 }       - Unix timestamp: now + 60 seconds (for EXPIREAT)
+#   { future_ms: 60000 }         - Unix timestamp ms: now + 60000ms (for PEXPIREAT)
 
 name: String Commands
 version: "1.0"

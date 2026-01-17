@@ -651,10 +651,10 @@ make test-oracle-compare --seed 12345
 | **Kotlin** | ✅ Complete | JNI | - |
 | **Java** | ✅ Complete | JNI | - |
 | **Swift** | 📋 Planned | C FFI | HIGH |
-| **C#/.NET** | 📋 Planned | P/Invoke | HIGH |
+| **C#/.NET** | ✅ Complete | P/Invoke | - |
 | **WASM** | 📋 Planned | wasm-bindgen | MEDIUM |
 | **Ruby** | 📋 Planned | FFI gem / magnus | MEDIUM |
-| **C/C++** | 📋 Planned | Native header | MEDIUM |
+| **C++** | ✅ Complete | C++17 header-only | - |
 | **Zig** | 📋 Planned | C ABI | LOW |
 | **PHP** | 📋 Planned | PHP FFI | LOW |
 | **Elixir** | 📋 Planned | Rustler NIFs | LOW |
@@ -742,37 +742,61 @@ sdks/redlite-swift/
 
 #### C#/.NET SDK
 
-**Status**: PLANNED
-**Priority**: HIGH
+**Status**: ✅ COMPLETE (Session 44)
+**Priority**: -
 **Location**: `sdks/redlite-dotnet/`
 **Binding Type**: P/Invoke with native library
 
 **Structure**:
 ```
 sdks/redlite-dotnet/
-├── Redlite.csproj
+├── Redlite.csproj              # .NET 6/7/8 project
 ├── src/
-│   ├── Redlite.cs               # Main client
-│   ├── EmbeddedDb.cs            # P/Invoke wrapper
-│   ├── NativeMethods.cs         # DllImport declarations
-│   ├── SetOptions.cs
-│   ├── ZMember.cs
-│   └── Namespaces/
-│       ├── FTSNamespace.cs
-│       ├── VectorNamespace.cs
-│       ├── GeoNamespace.cs
-│       └── HistoryNamespace.cs
-└── tests/
-    ├── StringsTest.cs
-    ├── HashesTest.cs
-    └── ...
+│   ├── RedliteDb.cs            # Main database class (~900 lines)
+│   ├── NativeMethods.cs        # P/Invoke declarations (~400 lines)
+│   ├── SetOptions.cs           # SET command options
+│   ├── ZMember.cs              # Sorted set member struct
+│   └── RedliteException.cs     # Custom exception
+├── tests/
+│   ├── Redlite.Tests.csproj
+│   ├── StringTests.cs          # 17 tests
+│   ├── KeyTests.cs             # 15 tests
+│   ├── HashTests.cs            # 10 tests
+│   ├── ListTests.cs            # 12 tests
+│   ├── SetTests.cs             # 7 tests
+│   └── ZSetTests.cs            # 12 tests
+└── README.md
 ```
 
-**Implementation Notes**:
-- Target .NET 6+ and .NET Standard 2.1
-- Use `LibraryImport` (source-generated) for .NET 7+
-- NuGet package with native binaries for win-x64, linux-x64, osx-arm64, osx-x64
-- Consider StackExchange.Redis compatibility layer for server mode
+**C# API Design**:
+```csharp
+using Redlite;
+
+using var db = RedliteDb.OpenMemory();
+
+// Strings
+db.Set("key", "value");
+var val = db.GetString("key");  // "value"
+db.Incr("counter");
+
+// Hashes
+db.HSet("user", new Dictionary<string, string> {
+    {"name", "Alice"}, {"age", "30"}
+});
+var all = db.HGetAll("user");
+
+// Lists, Sets, Sorted Sets
+db.RPush("list", "a", "b", "c");
+db.SAdd("set", "x", "y", "z");
+db.ZAdd("zset", new ZMember(1.0, "a"), new ZMember(2.0, "b"));
+```
+
+**Implementation Features**:
+- IDisposable pattern for resource cleanup
+- Nullable reference types enabled (C# 8+)
+- Return `T?` for nullable results
+- 73 unit tests using xUnit
+- Oracle test runner for cross-SDK validation
 
 ---
 
@@ -815,51 +839,85 @@ sdks/redlite-ruby/
 
 ---
 
-#### C/C++ SDK
+#### C++ SDK
 
-**Status**: PLANNED
+**Status**: ✅ COMPLETE (Session 43)
 **Priority**: MEDIUM
-**Location**: `sdks/redlite-c/`
-**Binding Type**: C header with static/dynamic library
+**Location**: `sdks/redlite-cpp/`
+**Binding Type**: Header-only C++17 wrapper around C FFI
 
 **Structure**:
 ```
-sdks/redlite-c/
+sdks/redlite-cpp/
 ├── include/
-│   └── redlite.h                # Public C API
-├── src/
-│   └── redlite.c                # Thin wrapper (if needed)
+│   └── redlite/
+│       └── redlite.hpp          # Modern C++17 API
+├── tests/
+│   ├── test_strings.cpp         # 20 tests
+│   ├── test_keys.cpp            # 12 tests
+│   ├── test_hashes.cpp          # 12 tests
+│   ├── test_lists.cpp           # 13 tests
+│   ├── test_sets.cpp            # 8 tests
+│   └── test_zsets.cpp           # 12 tests
 ├── examples/
-│   ├── basic.c
-│   └── CMakeLists.txt
+│   └── basic.cpp
 ├── CMakeLists.txt
-└── tests/
-    └── test_strings.c
+├── Makefile
+├── README.md
+└── redlite.pc.in
 ```
 
-**C API Design**:
-```c
-// redlite.h
-typedef struct redlite_db redlite_db_t;
-typedef struct redlite_result redlite_result_t;
+**C++ API Design**:
+```cpp
+#include <redlite/redlite.hpp>
+using namespace redlite;
 
-redlite_db_t* redlite_open(const char* path);
-redlite_db_t* redlite_open_memory(void);
-void redlite_close(redlite_db_t* db);
+auto db = Database::open_memory();
 
-int redlite_set(redlite_db_t* db, const char* key,
-                const uint8_t* value, size_t value_len);
-redlite_result_t* redlite_get(redlite_db_t* db, const char* key);
+// Strings
+db.set("key", "value");
+auto val = db.get("key");  // std::optional<std::string>
+db.incr("counter");
 
-const uint8_t* redlite_result_bytes(redlite_result_t* r, size_t* len);
-void redlite_result_free(redlite_result_t* r);
+// Hashes
+db.hset("user", {{"name", "Alice"}, {"age", "30"}});
+auto all = db.hgetall("user");
+
+// Lists, Sets, Sorted Sets
+db.rpush("list", {"a", "b", "c"});
+db.sadd("set", {"x", "y", "z"});
+db.zadd("zset", {{1.0, "a"}, {2.0, "b"}});
 ```
 
-**Implementation Notes**:
-- Base layer for other FFI bindings
-- cbindgen to generate header from Rust
-- Provide both static (.a) and dynamic (.so/.dylib/.dll) libraries
+**Implementation Features**:
+- Header-only library (880+ lines)
+- RAII resource management
+- Modern C++17 API: `std::optional`, `std::string_view`, move semantics
+- 77 unit tests using Catch2
 - CMake + pkg-config support
+
+---
+
+#### C SDK (Raw FFI)
+
+**Status**: ✅ COMPLETE (via redlite-ffi)
+**Location**: `crates/redlite-ffi/redlite.h`
+**Binding Type**: Auto-generated C header
+
+The C FFI is already available in `crates/redlite-ffi/`. It provides the low-level
+C API that the C++ SDK and other language bindings use.
+
+**Usage**:
+```c
+#include "redlite.h"
+
+RedliteDb* db = redlite_open_memory();
+redlite_set(db, "key", (uint8_t*)"value", 5, 0);
+RedliteBytes result = redlite_get(db, "key");
+// use result.data, result.len
+redlite_free_bytes(result);
+redlite_close(db);
+```
 
 ---
 

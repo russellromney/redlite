@@ -1,5 +1,492 @@
 # Changelog
 
+## Session 48: PHP SDK Implementation
+
+### Added - Complete PHP SDK with FFI Bindings
+
+**Location**: `sdks/redlite-php/`
+
+**Features**:
+- PHP FFI bindings for native library integration (PHP 7.4+)
+- PHP-idiomatic interface with null for missing keys
+- Full Redis command coverage: strings, hashes, lists, sets, sorted sets
+- Automatic memory management with proper FFI cleanup
+- Composer package with bundled native binaries
+
+**Files Created**:
+- `composer.json` - Composer package specification
+- `src/Database.php` - Low-level FFI wrapper (~900 lines)
+- `src/Redlite.php` - Main client class with friendly API (~600 lines)
+- `src/RedliteException.php` - Exception class for error handling
+- `tests/RedliteTest.php` - Comprehensive PHPUnit test suite (80+ tests)
+- `phpunit.xml` - PHPUnit configuration
+
+**Commands Implemented** (64 total):
+- String (16): GET, SET, SETEX, PSETEX, GETDEL, APPEND, STRLEN, GETRANGE, SETRANGE, INCR, DECR, INCRBY, DECRBY, INCRBYFLOAT, MGET, MSET
+- Key (16): DEL, EXISTS, TYPE, TTL, PTTL, EXPIRE, PEXPIRE, EXPIREAT, PEXPIREAT, PERSIST, RENAME, RENAMENX, KEYS, DBSIZE, FLUSHDB, SELECT
+- Hash (10): HSET, HGET, HDEL, HEXISTS, HLEN, HKEYS, HVALS, HINCRBY, HGETALL, HMGET
+- List (7): LPUSH, RPUSH, LPOP, RPOP, LLEN, LRANGE, LINDEX
+- Set (5): SADD, SREM, SMEMBERS, SISMEMBER, SCARD
+- Sorted Set (8): ZADD, ZREM, ZSCORE, ZCARD, ZCOUNT, ZINCRBY, ZRANGE, ZREVRANGE
+- Server (2): VACUUM, VERSION
+
+**Example**:
+```php
+<?php
+use Redlite\Redlite;
+
+// Open in-memory database
+$db = new Redlite(':memory:');
+
+// String operations
+$db->set('greeting', 'Hello, World!');
+echo $db->get('greeting');  // "Hello, World!"
+
+// Hash operations
+$db->hset('user:1', ['name' => 'Alice', 'age' => '30']);
+print_r($db->hgetall('user:1'));  // ['name' => 'Alice', 'age' => '30']
+
+// Sorted sets
+$db->zadd('scores', ['alice' => 100, 'bob' => 95, 'carol' => 98]);
+$top = $db->zrevrange('scores', 0, 2);  // ['alice', 'carol', 'bob']
+
+$db->close();
+```
+
+**Build Instructions**:
+```bash
+cd sdks/redlite-php
+composer install
+./vendor/bin/phpunit
+```
+
+### Added - PHP Oracle Test Runner
+
+**Location**: `sdks/oracle/runners/php_runner.php`
+
+Oracle test runner for validating PHP SDK against shared test specifications:
+- Supports all oracle tests across spec files
+- YAML parsing via yaml PHP extension
+- Full expectation type support (bytes, set, dict, range, approx)
+- Verbose mode for debugging (`-v` flag)
+
+**Usage**:
+```bash
+cd sdks/oracle/runners
+php php_runner.php          # Run all specs
+php php_runner.php -v       # Verbose output
+```
+
+**Requirements**:
+- PHP 7.4+ with FFI extension enabled
+- yaml extension (`pecl install yaml`)
+- Composer for autoloading
+- PHPUnit for unit tests
+
+---
+
+## Session 47: Elixir SDK Implementation
+
+### Added - Complete Elixir SDK with Rustler NIFs
+
+**Location**: `sdks/redlite-elixir/`
+
+**Features**:
+- Rustler NIF bindings for high-performance Rust -> Elixir integration
+- GenServer wrapper for process isolation and named access
+- Dirty schedulers for potentially long operations (prevents scheduler blocking)
+- Idiomatic Elixir API with `:ok/:error` tuples and `nil` for missing values
+- Full Redis command coverage: strings, hashes, lists, sets, sorted sets
+
+**Files Created**:
+- `mix.exs` - Mix project configuration with Rustler dependency
+- `native/redlite_nif/Cargo.toml` - Rustler crate configuration
+- `native/redlite_nif/src/lib.rs` - Rust NIF implementations (~1100 lines)
+- `lib/redlite.ex` - Main Elixir module with GenServer (~600 lines)
+- `lib/redlite/native.ex` - NIF wrapper module
+- `test/redlite_test.exs` - Comprehensive ExUnit tests (70+ tests)
+- `Makefile` - Convenience commands
+- `README.md` - Documentation with API reference
+
+**Commands Implemented** (64 total):
+- String (17): GET, SET, SET_OPTS, SETEX, PSETEX, GETDEL, APPEND, STRLEN, GETRANGE, SETRANGE, INCR, DECR, INCRBY, DECRBY, INCRBYFLOAT, MGET, MSET
+- Key (16): DEL, EXISTS, TYPE, TTL, PTTL, EXPIRE, PEXPIRE, EXPIREAT, PEXPIREAT, PERSIST, RENAME, RENAMENX, KEYS, DBSIZE, FLUSHDB, SELECT
+- Hash (10): HSET, HGET, HDEL, HEXISTS, HLEN, HKEYS, HVALS, HINCRBY, HGETALL, HMGET
+- List (7): LPUSH, RPUSH, LPOP, RPOP, LLEN, LRANGE, LINDEX
+- Set (5): SADD, SREM, SMEMBERS, SISMEMBER, SCARD
+- Sorted Set (8): ZADD, ZREM, ZSCORE, ZCARD, ZCOUNT, ZINCRBY, ZRANGE, ZREVRANGE
+- Scan (4): SCAN, HSCAN, SSCAN, ZSCAN
+- Server (1): VACUUM
+
+**API Design**:
+- `Redlite.open/1` - Open database (":memory:" or file path)
+- `Redlite.start_link/1` - Start GenServer for named process
+- All commands return `{:ok, result}` or `{:error, reason}`
+- `nil` for missing keys/fields (Elixir-idiomatic)
+- Binary data support for all values
+
+**Example**:
+```elixir
+# Direct API
+{:ok, db} = Redlite.open(":memory:")
+:ok = Redlite.set(db, "key", "value")
+{:ok, "value"} = Redlite.get(db, "key")
+
+# GenServer wrapper
+{:ok, _pid} = Redlite.start_link(path: ":memory:", name: MyCache)
+:ok = Redlite.set(MyCache, "key", "value")
+
+# Hash operations
+{:ok, 2} = Redlite.hset(db, "user:1", %{"name" => "Alice", "age" => "30"})
+{:ok, "Alice"} = Redlite.hget(db, "user:1", "name")
+
+# Sorted sets
+{:ok, 1} = Redlite.zadd(db, "leaderboard", 100.0, "alice")
+{:ok, ["alice"]} = Redlite.zrange(db, "leaderboard", 0, -1)
+```
+
+**Build Instructions**:
+```bash
+cd sdks/redlite-elixir
+mix deps.get
+mix compile
+mix test
+```
+
+### Added - Elixir Oracle Test Runner
+
+**Location**: `sdks/oracle/runners/elixir_runner.exs`
+
+Oracle test runner for validating Elixir SDK against shared test specifications:
+- Mix.install-based runner (no compilation needed)
+- Full YAML spec parsing with YamlElixir
+- Support for all expectation types (exact, range, approx, set)
+- Verbose mode with detailed error reporting
+
+---
+
+## Session 46: Zig SDK Implementation
+
+### Added - Complete Zig SDK with Idiomatic API
+
+**Location**: `sdks/redlite-zig/`
+
+**Features**:
+- Zig-idiomatic wrapper using slices, optionals, and error unions
+- @cImport integration with redlite.h C FFI
+- RAII-style resource management with `defer`
+- Full Redis command coverage: strings, hashes, lists, sets, sorted sets
+
+**Files Created**:
+- `build.zig` - Zig build system configuration
+- `src/c.zig` - Low-level C FFI bindings via @cImport
+- `src/redlite.zig` - Main Zig-idiomatic wrapper API (~650 lines)
+- `tests/test_basic.zig` - Comprehensive unit tests (35+ tests)
+- `examples/basic.zig` - Usage example
+- `Makefile` - Convenience commands for building and testing
+- `README.md` - Documentation with API reference
+
+**Commands Implemented** (64 total):
+- String (16): GET, SET, SETEX, PSETEX, GETDEL, APPEND, STRLEN, GETRANGE, SETRANGE, INCR, DECR, INCRBY, DECRBY, INCRBYFLOAT, MGET, MSET
+- Key (16): DEL, EXISTS, TYPE, TTL, PTTL, EXPIRE, PEXPIRE, EXPIREAT, PEXPIREAT, PERSIST, RENAME, RENAMENX, KEYS, DBSIZE, FLUSHDB, SELECT
+- Hash (10): HSET, HGET, HDEL, HEXISTS, HLEN, HKEYS, HVALS, HINCRBY, HGETALL, HMGET
+- List (7): LPUSH, RPUSH, LPOP, RPOP, LLEN, LRANGE, LINDEX
+- Set (5): SADD, SREM, SMEMBERS, SISMEMBER, SCARD
+- Sorted Set (8): ZADD, ZREM, ZSCORE, ZCARD, ZCOUNT, ZINCRBY, ZRANGE, ZREVRANGE
+- Server (2): VACUUM, VERSION
+
+**API Types**:
+- `Database` - Main database handle with all Redis commands
+- `OwnedBytes` - Owned byte result with RAII cleanup
+- `OwnedStringArray` - Owned string array result
+- `OwnedBytesArray` - Owned bytes array result
+- `ZMember` - Sorted set member (score + member)
+- `KV` - Key-value pair for batch operations
+- `Error` - Error union type for operation failures
+
+**Example**:
+```zig
+const redlite = @import("redlite");
+
+const db = try redlite.Database.openMemory();
+defer db.close();
+
+// Strings
+try db.set("key", "value", null);
+if (try db.get("key")) |v| {
+    defer v.deinit();
+    std.debug.print("{s}\n", .{v.data()});
+}
+
+// Counters
+_ = db.incr("counter");
+_ = db.incrby("counter", 10);
+
+// Hashes
+_ = db.hset("user:1", "name", "Alice");
+
+// Sorted sets
+var members = [_]redlite.ZMember{
+    .{ .score = 100.0, .member = "alice" },
+};
+_ = try db.zadd("leaderboard", &members);
+```
+
+**Build Instructions**:
+```bash
+cd sdks/redlite-zig
+make ffi     # Build the FFI library first
+make build   # Build the Zig SDK
+make test    # Run all tests
+make example # Run the example
+```
+
+### Added - Zig Oracle Test Runner
+
+**Location**: `sdks/oracle/runners/zig_runner.zig`
+
+Oracle test runner for validating Zig SDK against shared test specifications:
+- Interactive mode for JSON command input
+- Command dispatch with proper type conversions
+- Error handling with JSON error responses
+
+---
+
+## Session 45: Lua SDK Implementation
+
+### Added - Complete Lua SDK with LuaJIT FFI Bindings
+
+**Location**: `sdks/redlite-lua/`
+
+**Features**:
+- LuaJIT FFI bindings for maximum performance (microsecond latency)
+- Lua-idiomatic interface with nil for missing keys
+- Full Redis command coverage: strings, hashes, lists, sets, sorted sets
+- Automatic memory management with proper FFI cleanup
+- LuaRocks package support
+
+**Files Created**:
+- `redlite.lua` - Main LuaJIT FFI wrapper (800+ lines)
+- `redlite/init.lua` - Module entry point for require("redlite")
+- `spec/redlite_spec.lua` - Comprehensive busted test suite (45+ tests)
+- `redlite-scm-1.rockspec` - LuaRocks package specification
+- `Makefile` - Build and test commands
+- `README.md` - Documentation with full API reference
+
+**Commands Implemented** (64 total):
+- String (16): GET, SET, SETEX, PSETEX, GETDEL, APPEND, STRLEN, GETRANGE, SETRANGE, INCR, DECR, INCRBY, DECRBY, INCRBYFLOAT, MGET, MSET
+- Key (16): DEL, EXISTS, TYPE, TTL, PTTL, EXPIRE, PEXPIRE, EXPIREAT, PEXPIREAT, PERSIST, RENAME, RENAMENX, KEYS, DBSIZE, FLUSHDB, SELECT
+- Hash (10): HSET, HGET, HDEL, HEXISTS, HLEN, HKEYS, HVALS, HINCRBY, HGETALL, HMGET
+- List (7): LPUSH, RPUSH, LPOP, RPOP, LLEN, LRANGE, LINDEX
+- Set (5): SADD, SREM, SMEMBERS, SISMEMBER, SCARD
+- Sorted Set (8): ZADD, ZREM, ZSCORE, ZCARD, ZCOUNT, ZINCRBY, ZRANGE, ZREVRANGE
+- Server (2): VACUUM, VERSION
+
+**Example**:
+```lua
+local redlite = require("redlite")
+
+-- Open in-memory database
+local db = redlite.open_memory()
+
+-- String operations
+db:set("greeting", "Hello, World!")
+print(db:get("greeting"))  -- "Hello, World!"
+
+-- Hash operations
+db:hset("user:1", {name = "Alice", age = "30"})
+print(db:hgetall("user:1"))  -- {name = "Alice", age = "30"}
+
+-- Sorted sets with flexible API
+db:zadd("scores", {alice = 100, bob = 95, carol = 98})
+local top = db:zrevrange("scores", 0, 2)  -- {"alice", "carol", "bob"}
+
+db:close()
+```
+
+**Build Instructions**:
+```bash
+cd sdks/redlite-lua
+make build  # Build FFI library
+make test   # Run busted tests
+make oracle # Run oracle tests
+```
+
+### Added - Lua Oracle Test Runner
+
+**Location**: `sdks/oracle/runners/lua_runner.lua`
+
+Oracle test runner for validating Lua SDK against shared test specifications:
+- Supports all oracle tests across spec files
+- YAML parsing via lyaml library
+- Full expectation type support (bytes, set, dict, range, approx)
+- Verbose mode for debugging (`-v` flag)
+
+**Usage**:
+```bash
+cd sdks/oracle/runners
+luajit lua_runner.lua          # Run all specs
+luajit lua_runner.lua -v       # Verbose output
+```
+
+**Requirements**:
+- LuaJIT (required for FFI support)
+- lyaml (`luarocks install lyaml`)
+- busted (`luarocks install busted`) for unit tests
+
+---
+
+## Session 44: Ruby SDK Implementation
+
+### Added - Complete Ruby SDK with FFI Bindings
+
+**Location**: `sdks/redlite-ruby/`
+
+**Features**:
+- FFI-based bindings using the `ffi` gem (simpler than native extensions)
+- Ruby-idiomatic interface with nil for missing keys, keyword arguments
+- Full Redis command coverage: strings, hashes, lists, sets, sorted sets
+- Block syntax support for automatic resource cleanup
+
+**Files Created**:
+- `redlite.gemspec` - Gem specification with ffi dependency
+- `Gemfile` - Dependency management
+- `Rakefile` - Build and test tasks
+- `lib/redlite.rb` - Main entry point
+- `lib/redlite/version.rb` - Version constant
+- `lib/redlite/errors.rb` - Custom exception classes
+- `lib/redlite/ffi.rb` - FFI bindings to C library (58 functions)
+- `lib/redlite/database.rb` - Database class with all Redis commands
+- `spec/spec_helper.rb` - RSpec configuration
+- `spec/redlite_spec.rb` - Comprehensive test suite
+
+**Commands Implemented** (64 total):
+- String (16): GET, SET, SETEX, PSETEX, GETDEL, APPEND, STRLEN, GETRANGE, SETRANGE, INCR, DECR, INCRBY, DECRBY, INCRBYFLOAT, MGET, MSET
+- Key (16): DEL, EXISTS, TYPE, TTL, PTTL, EXPIRE, PEXPIRE, EXPIREAT, PEXPIREAT, PERSIST, RENAME, RENAMENX, KEYS, DBSIZE, FLUSHDB, SELECT
+- Hash (10): HSET, HGET, HDEL, HEXISTS, HLEN, HKEYS, HVALS, HINCRBY, HGETALL, HMGET
+- List (7): LPUSH, RPUSH, LPOP, RPOP, LLEN, LRANGE, LINDEX
+- Set (5): SADD, SREM, SMEMBERS, SISMEMBER, SCARD
+- Sorted Set (8): ZADD, ZREM, ZSCORE, ZCARD, ZCOUNT, ZINCRBY, ZRANGE, ZREVRANGE
+- Server (2): VACUUM, VERSION
+
+**Example**:
+```ruby
+require 'redlite'
+
+# Block syntax with automatic cleanup
+Redlite.open do |db|
+  db.set("key", "value", ex: 60)  # With expiration
+  puts db.get("key")              # => "value"
+
+  # Hashes
+  db.hset("user:1", { name: "Alice", age: "30" })
+  puts db.hgetall("user:1")       # => {"name"=>"Alice", "age"=>"30"}
+
+  # Lists
+  db.rpush("queue", "job1", "job2", "job3")
+  puts db.lpop("queue")           # => "job1"
+end
+```
+
+**Build Instructions**:
+```bash
+cd sdks/redlite-ruby
+bundle install
+bundle exec rspec
+```
+
+### Added - Ruby Oracle Test Runner
+
+**Location**: `sdks/oracle/runners/ruby_runner.rb`
+
+Oracle test runner for validating Ruby SDK against shared test specifications:
+- Supports all 137 oracle tests across 6 spec files
+- YAML parsing with full expectation type support
+- Command dispatch handling API differences
+- Verbose mode for debugging (`-v` flag)
+
+**Usage**:
+```bash
+cd sdks/oracle
+ruby runners/ruby_runner.rb        # Run all specs
+ruby runners/ruby_runner.rb -v     # Verbose output
+```
+
+---
+
+## Session 43: C++ SDK Implementation
+
+### Added - Complete C++ SDK with Modern C++17 API
+
+**Location**: `sdks/redlite-cpp/`
+
+**Features**:
+- Header-only library (`include/redlite/redlite.hpp` - 880+ lines)
+- RAII resource management with automatic cleanup
+- Modern C++17 API using `std::optional`, `std::string_view`, move semantics
+- Full Redis command coverage: strings, hashes, lists, sets, sorted sets
+
+**Files Created**:
+- `include/redlite/redlite.hpp` - Main header with full C++ API
+- `CMakeLists.txt` - CMake build system with Catch2 test framework
+- `Makefile` - Convenience commands for building and testing
+- `README.md` - Documentation with API reference
+- `redlite.pc.in` - pkg-config template
+
+**Test Files** (6 test files using Catch2):
+- `tests/test_strings.cpp` - String command tests (20 tests)
+- `tests/test_keys.cpp` - Key command tests (12 tests)
+- `tests/test_hashes.cpp` - Hash command tests (12 tests)
+- `tests/test_lists.cpp` - List command tests (13 tests)
+- `tests/test_sets.cpp` - Set command tests (8 tests)
+- `tests/test_zsets.cpp` - Sorted set command tests (12 tests)
+
+**Example**:
+- `examples/basic.cpp` - Comprehensive usage example
+
+**API Classes**:
+- `redlite::Database` - Main database class with all commands
+- `redlite::Error` - Exception class for error handling
+- `redlite::SetOptions` - Builder pattern for SET options
+- `redlite::ZMember` - Sorted set member (score + value)
+- `redlite::Bytes` - RAII wrapper for byte results
+
+**Build Instructions**:
+```bash
+cd sdks/redlite-cpp
+make build   # Build SDK and tests
+make test    # Run all tests
+make example # Run the basic example
+```
+
+### Added - C++ Oracle Test Runner
+
+**Location**: `sdks/oracle/runners/cpp_runner.cpp`
+
+Oracle test runner for validating C++ SDK against shared test specifications:
+- Supports all 137 oracle tests across 6 spec files
+- YAML parsing via yaml-cpp
+- Full command coverage matching Python/TypeScript runners
+- Verbose mode for debugging
+
+### Added - SDK Session Prompts
+
+**Location**: `sdks/SESSION_PROMPTS.md`
+
+Ready-to-use session prompts for implementing SDKs in other languages:
+- Swift SDK (iOS/macOS)
+- C# .NET SDK (Windows/cross-platform)
+- Ruby SDK (FFI gem)
+- Zig SDK (C interop)
+- PHP SDK (PHP FFI)
+- Elixir SDK (Rustler NIFs)
+- Lua SDK (LuaJIT FFI)
+- WASM SDK (browser/Node.js)
+
+Each prompt includes: context, task breakdown, architecture decisions, and build/test commands.
+
+---
+
 ## Session 42: Kotlin & Java SDK Unit Tests + SDK Roadmap Expansion
 
 ### Added - SDK Unit Tests (12 test files, ~200 tests)

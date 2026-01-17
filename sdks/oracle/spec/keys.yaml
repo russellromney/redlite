@@ -122,12 +122,11 @@ tests:
       - { cmd: TTL, args: ["key"], expect: -1 }
 
   - name: PERSIST key without TTL
-    # Note: Redlite returns True here (key exists), Redis returns False (no TTL removed)
-    # This is a known behavioral difference
+    # Redis returns false when no TTL to remove (key exists but has no expiration)
     setup:
       - { cmd: SET, args: ["key", "value"] }
     operations:
-      - { cmd: PERSIST, args: ["key"], expect: true }
+      - { cmd: PERSIST, args: ["key"], expect: false }
 
   # ==========================================================================
   # RENAME
@@ -190,3 +189,56 @@ tests:
     operations:
       - { cmd: FLUSHDB, args: [], expect: true }
       - { cmd: DBSIZE, args: [], expect: 0 }
+
+  # ==========================================================================
+  # EXPIREAT / PEXPIREAT
+  # ==========================================================================
+
+  - name: EXPIREAT sets absolute expiration
+    setup:
+      - { cmd: SET, args: ["key", "value"] }
+    operations:
+      # Set expiration 60 seconds in the future (relative to test execution)
+      - { cmd: EXPIREAT, args: ["key", { future_seconds: 60 }], expect: true }
+      - { cmd: TTL, args: ["key"], expect: { range: [58, 60] } }
+
+  - name: EXPIREAT nonexistent key
+    operations:
+      - { cmd: EXPIREAT, args: ["nonexistent", { future_seconds: 60 }], expect: false }
+
+  - name: PEXPIREAT sets absolute millisecond expiration
+    setup:
+      - { cmd: SET, args: ["key", "value"] }
+    operations:
+      - { cmd: PEXPIREAT, args: ["key", { future_ms: 60000 }], expect: true }
+      - { cmd: PTTL, args: ["key"], expect: { range: [58000, 60000] } }
+
+  - name: PEXPIREAT nonexistent key
+    operations:
+      - { cmd: PEXPIREAT, args: ["nonexistent", { future_ms: 60000 }], expect: false }
+
+  # ==========================================================================
+  # SELECT
+  # ==========================================================================
+
+  - name: SELECT switches database
+    operations:
+      - { cmd: SELECT, args: [1], expect: true }
+      - { cmd: SET, args: ["key", "in_db_1"], expect: true }
+      - { cmd: SELECT, args: [0], expect: true }
+      - { cmd: GET, args: ["key"], expect: null }
+      - { cmd: SELECT, args: [1], expect: true }
+      - { cmd: GET, args: ["key"], expect: "in_db_1" }
+
+  - name: SELECT database 0
+    operations:
+      - { cmd: SELECT, args: [0], expect: true }
+
+  - name: SELECT database isolation
+    operations:
+      - { cmd: SET, args: ["shared", "db0"], expect: true }
+      - { cmd: SELECT, args: [2], expect: true }
+      - { cmd: SET, args: ["shared", "db2"], expect: true }
+      - { cmd: GET, args: ["shared"], expect: "db2" }
+      - { cmd: SELECT, args: [0], expect: true }
+      - { cmd: GET, args: ["shared"], expect: "db0" }
