@@ -3,7 +3,7 @@ title: Introduction
 description: SQLite-backed Redis-compatible key-value store
 ---
 
-Redlite is a **SQLite-backed Redis-compatible key-value store** written in Rust. It can be used as an embedded library or as a standalone server.
+Redlite is a SQLite-backed Redis-compatible key-value store written in Rust. It operates as an embedded library or standalone server.
 
 ## Architecture
 
@@ -29,9 +29,9 @@ Redlite supports these deployment patterns:
 
 **Performance characteristics:**
 
-- **Throughput** — Lower than Redis (SQLite I/O vs in-memory). Embedded mode: ~50k-230k ops/sec. Server mode: ~2k-3k ops/sec over TCP.
-- **Latency** — Higher than Redis due to disk I/O
-- **Memory** — Configurable page cache, not constrained by total RAM
+- **Throughput** — Embedded mode: 53k-232k ops/sec. Server mode: 2k-3k ops/sec over TCP (localhost).
+- **Latency** — Higher than in-memory Redis due to SQLite I/O
+- **Memory** — Configurable page cache (default: 64MB), not constrained by total RAM
 - **Durability** — All writes are durable by default (SQLite WAL mode)
 
 **Limitations:**
@@ -44,21 +44,21 @@ Redlite supports these deployment patterns:
 
 | Feature | Status |
 |---------|--------|
-| Strings (GET, SET, INCR, etc.) | ✅ Complete |
-| Key Management (DEL, EXISTS, KEYS, SCAN, TTL) | ✅ Complete |
-| Hashes (HSET, HGET, etc.) | ✅ Complete |
-| Lists (LPUSH, RPOP, LREM, LINSERT, etc.) | ✅ Complete |
-| Sets (SADD, SMEMBERS, SMOVE, etc.) | ✅ Complete |
-| Sorted Sets (ZADD, ZRANGE, etc.) | ✅ Complete |
-| Streams (XADD, XREAD, Consumer Groups) | ✅ Complete |
-| Transactions (MULTI/EXEC/DISCARD/WATCH/UNWATCH) | ✅ Complete |
-| Pub/Sub (Server Mode Only) | ✅ Complete |
-| Blocking Reads (Server Mode Only) | ✅ Complete |
-| History Tracking & Time-Travel | ✅ Complete |
-| Authentication (AUTH, --password) | ✅ Complete |
-| Client Commands (CLIENT LIST, etc.) | ✅ Complete |
-| Cache Configuration (--cache) | ✅ Complete |
-| Full-Text Search (RediSearch) | ✅ Complete |
-| Vector Search (requires `--features vectors`) | ✅ Complete |
-| Geospatial (requires `--features geo`) | ✅ Complete |
-| Language Bindings (Python, TypeScript, Go, PHP, Elixir, etc.) | ✅ Complete |
+| Strings (GET, SET, INCR, etc.) | ✅ Implemented |
+| Key Management (DEL, EXISTS, KEYS, SCAN, TTL) | ✅ Implemented |
+| Hashes (HSET, HGET, etc.) | ✅ Implemented |
+| Lists (LPUSH, RPOP, LREM, LINSERT, etc.) | ✅ Implemented |
+| Sets (SADD, SMEMBERS, SMOVE, etc.) | ✅ Implemented |
+| Sorted Sets (ZADD, ZRANGE, etc.) | ✅ Implemented |
+| Streams (XADD, XREAD, Consumer Groups) | ✅ Implemented |
+| Transactions (MULTI/EXEC/DISCARD/WATCH/UNWATCH) | ✅ Implemented |
+| Pub/Sub (Server Mode Only) | ✅ Implemented |
+| Blocking Reads (Server Mode Only) | ✅ Implemented |
+| History Tracking & Time-Travel | ✅ Implemented |
+| Authentication (AUTH, --password) | ✅ Implemented |
+| Client Commands (CLIENT LIST, etc.) | ✅ Implemented |
+| Disk Eviction (--max-disk, CONFIG SET maxdisk) | ✅ Implemented |
+| Full-Text Search (RediSearch) | ✅ Implemented |
+| Vector Search (requires `--features vectors`) | ✅ Implemented |
+| Geospatial (requires `--features geo`) | ✅ Implemented |
+| Language Bindings (Python, TypeScript, Go, Ruby, Dart, etc.) | ✅ Implemented |

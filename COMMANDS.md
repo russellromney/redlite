@@ -267,10 +267,28 @@ These Redis features are intentionally omitted:
 |---------|--------|
 | EVAL/EVALSHA | Lua scripting is out of scope |
 | CLUSTER * | Not the use case — Redlite is for embedded/single-node |
-| GEO* | Planned for Session 25 (R*Tree spatial indexing) |
 | BITFIELD/BITOP | Niche operations |
 | GETSET | Deprecated in Redis, use `SET key value GET` |
 | RPOPLPUSH | Deprecated in Redis, use LMOVE |
+
+## Geospatial Commands
+
+Geospatial commands require the `geo` feature flag:
+
+```bash
+cargo add redlite --features geo
+```
+
+| Command | Description |
+|---------|-------------|
+| GEOADD | Add geospatial items (longitude, latitude, member) |
+| GEOPOS | Get coordinates of members |
+| GEODIST | Calculate distance between two members |
+| GEOHASH | Get geohash string of members |
+| GEOSEARCH | Search for members within radius or box |
+| GEOSEARCHSTORE | GEOSEARCH with result storage |
+
+Implementation uses R*Tree spatial indexing for efficient radius queries.
 
 **Note:** Blocking operations (BLPOP, BRPOP, XREAD BLOCK) and Pub/Sub are implemented in server mode (Session 15+) but unavailable in library mode.
 

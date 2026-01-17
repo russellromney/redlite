@@ -3,7 +3,7 @@ title: SDK Overview
 description: Redlite SDKs for multiple programming languages
 ---
 
-Redlite provides SDKs for 11+ programming languages, all providing the same Redis-compatible API backed by SQLite durability.
+Redlite provides SDKs for multiple programming languages, all implementing the same Redis-compatible API with SQLite storage.
 
 ## Production SDKs
 
@@ -62,4 +62,4 @@ FTS (full-text search), VECTOR (similarity search), GEO (geospatial)
 
 ## Oracle Tests
 
-All production SDKs pass the [oracle test suite](https://github.com/russellromney/redlite/tree/main/sdks/oracle) - 137 cross-language compatibility tests ensuring consistent behavior.
+All production SDKs pass the [oracle test suite](https://github.com/russellromney/redlite/tree/main/sdks/oracle) for cross-language compatibility verification.

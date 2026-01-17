@@ -40,6 +40,7 @@ Redlite includes a standalone server that implements the Redis protocol over TCP
 | `--storage` | | `file` | Storage type: `file` or `memory` |
 | `--backend` | | `sqlite` | Backend type: `sqlite` or `turso` |
 | `--cache` | | `64` | SQLite page cache size in MB (larger = faster reads) |
+| `--max-disk` | | `0` | Maximum disk size in bytes (0 = unlimited). Evicts oldest keys when exceeded |
 
 ## Connecting with redis-cli
 

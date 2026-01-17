@@ -3,7 +3,7 @@ title: Python SDK
 description: Redlite SDK for Python
 ---
 
-Python SDK with native PyO3 bindings for microsecond-latency embedded operations.
+Python SDK with native PyO3 bindings for embedded database operations.
 
 ## Installation
 

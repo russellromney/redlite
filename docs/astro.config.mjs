@@ -71,6 +71,7 @@ export default defineConfig({
 						{ label: 'Sets', slug: 'commands/sets' },
 						{ label: 'Sorted Sets', slug: 'commands/sorted-sets' },
 						{ label: 'Streams', slug: 'commands/streams' },
+						{ label: 'Vectors', slug: 'commands/vectors', badge: { text: 'Feature Flag', variant: 'note' } },
 						{ label: 'Custom', slug: 'commands/custom' },
 					],
 				},

@@ -17,6 +17,7 @@ Redlite operates with default settings that can be overridden via command-line a
 | `--storage` | | `file` | Storage type: `file` or `memory` |
 | `--backend` | | `sqlite` | Backend type: `sqlite` or `turso` |
 | `--cache` | | `64` | SQLite page cache size in MB (larger = faster reads) |
+| `--max-disk` | | `0` | Maximum disk size in bytes (0 = unlimited). Evicts oldest keys when exceeded |
 
 ### Database Path
 
@@ -59,6 +60,22 @@ Redlite operates with default settings that can be overridden via command-line a
 ```
 
 The `--cache` flag sets SQLite's page cache size. Larger values keep more data in RAM for faster reads while maintaining full durability.
+
+### Disk Eviction
+
+```bash
+# Limit database to 100MB on disk
+./redlite --db mydata.db --max-disk 104857600
+```
+
+When `--max-disk` is set, redlite automatically evicts the oldest keys (by creation time) when disk usage exceeds the limit. Eviction checks run every second during write operations.
+
+Runtime adjustment:
+```bash
+# Via redis-cli or any Redis client
+CONFIG SET maxdisk 52428800  # Change to 50MB
+CONFIG GET maxdisk            # Check current limit
+```
 
 ## Library Configuration
 
