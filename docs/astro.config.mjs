@@ -32,6 +32,38 @@ export default defineConfig({
 					],
 				},
 				{
+					label: 'Usage',
+					items: [
+						{ label: 'Embedded (Library)', slug: 'usage/embedded' },
+						{ label: 'Server Mode', slug: 'usage/server' },
+					],
+				},
+				{
+					label: 'Commands',
+					items: [
+						{ label: 'Overview', slug: 'commands/overview' },
+						{ label: 'Strings', slug: 'commands/strings' },
+						{ label: 'Keys', slug: 'commands/keys' },
+						{ label: 'Hashes', slug: 'commands/hashes' },
+						{ label: 'Lists', slug: 'commands/lists' },
+						{ label: 'Sets', slug: 'commands/sets' },
+						{ label: 'Sorted Sets', slug: 'commands/sorted-sets' },
+						{ label: 'Streams', slug: 'commands/streams' },
+						{ label: 'RediSearch', slug: 'commands/redisearch' },
+						{ label: 'Geospatial', slug: 'commands/geospatial', badge: { text: 'Feature Flag', variant: 'note' } },
+						{ label: 'Vectors', slug: 'commands/vectors', badge: { text: 'Feature Flag', variant: 'note' } },
+						{ label: 'Custom', slug: 'commands/custom' },
+					],
+				},
+				{
+					label: 'Reference',
+					items: [
+						{ label: 'Configuration', slug: 'reference/configuration' },
+						{ label: 'Eviction', slug: 'reference/eviction' },
+						{ label: 'History Tracking', slug: 'reference/history' },
+					],
+				},
+				{
 					label: 'SDKs & Languages',
 					items: [
 						{ label: 'Overview', slug: 'sdks/overview' },
@@ -51,42 +83,6 @@ export default defineConfig({
 						{ label: 'Zig', slug: 'sdks/zig', badge: { text: 'Experimental', variant: 'caution' } },
 						{ label: 'Java/Kotlin', slug: 'sdks/java', badge: { text: 'Planned', variant: 'note' } },
 						{ label: 'Esoteric', slug: 'sdks/esoteric', badge: { text: 'Fun', variant: 'tip' } },
-					],
-				},
-				{
-					label: 'Usage',
-					items: [
-						{ label: 'Embedded (Library)', slug: 'usage/embedded' },
-						{ label: 'Server Mode', slug: 'usage/server' },
-					],
-				},
-				{
-					label: 'Commands',
-					items: [
-						{ label: 'Overview', slug: 'commands/overview' },
-						{ label: 'Strings', slug: 'commands/strings' },
-						{ label: 'Keys', slug: 'commands/keys' },
-						{ label: 'Hashes', slug: 'commands/hashes' },
-						{ label: 'Lists', slug: 'commands/lists' },
-						{ label: 'Sets', slug: 'commands/sets' },
-						{ label: 'Sorted Sets', slug: 'commands/sorted-sets' },
-						{ label: 'Streams', slug: 'commands/streams' },
-						{ label: 'Vectors', slug: 'commands/vectors', badge: { text: 'Feature Flag', variant: 'note' } },
-						{ label: 'Custom', slug: 'commands/custom' },
-					],
-				},
-				{
-					label: 'Reference',
-					items: [
-						{ label: 'Configuration', slug: 'reference/configuration' },
-						{ label: 'History Tracking', slug: 'reference/history' },
-					],
-				},
-				{
-					label: 'Internals',
-					collapsed: true,
-					items: [
-						{ label: 'Schema', slug: 'internals/schema' },
 					],
 				},
 			],
