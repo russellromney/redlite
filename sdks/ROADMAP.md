@@ -650,7 +650,7 @@ make test-oracle-compare --seed 12345
 | **Dart** | ✅ Complete | FFI | - |
 | **Kotlin** | ✅ Complete | JNI | - |
 | **Java** | ✅ Complete | JNI | - |
-| **Swift** | 📋 Planned | C FFI | HIGH |
+| **Swift** | ✅ Complete | C FFI | - |
 | **C#/.NET** | ✅ Complete | P/Invoke | - |
 | **WASM** | 📋 Planned | wasm-bindgen | MEDIUM |
 | **Ruby** | 📋 Planned | FFI gem / magnus | MEDIUM |
@@ -704,39 +704,97 @@ make test-oracle-compare --seed 12345
 
 #### Swift SDK
 
-**Status**: PLANNED
-**Priority**: HIGH
+**Status**: ✅ COMPLETE (Session 45)
+**Priority**: -
 **Location**: `sdks/redlite-swift/`
-**Binding Type**: Swift Package with C FFI
+**Binding Type**: Swift Package with C FFI (module map)
 
 **Structure**:
 ```
 sdks/redlite-swift/
-├── Package.swift
+├── Package.swift                      # Swift Package Manager manifest
+├── Makefile                           # Build/test commands
+├── README.md                          # Documentation
 ├── Sources/
+│   ├── CRedlite/                      # C module for FFI bridging
+│   │   ├── include/
+│   │   │   ├── module.modulemap
+│   │   │   └── redlite.h
+│   │   └── shim.c
 │   └── Redlite/
-│       ├── Redlite.swift          # Main client
-│       ├── EmbeddedDb.swift       # FFI wrapper
-│       ├── Commands/
-│       │   ├── StringCommands.swift
-│       │   ├── HashCommands.swift
-│       │   ├── ListCommands.swift
-│       │   ├── SetCommands.swift
-│       │   └── ZSetCommands.swift
-│       └── Namespaces/
-│           ├── FTSNamespace.swift
-│           ├── VectorNamespace.swift
-│           ├── GeoNamespace.swift
-│           └── HistoryNamespace.swift
-└── Tests/
-    └── RedliteTests/
+│       ├── Database.swift             # Main Database class (~80 lines)
+│       ├── RedliteError.swift         # Error types (~30 lines)
+│       ├── FFI/
+│       │   ├── FFITypes.swift         # RAII wrappers for C types (~130 lines)
+│       │   └── FFIHelpers.swift       # Memory management utilities (~110 lines)
+│       └── Commands/
+│           ├── StringCommands.swift   # GET, SET, INCR, etc. (~300 lines)
+│           ├── KeyCommands.swift      # DEL, EXISTS, TTL, etc. (~180 lines)
+│           ├── HashCommands.swift     # HGET, HSET, etc. (~200 lines)
+│           ├── ListCommands.swift     # LPUSH, RPUSH, etc. (~160 lines)
+│           ├── SetCommands.swift      # SADD, SMEMBERS, etc. (~110 lines)
+│           └── SortedSetCommands.swift # ZADD, ZRANGE, etc. (~200 lines)
+├── Tests/
+│   └── RedliteTests/
+│       ├── StringCommandsTests.swift
+│       ├── KeyCommandsTests.swift
+│       ├── HashCommandsTests.swift
+│       ├── ListCommandsTests.swift
+│       ├── SetCommandsTests.swift
+│       └── SortedSetCommandsTests.swift
+├── Frameworks/                        # Pre-built XCFramework (optional)
+└── scripts/
+    └── create-xcframework.sh          # Build script for all Apple platforms
 ```
 
-**Implementation Notes**:
-- Use `@_cdecl` or C interop for FFI bindings
-- Support iOS, macOS, tvOS, watchOS
-- Async/await support for modern Swift
-- Consider Swift-C++ interop (Swift 5.9+) as alternative
+**Swift API Design**:
+```swift
+import Redlite
+
+// Open database
+let db = try Database.openMemory()
+let db = try Database(path: "/path/to/db.sqlite")
+let db = try Database.open(path: "/path/to/db.sqlite", cacheMB: 128)
+
+// Strings
+try db.set("key", value: "value")
+let val = try db.getString("key")  // "value"
+try db.incr("counter")
+
+// Hashes
+try db.hset("user", ["name": "Alice", "age": "30"])
+let all = try db.hgetallStrings("user")
+
+// Lists, Sets, Sorted Sets
+try db.rpush("list", "a", "b", "c")
+try db.sadd("set", "x", "y", "z")
+try db.zadd("zset", (1.0, "a"), (2.0, "b"))
+```
+
+**Implementation Features**:
+- Thread-safe via NSLock + @unchecked Sendable
+- RAII-style memory management (deinit calls redlite_close)
+- Returns Optional<T> for nullable values
+- Throwing functions with RedliteError
+- Supports iOS 13+, macOS 10.15+, tvOS 13+, watchOS 6+
+- 55+ methods across 6 command categories
+- XCTest unit tests for all commands
+- XCFramework build script for distribution
+
+**Build Commands**:
+```bash
+# Build FFI library first
+make build-ffi
+
+# Build Swift package
+make build
+
+# Run tests
+make test
+
+# Build XCFramework for all Apple platforms
+make build-xcframework
+```
 
 ---
 
