@@ -1,0 +1,40 @@
+{
+  "name": "@redlite/wasm",
+  "version": "0.1.0",
+  "description": "Redis API with SQLite durability - WebAssembly build",
+  "license": "Apache-2.0",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/russellromney/redlite"
+  },
+  "keywords": [
+    "redis",
+    "sqlite",
+    "wasm",
+    "webassembly",
+    "database",
+    "embedded",
+    "key-value"
+  ],
+  "files": [
+    "pkg/redlite_wasm_bg.wasm",
+    "pkg/redlite_wasm.js",
+    "pkg/redlite_wasm.d.ts",
+    "pkg/redlite_wasm_bg.wasm.d.ts"
+  ],
+  "main": "pkg/redlite_wasm.js",
+  "module": "pkg/redlite_wasm.js",
+  "types": "pkg/redlite_wasm.d.ts",
+  "sideEffects": [
+    "./pkg/snippets/*"
+  ],
+  "scripts": {
+    "build": "wasm-pack build --target web --release",
+    "build:bundler": "wasm-pack build --target bundler --release",
+    "build:nodejs": "wasm-pack build --target nodejs --release",
+    "build:dev": "wasm-pack build --target web --dev",
+    "test": "wasm-pack test --headless --chrome",
+    "clean": "rm -rf pkg target"
+  },
+  "devDependencies": {}
+}

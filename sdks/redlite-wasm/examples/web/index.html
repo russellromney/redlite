@@ -1,0 +1,239 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Redlite WASM Demo</title>
+    <style>
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            max-width: 800px;
+            margin: 0 auto;
+            padding: 20px;
+            background: #1a1a2e;
+            color: #eee;
+        }
+        h1 { color: #e94560; }
+        .demo-section {
+            background: #16213e;
+            padding: 20px;
+            border-radius: 8px;
+            margin: 20px 0;
+        }
+        button {
+            background: #e94560;
+            color: white;
+            border: none;
+            padding: 10px 20px;
+            border-radius: 4px;
+            cursor: pointer;
+            margin: 5px;
+        }
+        button:hover { background: #ff6b6b; }
+        pre {
+            background: #0f0f23;
+            padding: 15px;
+            border-radius: 4px;
+            overflow-x: auto;
+        }
+        #output {
+            min-height: 200px;
+            white-space: pre-wrap;
+            word-break: break-all;
+        }
+    </style>
+</head>
+<body>
+    <h1>Redlite WASM Demo</h1>
+    <p>Redis-compatible embedded database running entirely in your browser!</p>
+
+    <div class="demo-section">
+        <h2>Actions</h2>
+        <button onclick="runStringDemo()">String Commands</button>
+        <button onclick="runHashDemo()">Hash Commands</button>
+        <button onclick="runListDemo()">List Commands</button>
+        <button onclick="runSetDemo()">Set Commands</button>
+        <button onclick="runZSetDemo()">Sorted Set Commands</button>
+        <button onclick="clearOutput()">Clear Output</button>
+    </div>
+
+    <div class="demo-section">
+        <h2>Output</h2>
+        <pre id="output">Loading Redlite WASM...</pre>
+    </div>
+
+    <script type="module">
+        import init, { RedliteWasm } from '../../pkg/redlite_wasm.js';
+
+        let db;
+
+        async function initialize() {
+            await init();
+            db = new RedliteWasm();
+            log('Redlite WASM initialized successfully!');
+            log('Database ready for commands.\n');
+        }
+
+        function log(msg) {
+            const output = document.getElementById('output');
+            output.textContent += msg + '\n';
+        }
+
+        window.clearOutput = function() {
+            document.getElementById('output').textContent = '';
+        };
+
+        window.runStringDemo = async function() {
+            log('\n=== String Commands Demo ===');
+
+            // SET and GET
+            db.set('name', new TextEncoder().encode('Redlite'), null);
+            const name = db.get('name');
+            log(`SET name "Redlite" -> GET name = "${new TextDecoder().decode(name)}"`);
+
+            // INCR
+            db.set('counter', new TextEncoder().encode('0'), null);
+            const count1 = db.incr('counter');
+            const count2 = db.incr('counter');
+            log(`INCR counter -> ${count1}, ${count2}`);
+
+            // APPEND
+            db.set('greeting', new TextEncoder().encode('Hello'), null);
+            db.append('greeting', new TextEncoder().encode(' World!'));
+            const greeting = db.get('greeting');
+            log(`APPEND greeting " World!" -> "${new TextDecoder().decode(greeting)}"`);
+
+            // TTL
+            db.setex('temp', 60, new TextEncoder().encode('expires in 60s'));
+            const ttl = db.ttl('temp');
+            log(`SETEX temp 60 -> TTL = ${ttl}s`);
+
+            log('String demo complete!\n');
+        };
+
+        window.runHashDemo = async function() {
+            log('\n=== Hash Commands Demo ===');
+
+            // HSET and HGET
+            db.hset('user:1', 'name', new TextEncoder().encode('Alice'));
+            db.hset('user:1', 'email', new TextEncoder().encode('alice@example.com'));
+            db.hset('user:1', 'age', new TextEncoder().encode('30'));
+
+            const name = db.hget('user:1', 'name');
+            log(`HSET user:1 name "Alice" -> HGET = "${new TextDecoder().decode(name)}"`);
+
+            // HKEYS
+            const keys = db.hkeys('user:1');
+            log(`HKEYS user:1 = [${keys.join(', ')}]`);
+
+            // HINCRBY
+            const newAge = db.hincrby('user:1', 'age', 1);
+            log(`HINCRBY user:1 age 1 -> ${newAge}`);
+
+            // HLEN
+            const len = db.hlen('user:1');
+            log(`HLEN user:1 = ${len}`);
+
+            log('Hash demo complete!\n');
+        };
+
+        window.runListDemo = async function() {
+            log('\n=== List Commands Demo ===');
+
+            // Clear any existing list
+            db.del(['tasks']);
+
+            // RPUSH
+            db.rpush('tasks', [
+                new TextEncoder().encode('Buy groceries'),
+                new TextEncoder().encode('Walk the dog'),
+                new TextEncoder().encode('Write code')
+            ]);
+            log('RPUSH tasks "Buy groceries" "Walk the dog" "Write code"');
+
+            // LRANGE
+            const tasks = db.lrange('tasks', 0, -1);
+            log(`LRANGE tasks 0 -1 = [${tasks.map(t => new TextDecoder().decode(t)).join(', ')}]`);
+
+            // LPOP
+            const first = db.lpop('tasks', 1);
+            log(`LPOP tasks = "${new TextDecoder().decode(first[0])}"`);
+
+            // LLEN
+            const len = db.llen('tasks');
+            log(`LLEN tasks = ${len}`);
+
+            log('List demo complete!\n');
+        };
+
+        window.runSetDemo = async function() {
+            log('\n=== Set Commands Demo ===');
+
+            // SADD
+            db.sadd('fruits', [
+                new TextEncoder().encode('apple'),
+                new TextEncoder().encode('banana'),
+                new TextEncoder().encode('cherry'),
+                new TextEncoder().encode('apple') // Duplicate, should be ignored
+            ]);
+            log('SADD fruits apple banana cherry apple');
+
+            // SMEMBERS
+            const members = db.smembers('fruits');
+            log(`SMEMBERS fruits = [${members.map(m => new TextDecoder().decode(m)).join(', ')}]`);
+
+            // SISMEMBER
+            const hasApple = db.sismember('fruits', new TextEncoder().encode('apple'));
+            const hasGrape = db.sismember('fruits', new TextEncoder().encode('grape'));
+            log(`SISMEMBER fruits apple = ${hasApple}`);
+            log(`SISMEMBER fruits grape = ${hasGrape}`);
+
+            // SCARD
+            const card = db.scard('fruits');
+            log(`SCARD fruits = ${card}`);
+
+            log('Set demo complete!\n');
+        };
+
+        window.runZSetDemo = async function() {
+            log('\n=== Sorted Set Commands Demo ===');
+
+            // Clear any existing zset
+            db.del(['leaderboard']);
+
+            // ZADD
+            db.zadd('leaderboard', [
+                100.0, new TextEncoder().encode('Alice'),
+                85.5, new TextEncoder().encode('Bob'),
+                92.0, new TextEncoder().encode('Charlie'),
+                100.0, new TextEncoder().encode('Diana')
+            ]);
+            log('ZADD leaderboard 100 Alice 85.5 Bob 92 Charlie 100 Diana');
+
+            // ZRANGE
+            const topPlayers = db.zrange('leaderboard', 0, -1, false);
+            log(`ZRANGE leaderboard 0 -1 = [${topPlayers.map(p => new TextDecoder().decode(p)).join(', ')}]`);
+
+            // ZSCORE
+            const aliceScore = db.zscore('leaderboard', new TextEncoder().encode('Alice'));
+            log(`ZSCORE leaderboard Alice = ${aliceScore}`);
+
+            // ZRANK
+            const bobRank = db.zrank('leaderboard', new TextEncoder().encode('Bob'));
+            log(`ZRANK leaderboard Bob = ${bobRank}`);
+
+            // ZINCRBY
+            const newScore = db.zincrby('leaderboard', 10.0, new TextEncoder().encode('Bob'));
+            log(`ZINCRBY leaderboard 10 Bob -> ${newScore}`);
+
+            // ZCARD
+            const card = db.zcard('leaderboard');
+            log(`ZCARD leaderboard = ${card}`);
+
+            log('Sorted Set demo complete!\n');
+        };
+
+        initialize();
+    </script>
+</body>
+</html>
