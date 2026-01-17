@@ -5,6 +5,17 @@ description: How Redlite manages memory and disk limits with automatic eviction
 
 Redlite supports automatic eviction of keys when memory or disk limits are exceeded. This allows you to use Redlite as a cache with bounded resource usage.
 
+## Memory vs Disk Eviction
+
+| Feature | Memory (`maxmemory`) | Disk (`maxdisk`) |
+|---------|---------------------|------------------|
+| Limit | RAM usage estimate | SQLite file size |
+| Policy | Configurable (LRU, LFU, random, etc.) | Fixed: oldest-first |
+| Scope | Current database only | All databases (0-15) |
+| Config | `--eviction-policy` | N/A |
+
+Both use vacuum-first strategy: expired keys are deleted before evicting valid keys.
+
 ## Quick Start
 
 ```bash
@@ -21,6 +32,10 @@ Redlite supports automatic eviction of keys when memory or disk limits are excee
 ## Memory Eviction
 
 Memory eviction removes keys when the estimated memory usage exceeds `maxmemory`. This is useful for caching scenarios where you want to limit RAM usage.
+
+**Key behavior:**
+- Uses configurable policies (LRU, LFU, random, TTL-based)
+- Only evicts from the **current selected database** (set via `SELECT`)
 
 ### Configuration
 
@@ -91,7 +106,10 @@ If no keys have TTL and the volatile policy can't find candidates, Redlite will 
 
 ## Disk Eviction
 
-Disk eviction removes keys when the SQLite database file exceeds `maxdisk`. This uses creation-time ordering (oldest keys evicted first).
+Disk eviction removes keys when the SQLite database file exceeds `maxdisk`. Unlike memory eviction, disk eviction:
+
+- Uses **oldest-first** ordering (by creation time) - no configurable policy
+- Operates across **all databases** (0-15), not just the current one
 
 ### Configuration
 
