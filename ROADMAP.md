@@ -51,19 +51,19 @@ See [CHANGELOG.md](./CHANGELOG.md) for completed features.
 - [x] Create `json_docs` table in schema
 - [x] Add helper functions: `normalize_path()`, `get_or_create_json_key()`, `get_json_key_id()`
 
-#### Phase 2: Core Commands - IN PROGRESS
+#### Phase 2: Core Commands - COMPLETE
 - [x] JSON.SET - set value at path (supports NX/XX)
 - [x] JSON.GET - get value(s) at path(s)
 - [x] JSON.DEL - delete at path
-- [ ] JSON.MGET - get same path from multiple keys
-- [ ] JSON.MSET - set multiple key/path/value triplets
+- [x] JSON.MGET - get same path from multiple keys
+- [x] JSON.MSET - set multiple key/path/value triplets
 - [x] JSON.TYPE - return JSON type at path
 
-#### Phase 3: Manipulation Commands
-- [ ] JSON.MERGE - RFC 7386 merge
-- [ ] JSON.CLEAR - clear arrays/objects
-- [ ] JSON.TOGGLE - toggle booleans
-- [ ] JSON.NUMINCRBY - increment numbers
+#### Phase 3: Manipulation Commands - COMPLETE
+- [x] JSON.MERGE - RFC 7386 merge
+- [x] JSON.CLEAR - clear arrays/objects
+- [x] JSON.TOGGLE - toggle booleans
+- [x] JSON.NUMINCRBY - increment numbers
 
 #### Phase 4: String Commands
 - [ ] JSON.STRAPPEND - append to strings

@@ -607,6 +607,12 @@ async fn execute_command(
         "JSON.GET" => cmd_json_get(db, cmd_args),
         "JSON.DEL" => cmd_json_del(db, cmd_args),
         "JSON.TYPE" => cmd_json_type(db, cmd_args),
+        "JSON.MGET" => cmd_json_mget(db, cmd_args),
+        "JSON.MSET" => cmd_json_mset(db, cmd_args),
+        "JSON.MERGE" => cmd_json_merge(db, cmd_args),
+        "JSON.CLEAR" => cmd_json_clear(db, cmd_args),
+        "JSON.TOGGLE" => cmd_json_toggle(db, cmd_args),
+        "JSON.NUMINCRBY" => cmd_json_numincrby(db, cmd_args),
         // RediSearch-compatible commands (Session 23)
         "FT.CREATE" => cmd_ft_create(db, cmd_args),
         "FT.DROPINDEX" => cmd_ft_dropindex(db, cmd_args),
@@ -4874,6 +4880,194 @@ fn cmd_json_type(db: &Db, args: &[Vec<u8>]) -> RespValue {
     }
 }
 
+/// JSON.MGET key [key ...] path
+fn cmd_json_mget(db: &Db, args: &[Vec<u8>]) -> RespValue {
+    if args.len() < 2 {
+        return RespValue::error("wrong number of arguments for 'JSON.MGET' command");
+    }
+
+    // Last argument is the path, all others are keys
+    let path = match std::str::from_utf8(args.last().unwrap()) {
+        Ok(p) => p,
+        Err(_) => return RespValue::error("invalid path"),
+    };
+
+    let keys: Vec<&str> = args[..args.len() - 1]
+        .iter()
+        .filter_map(|k| std::str::from_utf8(k).ok())
+        .collect();
+
+    if keys.len() != args.len() - 1 {
+        return RespValue::error("invalid key");
+    }
+
+    match db.json_mget(&keys, path) {
+        Ok(results) => {
+            let resp_values: Vec<RespValue> = results
+                .into_iter()
+                .map(|opt| match opt {
+                    Some(s) => RespValue::from_string(s),
+                    None => RespValue::null(),
+                })
+                .collect();
+            RespValue::Array(Some(resp_values))
+        }
+        Err(KvError::WrongType) => RespValue::wrong_type(),
+        Err(e) => RespValue::error(e.to_string()),
+    }
+}
+
+/// JSON.MSET key path value [key path value ...]
+fn cmd_json_mset(db: &Db, args: &[Vec<u8>]) -> RespValue {
+    if args.len() < 3 || args.len() % 3 != 0 {
+        return RespValue::error("wrong number of arguments for 'JSON.MSET' command");
+    }
+
+    let mut triplets: Vec<(&str, &str, &str)> = Vec::with_capacity(args.len() / 3);
+
+    for chunk in args.chunks(3) {
+        let key = match std::str::from_utf8(&chunk[0]) {
+            Ok(k) => k,
+            Err(_) => return RespValue::error("invalid key"),
+        };
+        let path = match std::str::from_utf8(&chunk[1]) {
+            Ok(p) => p,
+            Err(_) => return RespValue::error("invalid path"),
+        };
+        let value = match std::str::from_utf8(&chunk[2]) {
+            Ok(v) => v,
+            Err(_) => return RespValue::error("invalid JSON value"),
+        };
+        triplets.push((key, path, value));
+    }
+
+    match db.json_mset(&triplets) {
+        Ok(()) => RespValue::ok(),
+        Err(KvError::WrongType) => RespValue::wrong_type(),
+        Err(KvError::SyntaxError) => RespValue::error("ERR invalid JSON"),
+        Err(e) => RespValue::error(e.to_string()),
+    }
+}
+
+/// JSON.MERGE key path value
+fn cmd_json_merge(db: &Db, args: &[Vec<u8>]) -> RespValue {
+    if args.len() != 3 {
+        return RespValue::error("wrong number of arguments for 'JSON.MERGE' command");
+    }
+
+    let key = match std::str::from_utf8(&args[0]) {
+        Ok(k) => k,
+        Err(_) => return RespValue::error("invalid key"),
+    };
+
+    let path = match std::str::from_utf8(&args[1]) {
+        Ok(p) => p,
+        Err(_) => return RespValue::error("invalid path"),
+    };
+
+    let value = match std::str::from_utf8(&args[2]) {
+        Ok(v) => v,
+        Err(_) => return RespValue::error("invalid JSON value"),
+    };
+
+    match db.json_merge(key, path, value) {
+        Ok(_) => RespValue::ok(),
+        Err(KvError::NotFound) => RespValue::null(),
+        Err(KvError::WrongType) => RespValue::wrong_type(),
+        Err(KvError::SyntaxError) => RespValue::error("ERR invalid JSON"),
+        Err(e) => RespValue::error(e.to_string()),
+    }
+}
+
+/// JSON.CLEAR key [path]
+fn cmd_json_clear(db: &Db, args: &[Vec<u8>]) -> RespValue {
+    if args.is_empty() || args.len() > 2 {
+        return RespValue::error("wrong number of arguments for 'JSON.CLEAR' command");
+    }
+
+    let key = match std::str::from_utf8(&args[0]) {
+        Ok(k) => k,
+        Err(_) => return RespValue::error("invalid key"),
+    };
+
+    let path = if args.len() == 2 {
+        match std::str::from_utf8(&args[1]) {
+            Ok(p) => Some(p),
+            Err(_) => return RespValue::error("invalid path"),
+        }
+    } else {
+        None
+    };
+
+    match db.json_clear(key, path) {
+        Ok(count) => RespValue::Integer(count),
+        Err(KvError::WrongType) => RespValue::wrong_type(),
+        Err(e) => RespValue::error(e.to_string()),
+    }
+}
+
+/// JSON.TOGGLE key path
+fn cmd_json_toggle(db: &Db, args: &[Vec<u8>]) -> RespValue {
+    if args.len() != 2 {
+        return RespValue::error("wrong number of arguments for 'JSON.TOGGLE' command");
+    }
+
+    let key = match std::str::from_utf8(&args[0]) {
+        Ok(k) => k,
+        Err(_) => return RespValue::error("invalid key"),
+    };
+
+    let path = match std::str::from_utf8(&args[1]) {
+        Ok(p) => p,
+        Err(_) => return RespValue::error("invalid path"),
+    };
+
+    match db.json_toggle(key, path) {
+        Ok(values) => {
+            let resp: Vec<RespValue> = values
+                .into_iter()
+                .map(|b| RespValue::Integer(if b { 1 } else { 0 }))
+                .collect();
+            RespValue::Array(Some(resp))
+        }
+        Err(KvError::NotFound) => RespValue::null(),
+        Err(KvError::WrongType) => RespValue::wrong_type(),
+        Err(e) => RespValue::error(e.to_string()),
+    }
+}
+
+/// JSON.NUMINCRBY key path value
+fn cmd_json_numincrby(db: &Db, args: &[Vec<u8>]) -> RespValue {
+    if args.len() != 3 {
+        return RespValue::error("wrong number of arguments for 'JSON.NUMINCRBY' command");
+    }
+
+    let key = match std::str::from_utf8(&args[0]) {
+        Ok(k) => k,
+        Err(_) => return RespValue::error("invalid key"),
+    };
+
+    let path = match std::str::from_utf8(&args[1]) {
+        Ok(p) => p,
+        Err(_) => return RespValue::error("invalid path"),
+    };
+
+    let increment: f64 = match std::str::from_utf8(&args[2])
+        .ok()
+        .and_then(|s| s.parse().ok())
+    {
+        Some(n) => n,
+        None => return RespValue::error("ERR value is not a number"),
+    };
+
+    match db.json_numincrby(key, path, increment) {
+        Ok(new_value) => RespValue::from_string(new_value),
+        Err(KvError::NotFound) => RespValue::null(),
+        Err(KvError::WrongType) => RespValue::wrong_type(),
+        Err(e) => RespValue::error(e.to_string()),
+    }
+}
+
 // --- Session 23: RediSearch-compatible FT.* command handlers ---
 
 use crate::types::{FtField, FtFieldType, FtOnType, FtSearchOptions};
@@ -8700,6 +8894,12 @@ async fn execute_command_in_transaction(db: &mut Db, args: &[Vec<u8>]) -> RespVa
         "JSON.GET" => cmd_json_get(db, cmd_args),
         "JSON.DEL" => cmd_json_del(db, cmd_args),
         "JSON.TYPE" => cmd_json_type(db, cmd_args),
+        "JSON.MGET" => cmd_json_mget(db, cmd_args),
+        "JSON.MSET" => cmd_json_mset(db, cmd_args),
+        "JSON.MERGE" => cmd_json_merge(db, cmd_args),
+        "JSON.CLEAR" => cmd_json_clear(db, cmd_args),
+        "JSON.TOGGLE" => cmd_json_toggle(db, cmd_args),
+        "JSON.NUMINCRBY" => cmd_json_numincrby(db, cmd_args),
         // RediSearch-compatible commands (Session 23)
         "FT.CREATE" => cmd_ft_create(db, cmd_args),
         "FT.DROPINDEX" => cmd_ft_dropindex(db, cmd_args),

@@ -3461,6 +3461,494 @@ impl Db {
         }
     }
 
+    /// JSON.MGET key [key ...] path - get same path from multiple keys
+    /// Returns array of values (null for missing keys/paths)
+    pub fn json_mget(&self, keys: &[&str], path: &str) -> Result<Vec<Option<String>>> {
+        let conn = self.core.conn.lock().unwrap_or_else(|e| e.into_inner());
+        let normalized = Self::normalize_json_path(path);
+
+        let mut results = Vec::with_capacity(keys.len());
+
+        for key in keys {
+            let key_id = match self.get_json_key_id(&conn, key)? {
+                Some(kid) => kid,
+                None => {
+                    results.push(None);
+                    continue;
+                }
+            };
+
+            // Get the document
+            let doc_bytes: Option<Vec<u8>> = conn
+                .query_row(
+                    "SELECT value FROM json_docs WHERE key_id = ?1",
+                    params![key_id],
+                    |row| row.get(0),
+                )
+                .optional()?;
+
+            let doc_bytes = match doc_bytes {
+                Some(bytes) => bytes,
+                None => {
+                    results.push(None);
+                    continue;
+                }
+            };
+
+            let doc: JsonValue = match serde_json::from_slice(&doc_bytes) {
+                Ok(v) => v,
+                Err(_) => {
+                    results.push(None);
+                    continue;
+                }
+            };
+
+            // Track access for LRU/LFU
+            self.track_access(key_id);
+
+            // Get value at path
+            if normalized == "$" {
+                results.push(Some(serde_json::to_string(&doc).unwrap_or_else(|_| "null".to_string())));
+            } else {
+                let json_path = match Self::parse_json_path(&normalized) {
+                    Ok(jp) => jp,
+                    Err(_) => {
+                        results.push(None);
+                        continue;
+                    }
+                };
+                let matches = json_path.query(&doc);
+
+                if matches.is_empty() {
+                    results.push(None);
+                } else if matches.len() == 1 {
+                    if let Some(first) = matches.iter().next() {
+                        results.push(Some(serde_json::to_string(first).unwrap_or_else(|_| "null".to_string())));
+                    } else {
+                        results.push(None);
+                    }
+                } else {
+                    // Multiple matches - return as array
+                    let arr: Vec<JsonValue> = matches.iter().map(|v| (*v).clone()).collect();
+                    results.push(Some(serde_json::to_string(&arr).unwrap_or_else(|_| "null".to_string())));
+                }
+            }
+        }
+
+        Ok(results)
+    }
+
+    /// JSON.MSET key path value [key path value ...] - set multiple key/path/value triplets
+    /// Returns Ok(()) on success
+    pub fn json_mset(&self, triplets: &[(&str, &str, &str)]) -> Result<()> {
+        if triplets.is_empty() {
+            return Ok(());
+        }
+
+        // Use json_set for each triplet - it handles all the logic
+        for (key, path, value) in triplets {
+            self.json_set(key, path, value, false, false)?;
+        }
+
+        Ok(())
+    }
+
+    /// JSON.MERGE key path value - RFC 7386 JSON Merge Patch
+    /// Merges a JSON value into the document at the specified path
+    /// Returns Ok(true) on success
+    pub fn json_merge(&self, key: &str, path: &str, value: &str) -> Result<bool> {
+        let patch: JsonValue = serde_json::from_str(value)
+            .map_err(|_| KvError::SyntaxError)?;
+
+        let conn = self.core.conn.lock().unwrap_or_else(|e| e.into_inner());
+        let now = Self::now_ms();
+        let normalized = Self::normalize_json_path(path);
+
+        let key_id = match self.get_json_key_id(&conn, key)? {
+            Some(kid) => kid,
+            None => return Err(KvError::NotFound),
+        };
+
+        // Get existing document
+        let doc_bytes: Vec<u8> = conn
+            .query_row(
+                "SELECT value FROM json_docs WHERE key_id = ?1",
+                params![key_id],
+                |row| row.get(0),
+            )
+            .optional()?
+            .ok_or(KvError::NotFound)?;
+
+        let mut doc: JsonValue = serde_json::from_slice(&doc_bytes)
+            .map_err(|_| KvError::SyntaxError)?;
+
+        if normalized == "$" {
+            // Merge at root
+            Self::merge_json(&mut doc, patch);
+        } else {
+            // Get value at path and merge
+            let json_path = Self::parse_json_path(&normalized)?;
+            let targets = json_path.query(&doc);
+
+            if targets.is_empty() {
+                return Err(KvError::NotFound);
+            }
+
+            // For merge, we need to modify in place - use set_value_at_path approach
+            // Get the current value, merge with patch, then set it back
+            if let Some(target) = targets.iter().next() {
+                let mut merged = (*target).clone();
+                Self::merge_json(&mut merged, patch);
+                Self::set_value_at_path(&mut doc, &normalized, merged, false)?;
+            }
+        }
+
+        // Save updated document
+        let updated_bytes = serde_json::to_vec(&doc).map_err(|_| KvError::SyntaxError)?;
+        conn.execute(
+            "UPDATE json_docs SET value = ?1 WHERE key_id = ?2",
+            params![updated_bytes, key_id],
+        )?;
+
+        conn.execute(
+            "UPDATE keys SET updated_at = ?1, version = version + 1 WHERE id = ?2",
+            params![now, key_id],
+        )?;
+
+        Ok(true)
+    }
+
+    /// RFC 7386 JSON Merge Patch implementation
+    fn merge_json(target: &mut JsonValue, patch: JsonValue) {
+        match patch {
+            JsonValue::Object(patch_obj) => {
+                if !target.is_object() {
+                    *target = JsonValue::Object(serde_json::Map::new());
+                }
+                let target_obj = target.as_object_mut().unwrap();
+                for (key, value) in patch_obj {
+                    if value.is_null() {
+                        target_obj.remove(&key);
+                    } else {
+                        let entry = target_obj.entry(key).or_insert(JsonValue::Null);
+                        Self::merge_json(entry, value);
+                    }
+                }
+            }
+            _ => {
+                *target = patch;
+            }
+        }
+    }
+
+    /// JSON.CLEAR key [path] - clear container at path
+    /// Clears arrays to [] and objects to {}
+    /// Returns the number of values cleared
+    pub fn json_clear(&self, key: &str, path: Option<&str>) -> Result<i64> {
+        let conn = self.core.conn.lock().unwrap_or_else(|e| e.into_inner());
+        let now = Self::now_ms();
+
+        let key_id = match self.get_json_key_id(&conn, key)? {
+            Some(kid) => kid,
+            None => return Ok(0),
+        };
+
+        let doc_bytes: Vec<u8> = conn
+            .query_row(
+                "SELECT value FROM json_docs WHERE key_id = ?1",
+                params![key_id],
+                |row| row.get(0),
+            )
+            .optional()?
+            .ok_or(KvError::NotFound)?;
+
+        let mut doc: JsonValue = serde_json::from_slice(&doc_bytes)
+            .map_err(|_| KvError::SyntaxError)?;
+
+        let normalized = path.map(Self::normalize_json_path).unwrap_or_else(|| "$".to_string());
+        let cleared = Self::clear_at_path(&mut doc, &normalized)?;
+
+        if cleared > 0 {
+            let updated_bytes = serde_json::to_vec(&doc).map_err(|_| KvError::SyntaxError)?;
+            conn.execute(
+                "UPDATE json_docs SET value = ?1 WHERE key_id = ?2",
+                params![updated_bytes, key_id],
+            )?;
+
+            conn.execute(
+                "UPDATE keys SET updated_at = ?1, version = version + 1 WHERE id = ?2",
+                params![now, key_id],
+            )?;
+        }
+
+        Ok(cleared)
+    }
+
+    /// Helper to clear value at path
+    fn clear_at_path(doc: &mut JsonValue, path: &str) -> Result<i64> {
+        if path == "$" {
+            match doc {
+                JsonValue::Array(arr) => {
+                    if arr.is_empty() {
+                        return Ok(0);
+                    }
+                    arr.clear();
+                    Ok(1)
+                }
+                JsonValue::Object(obj) => {
+                    if obj.is_empty() {
+                        return Ok(0);
+                    }
+                    obj.clear();
+                    Ok(1)
+                }
+                _ => Ok(0), // Non-containers can't be cleared
+            }
+        } else {
+            // Navigate to the value and clear it
+            let parts: Vec<&str> = path.trim_start_matches("$.").split('.').collect();
+            let mut current = doc;
+
+            for (i, part) in parts.iter().enumerate() {
+                let is_last = i == parts.len() - 1;
+
+                if let Some(bracket_pos) = part.find('[') {
+                    let field_name = &part[..bracket_pos];
+                    let index_str = &part[bracket_pos + 1..part.len() - 1];
+                    let index: usize = index_str.parse().map_err(|_| KvError::SyntaxError)?;
+
+                    if !field_name.is_empty() {
+                        current = current
+                            .as_object_mut()
+                            .ok_or(KvError::WrongType)?
+                            .get_mut(field_name)
+                            .ok_or(KvError::NotFound)?;
+                    }
+
+                    let arr = current.as_array_mut().ok_or(KvError::WrongType)?;
+                    current = arr.get_mut(index).ok_or(KvError::NotFound)?;
+
+                    if is_last {
+                        return Self::clear_at_path(current, "$");
+                    }
+                } else {
+                    current = current
+                        .as_object_mut()
+                        .ok_or(KvError::WrongType)?
+                        .get_mut(*part)
+                        .ok_or(KvError::NotFound)?;
+
+                    if is_last {
+                        return Self::clear_at_path(current, "$");
+                    }
+                }
+            }
+            Ok(0)
+        }
+    }
+
+    /// JSON.TOGGLE key path - toggle boolean value at path
+    /// Returns the new boolean values as JSON array
+    pub fn json_toggle(&self, key: &str, path: &str) -> Result<Vec<bool>> {
+        let conn = self.core.conn.lock().unwrap_or_else(|e| e.into_inner());
+        let now = Self::now_ms();
+
+        let key_id = match self.get_json_key_id(&conn, key)? {
+            Some(kid) => kid,
+            None => return Err(KvError::NotFound),
+        };
+
+        let doc_bytes: Vec<u8> = conn
+            .query_row(
+                "SELECT value FROM json_docs WHERE key_id = ?1",
+                params![key_id],
+                |row| row.get(0),
+            )
+            .optional()?
+            .ok_or(KvError::NotFound)?;
+
+        let mut doc: JsonValue = serde_json::from_slice(&doc_bytes)
+            .map_err(|_| KvError::SyntaxError)?;
+
+        let normalized = Self::normalize_json_path(path);
+        let toggled = Self::toggle_at_path(&mut doc, &normalized)?;
+
+        if !toggled.is_empty() {
+            let updated_bytes = serde_json::to_vec(&doc).map_err(|_| KvError::SyntaxError)?;
+            conn.execute(
+                "UPDATE json_docs SET value = ?1 WHERE key_id = ?2",
+                params![updated_bytes, key_id],
+            )?;
+
+            conn.execute(
+                "UPDATE keys SET updated_at = ?1, version = version + 1 WHERE id = ?2",
+                params![now, key_id],
+            )?;
+        }
+
+        Ok(toggled)
+    }
+
+    /// Helper to toggle boolean at path
+    fn toggle_at_path(doc: &mut JsonValue, path: &str) -> Result<Vec<bool>> {
+        if path == "$" {
+            if let JsonValue::Bool(b) = doc {
+                *b = !*b;
+                return Ok(vec![*b]);
+            }
+            return Err(KvError::WrongType);
+        }
+
+        let parts: Vec<&str> = path.trim_start_matches("$.").split('.').collect();
+        let mut current = doc;
+
+        for (i, part) in parts.iter().enumerate() {
+            let is_last = i == parts.len() - 1;
+
+            if let Some(bracket_pos) = part.find('[') {
+                let field_name = &part[..bracket_pos];
+                let index_str = &part[bracket_pos + 1..part.len() - 1];
+                let index: usize = index_str.parse().map_err(|_| KvError::SyntaxError)?;
+
+                if !field_name.is_empty() {
+                    current = current
+                        .as_object_mut()
+                        .ok_or(KvError::WrongType)?
+                        .get_mut(field_name)
+                        .ok_or(KvError::NotFound)?;
+                }
+
+                let arr = current.as_array_mut().ok_or(KvError::WrongType)?;
+                current = arr.get_mut(index).ok_or(KvError::NotFound)?;
+
+                if is_last {
+                    if let JsonValue::Bool(b) = current {
+                        *b = !*b;
+                        return Ok(vec![*b]);
+                    }
+                    return Err(KvError::WrongType);
+                }
+            } else {
+                current = current
+                    .as_object_mut()
+                    .ok_or(KvError::WrongType)?
+                    .get_mut(*part)
+                    .ok_or(KvError::NotFound)?;
+
+                if is_last {
+                    if let JsonValue::Bool(b) = current {
+                        *b = !*b;
+                        return Ok(vec![*b]);
+                    }
+                    return Err(KvError::WrongType);
+                }
+            }
+        }
+
+        Err(KvError::NotFound)
+    }
+
+    /// JSON.NUMINCRBY key path value - increment number at path
+    /// Returns the new value as a string
+    pub fn json_numincrby(&self, key: &str, path: &str, increment: f64) -> Result<String> {
+        let conn = self.core.conn.lock().unwrap_or_else(|e| e.into_inner());
+        let now = Self::now_ms();
+
+        let key_id = match self.get_json_key_id(&conn, key)? {
+            Some(kid) => kid,
+            None => return Err(KvError::NotFound),
+        };
+
+        let doc_bytes: Vec<u8> = conn
+            .query_row(
+                "SELECT value FROM json_docs WHERE key_id = ?1",
+                params![key_id],
+                |row| row.get(0),
+            )
+            .optional()?
+            .ok_or(KvError::NotFound)?;
+
+        let mut doc: JsonValue = serde_json::from_slice(&doc_bytes)
+            .map_err(|_| KvError::SyntaxError)?;
+
+        let normalized = Self::normalize_json_path(path);
+        let new_value = Self::numincrby_at_path(&mut doc, &normalized, increment)?;
+
+        let updated_bytes = serde_json::to_vec(&doc).map_err(|_| KvError::SyntaxError)?;
+        conn.execute(
+            "UPDATE json_docs SET value = ?1 WHERE key_id = ?2",
+            params![updated_bytes, key_id],
+        )?;
+
+        conn.execute(
+            "UPDATE keys SET updated_at = ?1, version = version + 1 WHERE id = ?2",
+            params![now, key_id],
+        )?;
+
+        Ok(new_value)
+    }
+
+    /// Helper to increment number at path
+    fn numincrby_at_path(doc: &mut JsonValue, path: &str, increment: f64) -> Result<String> {
+        if path == "$" {
+            if let JsonValue::Number(n) = doc {
+                let current = n.as_f64().unwrap_or(0.0);
+                let new_val = current + increment;
+                // Try to keep as integer if possible
+                if new_val.fract() == 0.0 && new_val >= i64::MIN as f64 && new_val <= i64::MAX as f64 {
+                    *doc = JsonValue::Number(serde_json::Number::from(new_val as i64));
+                    return Ok((new_val as i64).to_string());
+                } else {
+                    *doc = JsonValue::Number(
+                        serde_json::Number::from_f64(new_val).ok_or(KvError::SyntaxError)?
+                    );
+                    return Ok(new_val.to_string());
+                }
+            }
+            return Err(KvError::WrongType);
+        }
+
+        let parts: Vec<&str> = path.trim_start_matches("$.").split('.').collect();
+        let mut current = doc;
+
+        for (i, part) in parts.iter().enumerate() {
+            let is_last = i == parts.len() - 1;
+
+            if let Some(bracket_pos) = part.find('[') {
+                let field_name = &part[..bracket_pos];
+                let index_str = &part[bracket_pos + 1..part.len() - 1];
+                let index: usize = index_str.parse().map_err(|_| KvError::SyntaxError)?;
+
+                if !field_name.is_empty() {
+                    current = current
+                        .as_object_mut()
+                        .ok_or(KvError::WrongType)?
+                        .get_mut(field_name)
+                        .ok_or(KvError::NotFound)?;
+                }
+
+                let arr = current.as_array_mut().ok_or(KvError::WrongType)?;
+                current = arr.get_mut(index).ok_or(KvError::NotFound)?;
+
+                if is_last {
+                    return Self::numincrby_at_path(current, "$", increment);
+                }
+            } else {
+                current = current
+                    .as_object_mut()
+                    .ok_or(KvError::WrongType)?
+                    .get_mut(*part)
+                    .ok_or(KvError::NotFound)?;
+
+                if is_last {
+                    return Self::numincrby_at_path(current, "$", increment);
+                }
+            }
+        }
+
+        Err(KvError::NotFound)
+    }
+
     /// HSET key field value [field value ...] - set hash field(s), returns number of new fields
     pub fn hset(&self, key: &str, pairs: &[(&str, &[u8])]) -> Result<i64> {
         if pairs.is_empty() {
@@ -24337,6 +24825,421 @@ mod tests {
             let result = db.json_get(&format!("item:{}", i), &["$.id"]).unwrap().unwrap();
             assert_eq!(result, i.to_string());
         }
+    }
+
+    #[test]
+    fn test_json_mget_basic() {
+        let db = Db::open_memory().unwrap();
+
+        // Set up test data
+        assert!(db.json_set("user:1", "$", r#"{"name":"Alice","age":30}"#, false, false).unwrap());
+        assert!(db.json_set("user:2", "$", r#"{"name":"Bob","age":25}"#, false, false).unwrap());
+        assert!(db.json_set("user:3", "$", r#"{"name":"Charlie","age":35}"#, false, false).unwrap());
+
+        // MGET names from all keys
+        let results = db.json_mget(&["user:1", "user:2", "user:3"], "$.name").unwrap();
+        assert_eq!(results.len(), 3);
+        assert_eq!(results[0].as_ref().unwrap(), r#""Alice""#);
+        assert_eq!(results[1].as_ref().unwrap(), r#""Bob""#);
+        assert_eq!(results[2].as_ref().unwrap(), r#""Charlie""#);
+
+        // MGET ages from all keys
+        let age_results = db.json_mget(&["user:1", "user:2", "user:3"], "$.age").unwrap();
+        assert_eq!(age_results[0].as_ref().unwrap(), "30");
+        assert_eq!(age_results[1].as_ref().unwrap(), "25");
+        assert_eq!(age_results[2].as_ref().unwrap(), "35");
+    }
+
+    #[test]
+    fn test_json_mget_with_missing_keys() {
+        let db = Db::open_memory().unwrap();
+
+        assert!(db.json_set("key1", "$", r#"{"value":1}"#, false, false).unwrap());
+        assert!(db.json_set("key3", "$", r#"{"value":3}"#, false, false).unwrap());
+
+        // key2 doesn't exist
+        let results = db.json_mget(&["key1", "key2", "key3"], "$.value").unwrap();
+        assert_eq!(results.len(), 3);
+        assert_eq!(results[0].as_ref().unwrap(), "1");
+        assert!(results[1].is_none()); // key2 doesn't exist
+        assert_eq!(results[2].as_ref().unwrap(), "3");
+    }
+
+    #[test]
+    fn test_json_mget_with_missing_paths() {
+        let db = Db::open_memory().unwrap();
+
+        assert!(db.json_set("obj1", "$", r#"{"a":1}"#, false, false).unwrap());
+        assert!(db.json_set("obj2", "$", r#"{"b":2}"#, false, false).unwrap());
+        assert!(db.json_set("obj3", "$", r#"{"a":3}"#, false, false).unwrap());
+
+        // Only obj1 and obj3 have $.a
+        let results = db.json_mget(&["obj1", "obj2", "obj3"], "$.a").unwrap();
+        assert_eq!(results.len(), 3);
+        assert_eq!(results[0].as_ref().unwrap(), "1");
+        assert!(results[1].is_none()); // obj2 doesn't have $.a
+        assert_eq!(results[2].as_ref().unwrap(), "3");
+    }
+
+    #[test]
+    fn test_json_mget_root_path() {
+        let db = Db::open_memory().unwrap();
+
+        assert!(db.json_set("k1", "$", r#"{"x":1}"#, false, false).unwrap());
+        assert!(db.json_set("k2", "$", r#"{"y":2}"#, false, false).unwrap());
+
+        // Get entire documents
+        let results = db.json_mget(&["k1", "k2"], "$").unwrap();
+        assert!(results[0].as_ref().unwrap().contains("\"x\":1"));
+        assert!(results[1].as_ref().unwrap().contains("\"y\":2"));
+    }
+
+    #[test]
+    fn test_json_mget_single_key() {
+        let db = Db::open_memory().unwrap();
+
+        assert!(db.json_set("single", "$", r#"{"val":42}"#, false, false).unwrap());
+
+        let results = db.json_mget(&["single"], "$.val").unwrap();
+        assert_eq!(results.len(), 1);
+        assert_eq!(results[0].as_ref().unwrap(), "42");
+    }
+
+    #[test]
+    fn test_json_mset_basic() {
+        let db = Db::open_memory().unwrap();
+
+        // Set multiple key/path/value triplets
+        let triplets = vec![
+            ("user:1", "$", r#"{"name":"Alice"}"#),
+            ("user:2", "$", r#"{"name":"Bob"}"#),
+            ("user:3", "$", r#"{"name":"Charlie"}"#),
+        ];
+        db.json_mset(&triplets).unwrap();
+
+        // Verify all were set
+        assert_eq!(db.json_get("user:1", &["$.name"]).unwrap().unwrap(), r#""Alice""#);
+        assert_eq!(db.json_get("user:2", &["$.name"]).unwrap().unwrap(), r#""Bob""#);
+        assert_eq!(db.json_get("user:3", &["$.name"]).unwrap().unwrap(), r#""Charlie""#);
+    }
+
+    #[test]
+    fn test_json_mset_nested_paths() {
+        let db = Db::open_memory().unwrap();
+
+        // Create base objects first
+        assert!(db.json_set("obj1", "$", r#"{"user":{}}"#, false, false).unwrap());
+        assert!(db.json_set("obj2", "$", r#"{"user":{}}"#, false, false).unwrap());
+
+        // Set nested paths with MSET
+        let triplets = vec![
+            ("obj1", "$.user.name", r#""Alice""#),
+            ("obj2", "$.user.name", r#""Bob""#),
+        ];
+        db.json_mset(&triplets).unwrap();
+
+        assert_eq!(db.json_get("obj1", &["$.user.name"]).unwrap().unwrap(), r#""Alice""#);
+        assert_eq!(db.json_get("obj2", &["$.user.name"]).unwrap().unwrap(), r#""Bob""#);
+    }
+
+    #[test]
+    fn test_json_mset_overwrites() {
+        let db = Db::open_memory().unwrap();
+
+        // Set initial values
+        assert!(db.json_set("key", "$", r#"{"old":"value"}"#, false, false).unwrap());
+
+        // Overwrite with MSET
+        let triplets = vec![("key", "$", r#"{"new":"value"}"#)];
+        db.json_mset(&triplets).unwrap();
+
+        let result = db.json_get("key", &[]).unwrap().unwrap();
+        assert!(!result.contains("old"));
+        assert!(result.contains("new"));
+    }
+
+    #[test]
+    fn test_json_mset_empty() {
+        let db = Db::open_memory().unwrap();
+
+        // Empty triplets should be a no-op
+        let triplets: Vec<(&str, &str, &str)> = vec![];
+        db.json_mset(&triplets).unwrap();
+    }
+
+    #[test]
+    fn test_json_mset_creates_new_keys() {
+        let db = Db::open_memory().unwrap();
+
+        // All keys are new
+        let triplets = vec![
+            ("new1", "$", r#"{"id":1}"#),
+            ("new2", "$", r#"{"id":2}"#),
+        ];
+        db.json_mset(&triplets).unwrap();
+
+        assert_eq!(db.json_get("new1", &["$.id"]).unwrap().unwrap(), "1");
+        assert_eq!(db.json_get("new2", &["$.id"]).unwrap().unwrap(), "2");
+    }
+
+    #[test]
+    fn test_json_mset_mixed_new_and_existing() {
+        let db = Db::open_memory().unwrap();
+
+        // Create one key
+        assert!(db.json_set("existing", "$", r#"{"val":0}"#, false, false).unwrap());
+
+        // MSET with mix of new and existing
+        let triplets = vec![
+            ("existing", "$", r#"{"val":100}"#),
+            ("brand_new", "$", r#"{"val":200}"#),
+        ];
+        db.json_mset(&triplets).unwrap();
+
+        assert_eq!(db.json_get("existing", &["$.val"]).unwrap().unwrap(), "100");
+        assert_eq!(db.json_get("brand_new", &["$.val"]).unwrap().unwrap(), "200");
+    }
+
+    // ========================================================================
+    // JSON Phase 3: Manipulation Command Tests
+    // ========================================================================
+
+    #[test]
+    fn test_json_merge_basic() {
+        let db = Db::open_memory().unwrap();
+
+        // Set initial document
+        assert!(db.json_set("obj", "$", r#"{"a":1,"b":2}"#, false, false).unwrap());
+
+        // Merge new fields
+        assert!(db.json_merge("obj", "$", r#"{"c":3,"d":4}"#).unwrap());
+
+        let result = db.json_get("obj", &[]).unwrap().unwrap();
+        assert!(result.contains("\"a\":1"));
+        assert!(result.contains("\"b\":2"));
+        assert!(result.contains("\"c\":3"));
+        assert!(result.contains("\"d\":4"));
+    }
+
+    #[test]
+    fn test_json_merge_overwrite() {
+        let db = Db::open_memory().unwrap();
+
+        assert!(db.json_set("obj", "$", r#"{"a":1,"b":2}"#, false, false).unwrap());
+
+        // Merge with overwriting field
+        assert!(db.json_merge("obj", "$", r#"{"a":100}"#).unwrap());
+
+        assert_eq!(db.json_get("obj", &["$.a"]).unwrap().unwrap(), "100");
+        assert_eq!(db.json_get("obj", &["$.b"]).unwrap().unwrap(), "2");
+    }
+
+    #[test]
+    fn test_json_merge_delete_with_null() {
+        let db = Db::open_memory().unwrap();
+
+        assert!(db.json_set("obj", "$", r#"{"a":1,"b":2,"c":3}"#, false, false).unwrap());
+
+        // Delete field b with null
+        assert!(db.json_merge("obj", "$", r#"{"b":null}"#).unwrap());
+
+        let result = db.json_get("obj", &[]).unwrap().unwrap();
+        assert!(result.contains("\"a\":1"));
+        assert!(!result.contains("\"b\""));
+        assert!(result.contains("\"c\":3"));
+    }
+
+    #[test]
+    fn test_json_merge_nested() {
+        let db = Db::open_memory().unwrap();
+
+        assert!(db.json_set("obj", "$", r#"{"user":{"name":"Alice","age":30}}"#, false, false).unwrap());
+
+        // Merge at nested path
+        assert!(db.json_merge("obj", "$.user", r#"{"city":"NYC"}"#).unwrap());
+
+        assert_eq!(db.json_get("obj", &["$.user.name"]).unwrap().unwrap(), r#""Alice""#);
+        assert_eq!(db.json_get("obj", &["$.user.city"]).unwrap().unwrap(), r#""NYC""#);
+    }
+
+    #[test]
+    fn test_json_merge_nonexistent_key() {
+        let db = Db::open_memory().unwrap();
+
+        let result = db.json_merge("nonexistent", "$", r#"{"a":1}"#);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_json_clear_object() {
+        let db = Db::open_memory().unwrap();
+
+        assert!(db.json_set("obj", "$", r#"{"a":1,"b":2,"c":3}"#, false, false).unwrap());
+
+        let cleared = db.json_clear("obj", None).unwrap();
+        assert_eq!(cleared, 1);
+
+        assert_eq!(db.json_get("obj", &[]).unwrap().unwrap(), "{}");
+    }
+
+    #[test]
+    fn test_json_clear_array() {
+        let db = Db::open_memory().unwrap();
+
+        assert!(db.json_set("arr", "$", "[1,2,3,4,5]", false, false).unwrap());
+
+        let cleared = db.json_clear("arr", None).unwrap();
+        assert_eq!(cleared, 1);
+
+        assert_eq!(db.json_get("arr", &[]).unwrap().unwrap(), "[]");
+    }
+
+    #[test]
+    fn test_json_clear_nested_path() {
+        let db = Db::open_memory().unwrap();
+
+        assert!(db.json_set("obj", "$", r#"{"data":{"items":[1,2,3]}}"#, false, false).unwrap());
+
+        let cleared = db.json_clear("obj", Some("$.data.items")).unwrap();
+        assert_eq!(cleared, 1);
+
+        assert_eq!(db.json_get("obj", &["$.data.items"]).unwrap().unwrap(), "[]");
+    }
+
+    #[test]
+    fn test_json_clear_already_empty() {
+        let db = Db::open_memory().unwrap();
+
+        assert!(db.json_set("empty", "$", "{}", false, false).unwrap());
+
+        let cleared = db.json_clear("empty", None).unwrap();
+        assert_eq!(cleared, 0); // Already empty
+    }
+
+    #[test]
+    fn test_json_clear_noncontainer() {
+        let db = Db::open_memory().unwrap();
+
+        assert!(db.json_set("str", "$", r#""hello""#, false, false).unwrap());
+
+        let cleared = db.json_clear("str", None).unwrap();
+        assert_eq!(cleared, 0); // Can't clear a string
+    }
+
+    #[test]
+    fn test_json_toggle_basic() {
+        let db = Db::open_memory().unwrap();
+
+        assert!(db.json_set("obj", "$", r#"{"active":true}"#, false, false).unwrap());
+
+        let result = db.json_toggle("obj", "$.active").unwrap();
+        assert_eq!(result, vec![false]);
+
+        assert_eq!(db.json_get("obj", &["$.active"]).unwrap().unwrap(), "false");
+
+        // Toggle again
+        let result = db.json_toggle("obj", "$.active").unwrap();
+        assert_eq!(result, vec![true]);
+
+        assert_eq!(db.json_get("obj", &["$.active"]).unwrap().unwrap(), "true");
+    }
+
+    #[test]
+    fn test_json_toggle_root_boolean() {
+        let db = Db::open_memory().unwrap();
+
+        assert!(db.json_set("bool", "$", "false", false, false).unwrap());
+
+        let result = db.json_toggle("bool", "$").unwrap();
+        assert_eq!(result, vec![true]);
+
+        assert_eq!(db.json_get("bool", &[]).unwrap().unwrap(), "true");
+    }
+
+    #[test]
+    fn test_json_toggle_non_boolean() {
+        let db = Db::open_memory().unwrap();
+
+        assert!(db.json_set("obj", "$", r#"{"val":42}"#, false, false).unwrap());
+
+        let result = db.json_toggle("obj", "$.val");
+        assert!(result.is_err()); // Can't toggle a number
+    }
+
+    #[test]
+    fn test_json_toggle_nested() {
+        let db = Db::open_memory().unwrap();
+
+        assert!(db.json_set("obj", "$", r#"{"settings":{"enabled":false}}"#, false, false).unwrap());
+
+        let result = db.json_toggle("obj", "$.settings.enabled").unwrap();
+        assert_eq!(result, vec![true]);
+
+        assert_eq!(db.json_get("obj", &["$.settings.enabled"]).unwrap().unwrap(), "true");
+    }
+
+    #[test]
+    fn test_json_numincrby_integer() {
+        let db = Db::open_memory().unwrap();
+
+        assert!(db.json_set("obj", "$", r#"{"count":10}"#, false, false).unwrap());
+
+        let result = db.json_numincrby("obj", "$.count", 5.0).unwrap();
+        assert_eq!(result, "15");
+
+        assert_eq!(db.json_get("obj", &["$.count"]).unwrap().unwrap(), "15");
+    }
+
+    #[test]
+    fn test_json_numincrby_negative() {
+        let db = Db::open_memory().unwrap();
+
+        assert!(db.json_set("obj", "$", r#"{"val":100}"#, false, false).unwrap());
+
+        let result = db.json_numincrby("obj", "$.val", -30.0).unwrap();
+        assert_eq!(result, "70");
+    }
+
+    #[test]
+    fn test_json_numincrby_float() {
+        let db = Db::open_memory().unwrap();
+
+        assert!(db.json_set("obj", "$", r#"{"price":9.99}"#, false, false).unwrap());
+
+        let result = db.json_numincrby("obj", "$.price", 0.01).unwrap();
+        // Float arithmetic - should be close to 10.0
+        let val: f64 = result.parse().unwrap();
+        assert!((val - 10.0).abs() < 0.001);
+    }
+
+    #[test]
+    fn test_json_numincrby_root() {
+        let db = Db::open_memory().unwrap();
+
+        assert!(db.json_set("num", "$", "42", false, false).unwrap());
+
+        let result = db.json_numincrby("num", "$", 8.0).unwrap();
+        assert_eq!(result, "50");
+    }
+
+    #[test]
+    fn test_json_numincrby_non_number() {
+        let db = Db::open_memory().unwrap();
+
+        assert!(db.json_set("obj", "$", r#"{"name":"Alice"}"#, false, false).unwrap());
+
+        let result = db.json_numincrby("obj", "$.name", 1.0);
+        assert!(result.is_err()); // Can't increment a string
+    }
+
+    #[test]
+    fn test_json_numincrby_nested() {
+        let db = Db::open_memory().unwrap();
+
+        assert!(db.json_set("obj", "$", r#"{"stats":{"score":100}}"#, false, false).unwrap());
+
+        let result = db.json_numincrby("obj", "$.stats.score", 50.0).unwrap();
+        assert_eq!(result, "150");
     }
 
 }
