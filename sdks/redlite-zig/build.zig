@@ -5,7 +5,7 @@ pub fn build(b: *std.Build) void {
     const optimize = b.standardOptimizeOption(.{});
 
     // Path to the compiled library
-    const lib_path = b.path("../../target/release/");
+    const lib_path = b.path("../../crates/redlite-ffi/target/release/");
     const include_path = b.path("../../crates/redlite-ffi/");
 
     // Create the redlite module
