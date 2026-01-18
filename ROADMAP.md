@@ -81,10 +81,12 @@ See [CHANGELOG.md](./CHANGELOG.md) for completed features.
 - [x] JSON.OBJKEYS - get object keys
 - [x] JSON.OBJLEN - get object key count
 
-#### Phase 7: FTS Integration
-- [ ] Update `ft_index_document` to branch on key type
-- [ ] Add `ft_index_json_document` with JSONPath extraction
-- [ ] Call `ft_index_document` after JSON mutations
+#### Phase 7: FTS Integration - COMPLETE
+- [x] Update `ft_index_document` to branch on key type
+- [x] Add `ft_index_json_document` with JSONPath extraction
+- [x] Call `ft_index_document` after JSON mutations
+- [x] Fix `ft_search` to correctly retrieve JSON document fields
+- [x] Add 15 comprehensive FTS+JSON tests
 
 **Schema**:
 ```sql
@@ -160,7 +162,7 @@ fn track_access(conn: &Connection, key_id: i64) {
 }
 ```
 
-#### Phase 3: In-Memory Tracking + Batched Flush - 🚧 IN PROGRESS
+#### Phase 3: In-Memory Tracking + Batched Flush - ✅ COMPLETE
 
 **Add to DbCore**:
 ```rust
