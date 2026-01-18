@@ -7,12 +7,16 @@ CREATE TABLE IF NOT EXISTS keys (
     expire_at INTEGER,
     version INTEGER NOT NULL DEFAULT 0,
     created_at INTEGER NOT NULL DEFAULT (unixepoch('now', 'subsec') * 1000),
-    updated_at INTEGER NOT NULL DEFAULT (unixepoch('now', 'subsec') * 1000)
+    updated_at INTEGER NOT NULL DEFAULT (unixepoch('now', 'subsec') * 1000),
+    last_accessed INTEGER NOT NULL DEFAULT 0,
+    access_count INTEGER NOT NULL DEFAULT 0
 );
 
 CREATE UNIQUE INDEX IF NOT EXISTS idx_keys_db_key ON keys(db, key);
 CREATE INDEX IF NOT EXISTS idx_keys_expire ON keys(expire_at) WHERE expire_at IS NOT NULL;
 CREATE INDEX IF NOT EXISTS idx_keys_type ON keys(db, type);
+CREATE INDEX IF NOT EXISTS idx_keys_last_accessed ON keys(last_accessed);
+CREATE INDEX IF NOT EXISTS idx_keys_access_count ON keys(access_count);
 
 -- Strings
 CREATE TABLE IF NOT EXISTS strings (
@@ -98,4 +102,10 @@ CREATE TABLE IF NOT EXISTS stream_consumers (
     name TEXT NOT NULL,
     seen_time INTEGER NOT NULL DEFAULT 0,
     UNIQUE(group_id, name)
+);
+
+-- JSON documents (Session 51)
+CREATE TABLE IF NOT EXISTS json_docs (
+    key_id INTEGER PRIMARY KEY REFERENCES keys(id) ON DELETE CASCADE,
+    value BLOB NOT NULL
 );

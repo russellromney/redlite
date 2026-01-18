@@ -602,6 +602,11 @@ async fn execute_command(
         "AUTOVACUUM" => cmd_autovacuum(db, cmd_args),
         "HISTORY" => cmd_history(db, cmd_args),
         "FTS" => cmd_fts(db, cmd_args),
+        // JSON commands (Session 51 - RedisJSON-compatible)
+        "JSON.SET" => cmd_json_set(db, cmd_args),
+        "JSON.GET" => cmd_json_get(db, cmd_args),
+        "JSON.DEL" => cmd_json_del(db, cmd_args),
+        "JSON.TYPE" => cmd_json_type(db, cmd_args),
         // RediSearch-compatible commands (Session 23)
         "FT.CREATE" => cmd_ft_create(db, cmd_args),
         "FT.DROPINDEX" => cmd_ft_dropindex(db, cmd_args),
@@ -4744,6 +4749,131 @@ fn cmd_fts(db: &Db, args: &[Vec<u8>]) -> RespValue {
     }
 }
 
+// --- Session 51: JSON.* command handlers (RedisJSON-compatible) ---
+
+/// JSON.SET key path value [NX|XX]
+fn cmd_json_set(db: &Db, args: &[Vec<u8>]) -> RespValue {
+    if args.len() < 3 || args.len() > 4 {
+        return RespValue::error("wrong number of arguments for 'JSON.SET' command");
+    }
+
+    let key = match std::str::from_utf8(&args[0]) {
+        Ok(k) => k,
+        Err(_) => return RespValue::error("invalid key"),
+    };
+
+    let path = match std::str::from_utf8(&args[1]) {
+        Ok(p) => p,
+        Err(_) => return RespValue::error("invalid path"),
+    };
+
+    let value = match std::str::from_utf8(&args[2]) {
+        Ok(v) => v,
+        Err(_) => return RespValue::error("invalid JSON value"),
+    };
+
+    let (nx, xx) = if args.len() == 4 {
+        let opt = match std::str::from_utf8(&args[3]) {
+            Ok(o) => o.to_uppercase(),
+            Err(_) => return RespValue::error("invalid option"),
+        };
+        match opt.as_str() {
+            "NX" => (true, false),
+            "XX" => (false, true),
+            _ => return RespValue::error("invalid option, expected NX or XX"),
+        }
+    } else {
+        (false, false)
+    };
+
+    match db.json_set(key, path, value, nx, xx) {
+        Ok(true) => RespValue::ok(),
+        Ok(false) => RespValue::null(),
+        Err(KvError::WrongType) => RespValue::wrong_type(),
+        Err(KvError::SyntaxError) => RespValue::error("ERR invalid JSON"),
+        Err(e) => RespValue::error(e.to_string()),
+    }
+}
+
+/// JSON.GET key [path [path ...]]
+fn cmd_json_get(db: &Db, args: &[Vec<u8>]) -> RespValue {
+    if args.is_empty() {
+        return RespValue::error("wrong number of arguments for 'JSON.GET' command");
+    }
+
+    let key = match std::str::from_utf8(&args[0]) {
+        Ok(k) => k,
+        Err(_) => return RespValue::error("invalid key"),
+    };
+
+    let paths: Vec<&str> = args[1..]
+        .iter()
+        .filter_map(|p| std::str::from_utf8(p).ok())
+        .collect();
+
+    match db.json_get(key, &paths) {
+        Ok(Some(value)) => RespValue::from_string(value),
+        Ok(None) => RespValue::null(),
+        Err(KvError::WrongType) => RespValue::wrong_type(),
+        Err(e) => RespValue::error(e.to_string()),
+    }
+}
+
+/// JSON.DEL key [path]
+fn cmd_json_del(db: &Db, args: &[Vec<u8>]) -> RespValue {
+    if args.is_empty() || args.len() > 2 {
+        return RespValue::error("wrong number of arguments for 'JSON.DEL' command");
+    }
+
+    let key = match std::str::from_utf8(&args[0]) {
+        Ok(k) => k,
+        Err(_) => return RespValue::error("invalid key"),
+    };
+
+    let path = if args.len() == 2 {
+        match std::str::from_utf8(&args[1]) {
+            Ok(p) => Some(p),
+            Err(_) => return RespValue::error("invalid path"),
+        }
+    } else {
+        None
+    };
+
+    match db.json_del(key, path) {
+        Ok(count) => RespValue::Integer(count),
+        Err(KvError::WrongType) => RespValue::wrong_type(),
+        Err(e) => RespValue::error(e.to_string()),
+    }
+}
+
+/// JSON.TYPE key [path]
+fn cmd_json_type(db: &Db, args: &[Vec<u8>]) -> RespValue {
+    if args.is_empty() || args.len() > 2 {
+        return RespValue::error("wrong number of arguments for 'JSON.TYPE' command");
+    }
+
+    let key = match std::str::from_utf8(&args[0]) {
+        Ok(k) => k,
+        Err(_) => return RespValue::error("invalid key"),
+    };
+
+    let path = if args.len() == 2 {
+        match std::str::from_utf8(&args[1]) {
+            Ok(p) => Some(p),
+            Err(_) => return RespValue::error("invalid path"),
+        }
+    } else {
+        None
+    };
+
+    match db.json_type(key, path) {
+        Ok(Some(type_name)) => RespValue::from_string(type_name),
+        Ok(None) => RespValue::null(),
+        Err(KvError::WrongType) => RespValue::wrong_type(),
+        Err(e) => RespValue::error(e.to_string()),
+    }
+}
+
 // --- Session 23: RediSearch-compatible FT.* command handlers ---
 
 use crate::types::{FtField, FtFieldType, FtOnType, FtSearchOptions};
@@ -8565,6 +8695,11 @@ async fn execute_command_in_transaction(db: &mut Db, args: &[Vec<u8>]) -> RespVa
         "KEYINFO" => cmd_keyinfo(db, cmd_args),
         "HISTORY" => cmd_history(db, cmd_args),
         "FTS" => cmd_fts(db, cmd_args),
+        // JSON commands (Session 51 - RedisJSON-compatible)
+        "JSON.SET" => cmd_json_set(db, cmd_args),
+        "JSON.GET" => cmd_json_get(db, cmd_args),
+        "JSON.DEL" => cmd_json_del(db, cmd_args),
+        "JSON.TYPE" => cmd_json_type(db, cmd_args),
         // RediSearch-compatible commands (Session 23)
         "FT.CREATE" => cmd_ft_create(db, cmd_args),
         "FT.DROPINDEX" => cmd_ft_dropindex(db, cmd_args),

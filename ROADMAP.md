@@ -4,6 +4,104 @@ See [CHANGELOG.md](./CHANGELOG.md) for completed features.
 
 ## Next Steps
 
+### Session 51: JSON Commands (RedisJSON-Compatible)
+
+**Goal**: Implement complete JSON command support with 20 commands and FTS ON JSON integration with JSONPath extraction.
+
+**Context**: Redlite supports `FT.CREATE ... ON JSON` but has no actual JSON storage or commands. The `FtOnType::Json` enum exists but JSON documents can't be stored or queried. This feature completes the JSON story.
+
+**Key Design Decisions**:
+
+1. **Storage Format**: Raw JSON bytes in `json_docs.value` BLOB column (like strings table)
+   - Simple, debuggable, Redis-compatible
+   - No MessagePack encoding - just UTF-8 JSON
+
+2. **JSONPath Library**: `serde_json_path` crate (RFC 9535 compliant)
+   - Works directly with `serde_json::Value`
+   - Supports standard JSONPath syntax
+
+3. **Path Syntax**: Support both JSONPath and Redis-style paths
+   - `$` or `.` → root document
+   - `$.foo.bar` or `.foo.bar` → nested path
+   - Normalize all paths to JSONPath internally
+
+4. **Type Integration**: `KeyType::Json = 7`
+   - New enum variant with `as_str() → "ReJSON-RL"` for Redis compatibility
+   - Full integration with TYPE, DEL, EXISTS, TTL commands
+
+5. **FTS Integration**: Update `ft_index_document` to handle JSON
+   - Schema field names use JSONPath (e.g., `$.name`, `$.address.city`)
+   - Extract values from JSON docs during indexing
+
+**Commands to Implement**:
+
+| Category | Commands |
+|----------|----------|
+| Core | JSON.SET, JSON.GET, JSON.DEL, JSON.MGET, JSON.MSET, JSON.TYPE |
+| Manipulation | JSON.MERGE, JSON.CLEAR, JSON.TOGGLE, JSON.NUMINCRBY |
+| String | JSON.STRAPPEND, JSON.STRLEN |
+| Array | JSON.ARRAPPEND, JSON.ARRINDEX, JSON.ARRINSERT, JSON.ARRLEN, JSON.ARRPOP, JSON.ARRTRIM |
+| Object | JSON.OBJKEYS, JSON.OBJLEN |
+
+**Implementation Phases**:
+
+#### Phase 1: Foundation - COMPLETE
+- [x] Add `serde_json_path = "0.7"` dependency
+- [x] Add `KeyType::Json = 7` to types.rs
+- [x] Create `json_docs` table in schema
+- [x] Add helper functions: `normalize_path()`, `get_or_create_json_key()`, `get_json_key_id()`
+
+#### Phase 2: Core Commands - IN PROGRESS
+- [x] JSON.SET - set value at path (supports NX/XX)
+- [x] JSON.GET - get value(s) at path(s)
+- [x] JSON.DEL - delete at path
+- [ ] JSON.MGET - get same path from multiple keys
+- [ ] JSON.MSET - set multiple key/path/value triplets
+- [x] JSON.TYPE - return JSON type at path
+
+#### Phase 3: Manipulation Commands
+- [ ] JSON.MERGE - RFC 7386 merge
+- [ ] JSON.CLEAR - clear arrays/objects
+- [ ] JSON.TOGGLE - toggle booleans
+- [ ] JSON.NUMINCRBY - increment numbers
+
+#### Phase 4: String Commands
+- [ ] JSON.STRAPPEND - append to strings
+- [ ] JSON.STRLEN - get string length
+
+#### Phase 5: Array Commands
+- [ ] JSON.ARRAPPEND - append to array
+- [ ] JSON.ARRINDEX - find index of value
+- [ ] JSON.ARRINSERT - insert at index
+- [ ] JSON.ARRLEN - get array length
+- [ ] JSON.ARRPOP - pop from array
+- [ ] JSON.ARRTRIM - trim array to range
+
+#### Phase 6: Object Commands
+- [ ] JSON.OBJKEYS - get object keys
+- [ ] JSON.OBJLEN - get object key count
+
+#### Phase 7: FTS Integration
+- [ ] Update `ft_index_document` to branch on key type
+- [ ] Add `ft_index_json_document` with JSONPath extraction
+- [ ] Call `ft_index_document` after JSON mutations
+
+**Schema**:
+```sql
+CREATE TABLE IF NOT EXISTS json_docs (
+    key_id INTEGER PRIMARY KEY REFERENCES keys(id) ON DELETE CASCADE,
+    value BLOB NOT NULL
+);
+```
+
+**Files to Modify**:
+- `crates/redlite/Cargo.toml` - add serde_json_path
+- `crates/redlite/src/types.rs` - add KeyType::Json
+- `crates/redlite/src/db.rs` - json_docs table, 20 operations, FTS integration
+- `crates/redlite/src/server/mod.rs` - 20 cmd_json_* handlers + dispatch
+
+---
+
 ### Session 50 Phase 2.6i: Memory-Based Eviction with LRU/LFU Support
 
 **Goal**: Implement comprehensive memory-based eviction with multiple policies (LRU, LFU, TTL, Random) using efficient in-memory tracking with optional persistence.

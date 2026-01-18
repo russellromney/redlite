@@ -60,6 +60,7 @@ pub enum KeyType {
     Set = 4,
     ZSet = 5,
     Stream = 6,
+    Json = 7,
 }
 
 impl KeyType {
@@ -71,6 +72,7 @@ impl KeyType {
             4 => Some(KeyType::Set),
             5 => Some(KeyType::ZSet),
             6 => Some(KeyType::Stream),
+            7 => Some(KeyType::Json),
             _ => None,
         }
     }
@@ -83,6 +85,7 @@ impl KeyType {
             KeyType::Set => "set",
             KeyType::ZSet => "zset",
             KeyType::Stream => "stream",
+            KeyType::Json => "ReJSON-RL",
         }
     }
 }

@@ -20,7 +20,7 @@ name = "redlite"
 path = "src/main.rs"
 
 [features]
-default = []
+default = ["geo"]
 turso = ["dep:turso"]
 vectors = ["dep:sqlite-vec"]
 geo = []  # R*Tree is built into SQLite, this just enables geo commands
@@ -40,6 +40,7 @@ anyhow = "1"
 rmp-serde = "1"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
+serde_json_path = "0.7"
 base64 = "0.22"
 
 [dev-dependencies]
@@ -54,16 +55,7 @@ lto = true
 codegen-units = 1
 
 # Session 37: FT.AGGREGATE Performance Benchmarks
+# Note: eviction.rs and poll_impact.rs migrated to redlite-bench matrix runner
 [[bench]]
 name = "ft_aggregate"
-harness = false
-
-# Session 35.2: Poll Impact Benchmarks
-[[bench]]
-name = "poll_impact"
-harness = false
-
-# Session 51: Eviction & Access Tracking Benchmarks
-[[bench]]
-name = "eviction"
 harness = false
