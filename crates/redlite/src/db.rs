@@ -18940,6 +18940,394 @@ mod tests {
     }
 
     #[test]
+    fn test_ft_search_json_multiple_prefixes() {
+        use crate::types::{FtField, FtOnType, FtSearchOptions};
+
+        let db = Db::open_memory().unwrap();
+
+        // Create JSON index with multiple prefixes
+        let schema = vec![FtField::text("$.name")];
+        db.ft_create("items", FtOnType::Json, &["product:", "service:"], &schema)
+            .unwrap();
+
+        // Create documents with different prefixes
+        db.json_set("product:laptop", "$", r#"{"name": "Gaming Laptop"}"#, false, false).unwrap();
+        db.json_set("service:repair", "$", r#"{"name": "Laptop Repair Service"}"#, false, false).unwrap();
+        db.json_set("other:item", "$", r#"{"name": "Other Laptop"}"#, false, false).unwrap();
+
+        let opts = FtSearchOptions::new();
+
+        // Search should find both product: and service: keys
+        let (total, results) = db.ft_search("items", "Laptop", &opts).unwrap();
+        assert_eq!(total, 2);
+
+        // Verify the correct keys are returned
+        let keys: Vec<&str> = results.iter().map(|r| r.key.as_str()).collect();
+        assert!(keys.contains(&"product:laptop"));
+        assert!(keys.contains(&"service:repair"));
+        assert!(!keys.contains(&"other:item")); // Should not match "other:" prefix
+    }
+
+    #[test]
+    fn test_ft_search_json_numeric_field_indexed() {
+        use crate::types::{FtField, FtOnType, FtSearchOptions};
+
+        let db = Db::open_memory().unwrap();
+
+        // Create JSON index with text and numeric fields
+        let schema = vec![
+            FtField::text("$.name"),
+            FtField::numeric("$.price"),
+        ];
+        db.ft_create("products", FtOnType::Json, &["item:"], &schema).unwrap();
+
+        db.json_set("item:1", "$", r#"{"name": "Cheap Widget", "price": 9.99}"#, false, false).unwrap();
+        db.json_set("item:2", "$", r#"{"name": "Medium Gadget", "price": 49.99}"#, false, false).unwrap();
+        db.json_set("item:3", "$", r#"{"name": "Expensive Widget", "price": 199.99}"#, false, false).unwrap();
+
+        let opts = FtSearchOptions::new();
+
+        // Search for all widgets (2 items have "Widget" in name)
+        let (total, _results) = db.ft_search("products", "Widget", &opts).unwrap();
+        assert_eq!(total, 2); // Cheap and Expensive widgets
+
+        // Search for gadget
+        let (total, _results) = db.ft_search("products", "Gadget", &opts).unwrap();
+        assert_eq!(total, 1); // Only Medium gadget
+
+        // Search for specific price adjective
+        let (total, results) = db.ft_search("products", "Cheap", &opts).unwrap();
+        assert_eq!(total, 1);
+        assert_eq!(results[0].key, "item:1");
+
+        let (total, results) = db.ft_search("products", "Expensive", &opts).unwrap();
+        assert_eq!(total, 1);
+        assert_eq!(results[0].key, "item:3");
+    }
+
+    #[test]
+    fn test_ft_search_json_nested_paths() {
+        use crate::types::{FtField, FtOnType, FtSearchOptions};
+
+        let db = Db::open_memory().unwrap();
+
+        // Create JSON index with nested path fields
+        let schema = vec![
+            FtField::text("$.author.name"),
+            FtField::text("$.metadata.category"),
+        ];
+        db.ft_create("books", FtOnType::Json, &["book:"], &schema).unwrap();
+
+        db.json_set(
+            "book:1",
+            "$",
+            r#"{"title": "Rust Programming", "author": {"name": "John Smith", "email": "john@example.com"}, "metadata": {"category": "Programming", "pages": 500}}"#,
+            false,
+            false,
+        ).unwrap();
+
+        db.json_set(
+            "book:2",
+            "$",
+            r#"{"title": "Python Basics", "author": {"name": "Jane Doe"}, "metadata": {"category": "Programming"}}"#,
+            false,
+            false,
+        ).unwrap();
+
+        db.json_set(
+            "book:3",
+            "$",
+            r#"{"title": "Cooking Guide", "author": {"name": "Chef Bob"}, "metadata": {"category": "Lifestyle"}}"#,
+            false,
+            false,
+        ).unwrap();
+
+        let opts = FtSearchOptions::new();
+
+        // Search by nested author name
+        let (total, results) = db.ft_search("books", "John", &opts).unwrap();
+        assert_eq!(total, 1);
+        assert_eq!(results[0].key, "book:1");
+
+        // Search by nested category
+        let (total, _results) = db.ft_search("books", "Programming", &opts).unwrap();
+        assert_eq!(total, 2);
+
+        // Search by author name that doesn't exist
+        let (total, _results) = db.ft_search("books", "Alice", &opts).unwrap();
+        assert_eq!(total, 0);
+    }
+
+    #[test]
+    fn test_ft_search_json_delete_unindex() {
+        use crate::types::{FtField, FtOnType, FtSearchOptions};
+
+        let db = Db::open_memory().unwrap();
+
+        let schema = vec![FtField::text("$.content")];
+        db.ft_create("notes", FtOnType::Json, &["note:"], &schema).unwrap();
+
+        db.json_set("note:1", "$", r#"{"content": "Important meeting tomorrow"}"#, false, false).unwrap();
+        db.json_set("note:2", "$", r#"{"content": "Meeting notes from today"}"#, false, false).unwrap();
+
+        let opts = FtSearchOptions::new();
+
+        // Both notes should be found
+        let (total, _results) = db.ft_search("notes", "meeting", &opts).unwrap();
+        assert_eq!(total, 2);
+
+        // Delete one note
+        db.del(&["note:1"]).unwrap();
+
+        // Only one note should remain
+        let (total, results) = db.ft_search("notes", "meeting", &opts).unwrap();
+        assert_eq!(total, 1);
+        assert_eq!(results[0].key, "note:2");
+    }
+
+    #[test]
+    fn test_ft_search_json_empty_and_missing_fields() {
+        use crate::types::{FtField, FtOnType, FtSearchOptions};
+
+        let db = Db::open_memory().unwrap();
+
+        let schema = vec![
+            FtField::text("$.title"),
+            FtField::text("$.description"),
+        ];
+        db.ft_create("docs", FtOnType::Json, &["doc:"], &schema).unwrap();
+
+        // Document with both fields
+        db.json_set("doc:1", "$", r#"{"title": "Complete Document", "description": "Has all fields"}"#, false, false).unwrap();
+
+        // Document missing description
+        db.json_set("doc:2", "$", r#"{"title": "Partial Document"}"#, false, false).unwrap();
+
+        // Document with empty title
+        db.json_set("doc:3", "$", r#"{"title": "", "description": "Empty title doc"}"#, false, false).unwrap();
+
+        let opts = FtSearchOptions::new();
+
+        // Search for "Document"
+        let (total, _results) = db.ft_search("docs", "Document", &opts).unwrap();
+        assert_eq!(total, 2); // doc:1 and doc:2
+
+        // Search for "Empty"
+        let (total, results) = db.ft_search("docs", "Empty", &opts).unwrap();
+        assert_eq!(total, 1);
+        assert_eq!(results[0].key, "doc:3");
+    }
+
+    #[test]
+    fn test_ft_search_json_multiple_indexes() {
+        use crate::types::{FtField, FtOnType, FtSearchOptions};
+
+        let db = Db::open_memory().unwrap();
+
+        // Create two different indexes on the same prefix but different fields
+        let schema1 = vec![FtField::text("$.title")];
+        db.ft_create("idx_title", FtOnType::Json, &["item:"], &schema1).unwrap();
+
+        let schema2 = vec![FtField::text("$.body")];
+        db.ft_create("idx_body", FtOnType::Json, &["item:"], &schema2).unwrap();
+
+        db.json_set(
+            "item:1",
+            "$",
+            r#"{"title": "Rust Programming", "body": "Learn about ownership and borrowing"}"#,
+            false,
+            false,
+        ).unwrap();
+
+        db.json_set(
+            "item:2",
+            "$",
+            r#"{"title": "Python Basics", "body": "Introduction to Rust and Python"}"#,
+            false,
+            false,
+        ).unwrap();
+
+        let opts = FtSearchOptions::new();
+
+        // Search title index for "Rust"
+        let (total, results) = db.ft_search("idx_title", "Rust", &opts).unwrap();
+        assert_eq!(total, 1);
+        assert_eq!(results[0].key, "item:1");
+
+        // Search body index for "Rust" - only item:2 mentions Rust in body
+        let (total, results) = db.ft_search("idx_body", "Rust", &opts).unwrap();
+        assert_eq!(total, 1);
+        assert_eq!(results[0].key, "item:2");
+
+        // Search title index for "Python"
+        let (total, results) = db.ft_search("idx_title", "Python", &opts).unwrap();
+        assert_eq!(total, 1);
+        assert_eq!(results[0].key, "item:2");
+    }
+
+    #[test]
+    fn test_ft_search_json_array_mutation_reindex() {
+        use crate::types::{FtField, FtOnType, FtSearchOptions};
+
+        let db = Db::open_memory().unwrap();
+
+        let schema = vec![FtField::text("$.tags")];
+        db.ft_create("tagged", FtOnType::Json, &["item:"], &schema).unwrap();
+
+        // Create document with array
+        db.json_set("item:1", "$", r#"{"tags": ["rust", "programming"]}"#, false, false).unwrap();
+
+        let opts = FtSearchOptions::new();
+
+        // Initial search - array serializes to JSON
+        let (total, _results) = db.ft_search("tagged", "rust", &opts).unwrap();
+        assert_eq!(total, 1);
+
+        // Append to array using JSON.ARRAPPEND
+        db.json_arrappend("item:1", "$.tags", &["\"python\""]).unwrap();
+
+        // Should still find the document (now has rust, programming, python)
+        let (total, _results) = db.ft_search("tagged", "python", &opts).unwrap();
+        assert_eq!(total, 1);
+    }
+
+    #[test]
+    fn test_ft_search_json_strappend_reindex() {
+        use crate::types::{FtField, FtOnType, FtSearchOptions};
+
+        let db = Db::open_memory().unwrap();
+
+        let schema = vec![FtField::text("$.content")];
+        db.ft_create("posts", FtOnType::Json, &["post:"], &schema).unwrap();
+
+        db.json_set("post:1", "$", r#"{"content": "Hello"}"#, false, false).unwrap();
+
+        let opts = FtSearchOptions::new();
+
+        // Search before append
+        let (total, _results) = db.ft_search("posts", "World", &opts).unwrap();
+        assert_eq!(total, 0);
+
+        // Append to string
+        db.json_strappend("post:1", Some("$.content"), "\" World\"").unwrap();
+
+        // Should find after append
+        let (total, _results) = db.ft_search("posts", "World", &opts).unwrap();
+        assert_eq!(total, 1);
+    }
+
+    #[test]
+    fn test_ft_search_json_numincrby_reindex() {
+        use crate::types::{FtField, FtOnType, FtSearchOptions};
+
+        let db = Db::open_memory().unwrap();
+
+        // Create index with text field
+        let schema = vec![FtField::text("$.name")];
+        db.ft_create("scores", FtOnType::Json, &["player:"], &schema).unwrap();
+
+        db.json_set("player:1", "$", r#"{"name": "Alice", "score": 100}"#, false, false).unwrap();
+        db.json_set("player:2", "$", r#"{"name": "Bob", "score": 50}"#, false, false).unwrap();
+
+        let opts = FtSearchOptions::new();
+
+        // Verify initial search works
+        let (total, _results) = db.ft_search("scores", "Alice", &opts).unwrap();
+        assert_eq!(total, 1);
+
+        // Increment score - should trigger reindex
+        db.json_numincrby("player:1", "$.score", 100.0).unwrap();
+
+        // Search should still work after numincrby (document still indexed)
+        let (total, results) = db.ft_search("scores", "Alice", &opts).unwrap();
+        assert_eq!(total, 1);
+        assert_eq!(results[0].key, "player:1");
+
+        // Verify both players are still searchable
+        let (total, _results) = db.ft_search("scores", "Bob", &opts).unwrap();
+        assert_eq!(total, 1);
+    }
+
+    #[test]
+    fn test_ft_search_json_special_characters() {
+        use crate::types::{FtField, FtOnType, FtSearchOptions};
+
+        let db = Db::open_memory().unwrap();
+
+        let schema = vec![FtField::text("$.text")];
+        db.ft_create("special", FtOnType::Json, &["doc:"], &schema).unwrap();
+
+        // Document with special characters
+        db.json_set("doc:1", "$", r#"{"text": "Hello, World! How's it going?"}"#, false, false).unwrap();
+        db.json_set("doc:2", "$", r#"{"text": "C++ and C# programming"}"#, false, false).unwrap();
+        db.json_set("doc:3", "$", r#"{"text": "user@example.com"}"#, false, false).unwrap();
+
+        let opts = FtSearchOptions::new();
+
+        // Search should work with tokenized words
+        let (total, _results) = db.ft_search("special", "Hello", &opts).unwrap();
+        assert_eq!(total, 1);
+
+        let (total, _results) = db.ft_search("special", "World", &opts).unwrap();
+        assert_eq!(total, 1);
+    }
+
+    #[test]
+    fn test_ft_search_json_unicode() {
+        use crate::types::{FtField, FtOnType, FtSearchOptions};
+
+        let db = Db::open_memory().unwrap();
+
+        let schema = vec![FtField::text("$.content")];
+        db.ft_create("unicode", FtOnType::Json, &["doc:"], &schema).unwrap();
+
+        // Use Latin characters with accents (tokenizer-friendly unicode)
+        db.json_set("doc:1", "$", r#"{"content": "Café résumé naïve"}"#, false, false).unwrap();
+        db.json_set("doc:2", "$", r#"{"content": "Über München Größe"}"#, false, false).unwrap();
+        db.json_set("doc:3", "$", r#"{"content": "Señor piñata jalapeño"}"#, false, false).unwrap();
+
+        let opts = FtSearchOptions::new();
+
+        // Search for French accented word
+        let (total, _results) = db.ft_search("unicode", "Café", &opts).unwrap();
+        assert_eq!(total, 1);
+
+        // Search for German word
+        let (total, _results) = db.ft_search("unicode", "München", &opts).unwrap();
+        assert_eq!(total, 1);
+
+        // Search for Spanish word
+        let (total, _results) = db.ft_search("unicode", "Señor", &opts).unwrap();
+        assert_eq!(total, 1);
+    }
+
+    #[test]
+    fn test_ft_search_json_case_insensitive() {
+        use crate::types::{FtField, FtOnType, FtSearchOptions};
+
+        let db = Db::open_memory().unwrap();
+
+        let schema = vec![FtField::text("$.title")];
+        db.ft_create("titles", FtOnType::Json, &["doc:"], &schema).unwrap();
+
+        db.json_set("doc:1", "$", r#"{"title": "UPPERCASE TITLE"}"#, false, false).unwrap();
+        db.json_set("doc:2", "$", r#"{"title": "lowercase title"}"#, false, false).unwrap();
+        db.json_set("doc:3", "$", r#"{"title": "MixedCase Title"}"#, false, false).unwrap();
+
+        let opts = FtSearchOptions::new();
+
+        // FTS5 is case-insensitive by default
+        let (total, _results) = db.ft_search("titles", "title", &opts).unwrap();
+        assert_eq!(total, 3);
+
+        let (total, _results) = db.ft_search("titles", "TITLE", &opts).unwrap();
+        assert_eq!(total, 3);
+
+        let (total, _results) = db.ft_search("titles", "uppercase", &opts).unwrap();
+        assert_eq!(total, 1);
+    }
+
+    #[test]
     fn test_ft_field_options() {
         use crate::types::{FtField, FtOnType};
 
