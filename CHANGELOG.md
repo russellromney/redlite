@@ -1,5 +1,70 @@
 # Changelog
 
+## Session 51: JSON Commands - RedisJSON-Compatible (2026-01-18)
+
+**Achievement**: Implemented complete JSON command support with 20 commands and FTS ON JSON integration with JSONPath extraction.
+
+**20 JSON Commands Added** (`crates/redlite/src/db.rs`, `crates/redlite/src/server/mod.rs`):
+
+| Category | Commands |
+|----------|----------|
+| Core | JSON.SET, JSON.GET, JSON.DEL, JSON.MGET, JSON.MSET, JSON.TYPE |
+| Manipulation | JSON.MERGE, JSON.CLEAR, JSON.TOGGLE, JSON.NUMINCRBY |
+| String | JSON.STRAPPEND, JSON.STRLEN |
+| Array | JSON.ARRAPPEND, JSON.ARRINDEX, JSON.ARRINSERT, JSON.ARRLEN, JSON.ARRPOP, JSON.ARRTRIM |
+| Object | JSON.OBJKEYS, JSON.OBJLEN |
+
+**Key Design Decisions**:
+- Storage: Raw JSON bytes in `json_docs.value` BLOB column
+- JSONPath: `serde_json_path` crate (RFC 9535 compliant)
+- Path syntax: Both `$` and `.` root, normalized to JSONPath internally
+- Type: `KeyType::Json = 7` with `as_str() → "ReJSON-RL"` for Redis compatibility
+
+**FTS Integration** (Phase 7):
+- `ft_index_document` branches on key type (HASH vs JSON)
+- `ft_index_json_document` extracts values via JSONPath
+- `ft_search` retrieves JSON document fields correctly
+- Auto-reindex on JSON mutations (SET, MERGE, ARRAPPEND, etc.)
+
+**Tests Added** (772 total tests passing):
+- 15 comprehensive FTS+JSON tests covering:
+  - Basic JSON document indexing and search
+  - Multiple prefix matching
+  - Nested path extraction ($.author.name)
+  - Auto-reindex on updates/deletes
+  - Array mutation reindex
+  - Unicode and special character handling
+
+**Files Modified**:
+- `crates/redlite/Cargo.toml` - Added `serde_json_path = "0.7"`
+- `crates/redlite/src/types.rs` - Added `KeyType::Json = 7`
+- `crates/redlite/src/db.rs` - json_docs table, 20 operations, FTS integration
+- `crates/redlite/src/server/mod.rs` - 20 cmd_json_* handlers + dispatch
+- `docs/src/content/docs/commands/json.md` - New documentation
+
+---
+
+## Session 50: Memory-Based Eviction Complete (2026-01-17)
+
+**Achievement**: Implemented comprehensive memory-based eviction with LRU/LFU/Random policies using efficient in-memory tracking with optional persistence.
+
+**Features**:
+- 8 eviction policies: noeviction, allkeys-lru, allkeys-lfu, allkeys-random, volatile-lru, volatile-lfu, volatile-ttl, volatile-random
+- In-memory access tracking with batched persistence to SQLite
+- Redis-style sampling (5 random keys, pick worst) for O(1) eviction
+- Smart defaults: `:memory:` persists tracking, file-based doesn't (avoid WAL/S3 costs)
+- Vacuum-first strategy: delete expired keys before evicting valid keys
+
+**CONFIG Commands**:
+- `CONFIG SET/GET maxmemory` - Memory limit in bytes
+- `CONFIG SET/GET maxmemory-policy` - Eviction policy
+- `CONFIG SET/GET persist-access-tracking` - Enable/disable persistence
+- `CONFIG SET/GET access-flush-interval` - Flush interval in ms
+
+**Documentation**: `docs/src/content/docs/reference/eviction.md`
+
+---
+
 ## Session 51: CONFIG Commands, Eviction Improvements & Benchmarks (2026-01-17)
 
 **Achievement**: Completed CONFIG command implementation, added vacuum-first eviction strategy, and created comprehensive benchmarks
