@@ -77,9 +77,9 @@ See [CHANGELOG.md](./CHANGELOG.md) for completed features.
 - [x] JSON.ARRPOP - pop from array
 - [x] JSON.ARRTRIM - trim array to range
 
-#### Phase 6: Object Commands
-- [ ] JSON.OBJKEYS - get object keys
-- [ ] JSON.OBJLEN - get object key count
+#### Phase 6: Object Commands - COMPLETE
+- [x] JSON.OBJKEYS - get object keys
+- [x] JSON.OBJLEN - get object key count
 
 #### Phase 7: FTS Integration
 - [ ] Update `ft_index_document` to branch on key type

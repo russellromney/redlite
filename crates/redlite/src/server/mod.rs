@@ -621,6 +621,8 @@ async fn execute_command(
         "JSON.ARRLEN" => cmd_json_arrlen(db, cmd_args),
         "JSON.ARRPOP" => cmd_json_arrpop(db, cmd_args),
         "JSON.ARRTRIM" => cmd_json_arrtrim(db, cmd_args),
+        "JSON.OBJKEYS" => cmd_json_objkeys(db, cmd_args),
+        "JSON.OBJLEN" => cmd_json_objlen(db, cmd_args),
         // RediSearch-compatible commands (Session 23)
         "FT.CREATE" => cmd_ft_create(db, cmd_args),
         "FT.DROPINDEX" => cmd_ft_dropindex(db, cmd_args),
@@ -5381,6 +5383,68 @@ fn cmd_json_arrtrim(db: &Db, args: &[Vec<u8>]) -> RespValue {
     }
 }
 
+/// JSON.OBJKEYS key [path]
+fn cmd_json_objkeys(db: &Db, args: &[Vec<u8>]) -> RespValue {
+    if args.is_empty() || args.len() > 2 {
+        return RespValue::error("wrong number of arguments for 'JSON.OBJKEYS' command");
+    }
+
+    let key = match std::str::from_utf8(&args[0]) {
+        Ok(k) => k,
+        Err(_) => return RespValue::error("invalid key"),
+    };
+
+    let path = if args.len() == 2 {
+        match std::str::from_utf8(&args[1]) {
+            Ok(p) => Some(p),
+            Err(_) => return RespValue::error("invalid path"),
+        }
+    } else {
+        None
+    };
+
+    match db.json_objkeys(key, path) {
+        Ok(Some(keys)) => {
+            let items: Vec<RespValue> = keys
+                .into_iter()
+                .map(|k| RespValue::from_string(k))
+                .collect();
+            RespValue::Array(Some(items))
+        }
+        Ok(None) => RespValue::null(),
+        Err(KvError::WrongType) => RespValue::wrong_type(),
+        Err(e) => RespValue::error(e.to_string()),
+    }
+}
+
+/// JSON.OBJLEN key [path]
+fn cmd_json_objlen(db: &Db, args: &[Vec<u8>]) -> RespValue {
+    if args.is_empty() || args.len() > 2 {
+        return RespValue::error("wrong number of arguments for 'JSON.OBJLEN' command");
+    }
+
+    let key = match std::str::from_utf8(&args[0]) {
+        Ok(k) => k,
+        Err(_) => return RespValue::error("invalid key"),
+    };
+
+    let path = if args.len() == 2 {
+        match std::str::from_utf8(&args[1]) {
+            Ok(p) => Some(p),
+            Err(_) => return RespValue::error("invalid path"),
+        }
+    } else {
+        None
+    };
+
+    match db.json_objlen(key, path) {
+        Ok(Some(len)) => RespValue::Integer(len),
+        Ok(None) => RespValue::null(),
+        Err(KvError::WrongType) => RespValue::wrong_type(),
+        Err(e) => RespValue::error(e.to_string()),
+    }
+}
+
 // --- Session 23: RediSearch-compatible FT.* command handlers ---
 
 use crate::types::{FtField, FtFieldType, FtOnType, FtSearchOptions};
@@ -9221,6 +9285,8 @@ async fn execute_command_in_transaction(db: &mut Db, args: &[Vec<u8>]) -> RespVa
         "JSON.ARRLEN" => cmd_json_arrlen(db, cmd_args),
         "JSON.ARRPOP" => cmd_json_arrpop(db, cmd_args),
         "JSON.ARRTRIM" => cmd_json_arrtrim(db, cmd_args),
+        "JSON.OBJKEYS" => cmd_json_objkeys(db, cmd_args),
+        "JSON.OBJLEN" => cmd_json_objlen(db, cmd_args),
         // RediSearch-compatible commands (Session 23)
         "FT.CREATE" => cmd_ft_create(db, cmd_args),
         "FT.DROPINDEX" => cmd_ft_dropindex(db, cmd_args),

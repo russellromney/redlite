@@ -4681,6 +4681,106 @@ impl Db {
         Err(KvError::NotFound)
     }
 
+    /// JSON.OBJKEYS key [path] - get all keys of a JSON object
+    /// Returns a list of keys, or None if key/path doesn't exist
+    pub fn json_objkeys(&self, key: &str, path: Option<&str>) -> Result<Option<Vec<String>>> {
+        let conn = self.core.conn.lock().unwrap_or_else(|e| e.into_inner());
+
+        let key_id = match self.get_json_key_id(&conn, key)? {
+            Some(kid) => kid,
+            None => return Ok(None),
+        };
+
+        let doc_bytes: Vec<u8> = conn
+            .query_row(
+                "SELECT value FROM json_docs WHERE key_id = ?1",
+                params![key_id],
+                |row| row.get(0),
+            )
+            .optional()?
+            .ok_or(KvError::NotFound)?;
+
+        let doc: JsonValue = serde_json::from_slice(&doc_bytes)
+            .map_err(|_| KvError::SyntaxError)?;
+
+        self.track_access(key_id);
+
+        let normalized = path.map(Self::normalize_json_path).unwrap_or_else(|| "$".to_string());
+
+        if normalized == "$" {
+            if let JsonValue::Object(obj) = &doc {
+                return Ok(Some(obj.keys().cloned().collect()));
+            }
+            return Err(KvError::WrongType);
+        }
+
+        let json_path = Self::parse_json_path(&normalized)?;
+        let results = json_path.query(&doc);
+
+        if results.is_empty() {
+            return Ok(None);
+        }
+
+        if let Some(first) = results.iter().next() {
+            if let JsonValue::Object(obj) = first {
+                return Ok(Some(obj.keys().cloned().collect()));
+            }
+            return Err(KvError::WrongType);
+        }
+
+        Ok(None)
+    }
+
+    /// JSON.OBJLEN key [path] - get the number of keys in a JSON object
+    /// Returns the count, or None if key/path doesn't exist
+    pub fn json_objlen(&self, key: &str, path: Option<&str>) -> Result<Option<i64>> {
+        let conn = self.core.conn.lock().unwrap_or_else(|e| e.into_inner());
+
+        let key_id = match self.get_json_key_id(&conn, key)? {
+            Some(kid) => kid,
+            None => return Ok(None),
+        };
+
+        let doc_bytes: Vec<u8> = conn
+            .query_row(
+                "SELECT value FROM json_docs WHERE key_id = ?1",
+                params![key_id],
+                |row| row.get(0),
+            )
+            .optional()?
+            .ok_or(KvError::NotFound)?;
+
+        let doc: JsonValue = serde_json::from_slice(&doc_bytes)
+            .map_err(|_| KvError::SyntaxError)?;
+
+        self.track_access(key_id);
+
+        let normalized = path.map(Self::normalize_json_path).unwrap_or_else(|| "$".to_string());
+
+        if normalized == "$" {
+            if let JsonValue::Object(obj) = &doc {
+                return Ok(Some(obj.len() as i64));
+            }
+            return Err(KvError::WrongType);
+        }
+
+        let json_path = Self::parse_json_path(&normalized)?;
+        let results = json_path.query(&doc);
+
+        if results.is_empty() {
+            return Ok(None);
+        }
+
+        if let Some(first) = results.iter().next() {
+            if let JsonValue::Object(obj) = first {
+                return Ok(Some(obj.len() as i64));
+            }
+            return Err(KvError::WrongType);
+        }
+
+        Ok(None)
+    }
+
     /// HSET key field value [field value ...] - set hash field(s), returns number of new fields
     pub fn hset(&self, key: &str, pairs: &[(&str, &[u8])]) -> Result<i64> {
         if pairs.is_empty() {
@@ -26430,6 +26530,119 @@ mod tests {
 
         let result = db.json_arrtrim("nonexistent", "$", 0, 1);
         assert!(result.is_err());
+    }
+
+    // --- JSON Object Command Tests ---
+
+    #[test]
+    fn test_json_objkeys_basic() {
+        let db = Db::open_memory().unwrap();
+
+        assert!(db.json_set("obj", "$", r#"{"name":"Alice","age":30,"city":"NYC"}"#, false, false).unwrap());
+        let keys = db.json_objkeys("obj", None).unwrap().unwrap();
+        assert_eq!(keys.len(), 3);
+        assert!(keys.contains(&"name".to_string()));
+        assert!(keys.contains(&"age".to_string()));
+        assert!(keys.contains(&"city".to_string()));
+    }
+
+    #[test]
+    fn test_json_objkeys_with_path() {
+        let db = Db::open_memory().unwrap();
+
+        assert!(db.json_set("obj", "$", r#"{"user":{"name":"Bob","email":"bob@test.com"}}"#, false, false).unwrap());
+        let keys = db.json_objkeys("obj", Some("$.user")).unwrap().unwrap();
+        assert_eq!(keys.len(), 2);
+        assert!(keys.contains(&"name".to_string()));
+        assert!(keys.contains(&"email".to_string()));
+    }
+
+    #[test]
+    fn test_json_objkeys_empty_object() {
+        let db = Db::open_memory().unwrap();
+
+        assert!(db.json_set("obj", "$", r#"{}"#, false, false).unwrap());
+        let keys = db.json_objkeys("obj", None).unwrap().unwrap();
+        assert!(keys.is_empty());
+    }
+
+    #[test]
+    fn test_json_objkeys_non_object() {
+        let db = Db::open_memory().unwrap();
+
+        assert!(db.json_set("arr", "$", r#"[1,2,3]"#, false, false).unwrap());
+        let result = db.json_objkeys("arr", None);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_json_objkeys_nonexistent_key() {
+        let db = Db::open_memory().unwrap();
+
+        let keys = db.json_objkeys("nonexistent", None).unwrap();
+        assert!(keys.is_none());
+    }
+
+    #[test]
+    fn test_json_objkeys_nonexistent_path() {
+        let db = Db::open_memory().unwrap();
+
+        assert!(db.json_set("obj", "$", r#"{"a":1}"#, false, false).unwrap());
+        let keys = db.json_objkeys("obj", Some("$.b")).unwrap();
+        assert!(keys.is_none());
+    }
+
+    #[test]
+    fn test_json_objlen_basic() {
+        let db = Db::open_memory().unwrap();
+
+        assert!(db.json_set("obj", "$", r#"{"a":1,"b":2,"c":3}"#, false, false).unwrap());
+        let len = db.json_objlen("obj", None).unwrap().unwrap();
+        assert_eq!(len, 3);
+    }
+
+    #[test]
+    fn test_json_objlen_with_path() {
+        let db = Db::open_memory().unwrap();
+
+        assert!(db.json_set("obj", "$", r#"{"user":{"name":"Alice","age":25}}"#, false, false).unwrap());
+        let len = db.json_objlen("obj", Some("$.user")).unwrap().unwrap();
+        assert_eq!(len, 2);
+    }
+
+    #[test]
+    fn test_json_objlen_empty_object() {
+        let db = Db::open_memory().unwrap();
+
+        assert!(db.json_set("obj", "$", r#"{}"#, false, false).unwrap());
+        let len = db.json_objlen("obj", None).unwrap().unwrap();
+        assert_eq!(len, 0);
+    }
+
+    #[test]
+    fn test_json_objlen_non_object() {
+        let db = Db::open_memory().unwrap();
+
+        assert!(db.json_set("str", "$", r#""hello""#, false, false).unwrap());
+        let result = db.json_objlen("str", None);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_json_objlen_nonexistent_key() {
+        let db = Db::open_memory().unwrap();
+
+        let len = db.json_objlen("nonexistent", None).unwrap();
+        assert!(len.is_none());
+    }
+
+    #[test]
+    fn test_json_objlen_nonexistent_path() {
+        let db = Db::open_memory().unwrap();
+
+        assert!(db.json_set("obj", "$", r#"{"a":1}"#, false, false).unwrap());
+        let len = db.json_objlen("obj", Some("$.b")).unwrap();
+        assert!(len.is_none());
     }
 
 }
