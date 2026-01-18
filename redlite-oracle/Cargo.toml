@@ -1,0 +1,21 @@
+[package]
+name = "redlite-oracle"
+version = "0.1.0"
+edition = "2021"
+description = "Redis compatibility oracle tests for Redlite"
+license = "Apache-2.0"
+
+[dependencies]
+# Redlite core library
+redlite = { path = "../crates/redlite" }
+
+# Redis client for oracle testing
+redis = "0.27"
+
+# Randomness for property-based testing
+rand = "0.8"
+rand_chacha = "0.3"
+
+[dev-dependencies]
+# Only needed if we add more test utilities later
+tokio = { version = "1", features = ["rt", "rt-multi-thread", "macros", "time"] }

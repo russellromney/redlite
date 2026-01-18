@@ -235,6 +235,32 @@ typedef struct RedliteZMember {
 } RedliteZMember;
 
 /**
+ * KeyInfo result struct
+ */
+typedef struct RedliteKeyInfo {
+  /**
+   * Key type as string (string, list, set, hash, zset, stream, none)
+   */
+  char *key_type;
+  /**
+   * TTL in seconds (-1 if no expiry, -2 if key doesn't exist)
+   */
+  int64_t ttl;
+  /**
+   * Created at timestamp in milliseconds
+   */
+  int64_t created_at;
+  /**
+   * Updated at timestamp in milliseconds
+   */
+  int64_t updated_at;
+  /**
+   * Whether the struct is valid (1) or null (0)
+   */
+  int valid;
+} RedliteKeyInfo;
+
+/**
  * Open a database at the given path
  *
  * Returns NULL on error. Call `redlite_last_error` for details.
@@ -1458,4 +1484,208 @@ int64_t redlite_vacuum(struct RedliteDb *db);
  */
 char *redlite_version(void);
 
-#endif  /* REDLITE_H */
+/**
+ * JSON.SET key path value [NX|XX]
+ * Set JSON value at path. Returns true on success.
+ */
+int redlite_json_set(struct RedliteDb *db,
+                     const char *key,
+                     const char *path,
+                     const char *value,
+                     int nx,
+                     int xx);
+
+/**
+ * JSON.GET key [path...]
+ * Get JSON value at path(s). Returns JSON string or null.
+ */
+char *redlite_json_get(struct RedliteDb *db,
+                       const char *key,
+                       const char *const *paths,
+                       uintptr_t paths_len);
+
+/**
+ * JSON.DEL key [path]
+ * Delete JSON value at path. Returns number of values deleted.
+ */
+int64_t redlite_json_del(struct RedliteDb *db, const char *key, const char *path);
+
+/**
+ * JSON.TYPE key [path]
+ * Get the type of JSON value at path.
+ */
+char *redlite_json_type(struct RedliteDb *db, const char *key, const char *path);
+
+/**
+ * JSON.NUMINCRBY key path increment
+ * Increment numeric value at path. Returns the new value as string.
+ */
+char *redlite_json_numincrby(struct RedliteDb *db,
+                             const char *key,
+                             const char *path,
+                             double increment);
+
+/**
+ * JSON.STRAPPEND key [path] value
+ * Append string to JSON string at path. Returns new length.
+ */
+int64_t redlite_json_strappend(struct RedliteDb *db,
+                               const char *key,
+                               const char *path,
+                               const char *value);
+
+/**
+ * JSON.STRLEN key [path]
+ * Get length of JSON string at path.
+ */
+int64_t redlite_json_strlen(struct RedliteDb *db, const char *key, const char *path);
+
+/**
+ * JSON.ARRAPPEND key path value [value...]
+ * Append values to JSON array. Returns new array length.
+ */
+int64_t redlite_json_arrappend(struct RedliteDb *db,
+                               const char *key,
+                               const char *path,
+                               const char *const *values,
+                               uintptr_t values_len);
+
+/**
+ * JSON.ARRLEN key [path]
+ * Get length of JSON array at path.
+ */
+int64_t redlite_json_arrlen(struct RedliteDb *db, const char *key, const char *path);
+
+/**
+ * JSON.ARRPOP key [path [index]]
+ * Pop element from JSON array. Returns the popped element as JSON string.
+ */
+char *redlite_json_arrpop(struct RedliteDb *db,
+                          const char *key,
+                          const char *path,
+                          int64_t index,
+                          int use_index);
+
+/**
+ * JSON.CLEAR key [path]
+ * Clear container values (arrays/objects). Returns count of cleared values.
+ */
+int64_t redlite_json_clear(struct RedliteDb *db, const char *key, const char *path);
+
+/**
+ * HISTORY ENABLE GLOBAL [retention_type] [retention_value]
+ * Enable history tracking globally.
+ * retention_type: 0=Unlimited, 1=Time(ms), 2=Count
+ */
+int redlite_history_enable_global(struct RedliteDb *db,
+                                  int retention_type,
+                                  int64_t retention_value);
+
+/**
+ * HISTORY ENABLE DATABASE db_num [retention_type] [retention_value]
+ * Enable history tracking for a specific database.
+ */
+int redlite_history_enable_database(struct RedliteDb *db,
+                                    int db_num,
+                                    int retention_type,
+                                    int64_t retention_value);
+
+/**
+ * HISTORY ENABLE KEY key [retention_type] [retention_value]
+ * Enable history tracking for a specific key.
+ */
+int redlite_history_enable_key(struct RedliteDb *db,
+                               const char *key,
+                               int retention_type,
+                               int64_t retention_value);
+
+/**
+ * HISTORY DISABLE GLOBAL
+ * Disable history tracking globally.
+ */
+int redlite_history_disable_global(struct RedliteDb *db);
+
+/**
+ * HISTORY DISABLE DATABASE db_num
+ * Disable history tracking for a specific database.
+ */
+int redlite_history_disable_database(struct RedliteDb *db, int db_num);
+
+/**
+ * HISTORY DISABLE KEY key
+ * Disable history tracking for a specific key.
+ */
+int redlite_history_disable_key(struct RedliteDb *db, const char *key);
+
+/**
+ * Check if history is enabled for a key
+ * Returns: 1 if enabled, 0 if disabled, -1 on error
+ */
+int redlite_is_history_enabled(struct RedliteDb *db, const char *key);
+
+/**
+ * FTS ENABLE GLOBAL
+ * Enable full-text search indexing globally.
+ */
+int redlite_fts_enable_global(struct RedliteDb *db);
+
+/**
+ * FTS ENABLE DATABASE db_num
+ * Enable full-text search indexing for a specific database.
+ */
+int redlite_fts_enable_database(struct RedliteDb *db, int db_num);
+
+/**
+ * FTS ENABLE PATTERN pattern
+ * Enable full-text search indexing for keys matching a pattern.
+ */
+int redlite_fts_enable_pattern(struct RedliteDb *db, const char *pattern);
+
+/**
+ * FTS ENABLE KEY key
+ * Enable full-text search indexing for a specific key.
+ */
+int redlite_fts_enable_key(struct RedliteDb *db, const char *key);
+
+/**
+ * FTS DISABLE GLOBAL
+ * Disable full-text search indexing globally.
+ */
+int redlite_fts_disable_global(struct RedliteDb *db);
+
+/**
+ * FTS DISABLE DATABASE db_num
+ * Disable full-text search indexing for a specific database.
+ */
+int redlite_fts_disable_database(struct RedliteDb *db, int db_num);
+
+/**
+ * FTS DISABLE PATTERN pattern
+ * Disable full-text search indexing for keys matching a pattern.
+ */
+int redlite_fts_disable_pattern(struct RedliteDb *db, const char *pattern);
+
+/**
+ * FTS DISABLE KEY key
+ * Disable full-text search indexing for a specific key.
+ */
+int redlite_fts_disable_key(struct RedliteDb *db, const char *key);
+
+/**
+ * Check if FTS is enabled for a key
+ * Returns: 1 if enabled, 0 if disabled, -1 on error
+ */
+int redlite_is_fts_enabled(struct RedliteDb *db, const char *key);
+
+/**
+ * Free a KeyInfo result
+ */
+void redlite_free_keyinfo(struct RedliteKeyInfo info);
+
+/**
+ * KEYINFO key
+ * Get detailed information about a key.
+ */
+struct RedliteKeyInfo redlite_keyinfo(struct RedliteDb *db, const char *key);
+
+#endif /* REDLITE_H */

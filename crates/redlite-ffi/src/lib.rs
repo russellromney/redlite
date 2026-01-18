@@ -1271,6 +1271,7 @@ pub extern "C" fn redlite_type(db: *mut RedliteDb, key: *const c_char) -> *mut c
                 redlite::KeyType::ZSet => "zset",
                 redlite::KeyType::Hash => "hash",
                 redlite::KeyType::Stream => "stream",
+                redlite::KeyType::Json => "ReJSON-RL",
             };
             CString::new(type_str).unwrap().into_raw()
         }
@@ -6433,4 +6434,966 @@ pub extern "C" fn redlite_vacuum(db: *mut RedliteDb) -> i64 {
 #[no_mangle]
 pub extern "C" fn redlite_version() -> *mut c_char {
     CString::new(env!("CARGO_PKG_VERSION")).unwrap().into_raw()
+}
+
+// =============================================================================
+// JSON Commands
+// =============================================================================
+
+/// JSON.SET key path value [NX|XX]
+/// Set JSON value at path. Returns true on success.
+#[no_mangle]
+pub extern "C" fn redlite_json_set(
+    db: *mut RedliteDb,
+    key: *const c_char,
+    path: *const c_char,
+    value: *const c_char,
+    nx: c_int,
+    xx: c_int,
+) -> c_int {
+    clear_error();
+    let handle = get_db_ret!(db, -1);
+
+    let key_str = match cstr_to_str(key) {
+        Ok(s) => s,
+        Err(e) => {
+            set_error(e);
+            return -1;
+        }
+    };
+    let path_str = match cstr_to_str(path) {
+        Ok(s) => s,
+        Err(e) => {
+            set_error(e);
+            return -1;
+        }
+    };
+    let value_str = match cstr_to_str(value) {
+        Ok(s) => s,
+        Err(e) => {
+            set_error(e);
+            return -1;
+        }
+    };
+
+    let guard = handle.db.lock().unwrap();
+    match guard.json_set(key_str, path_str, value_str, nx != 0, xx != 0) {
+        Ok(true) => 1,
+        Ok(false) => 0,
+        Err(e) => {
+            set_error(format!("JSON.SET failed: {}", e));
+            -1
+        }
+    }
+}
+
+/// JSON.GET key [path...]
+/// Get JSON value at path(s). Returns JSON string or null.
+#[no_mangle]
+pub extern "C" fn redlite_json_get(
+    db: *mut RedliteDb,
+    key: *const c_char,
+    paths: *const *const c_char,
+    paths_len: usize,
+) -> *mut c_char {
+    clear_error();
+    let handle = get_db_ret!(db, ptr::null_mut());
+
+    let key_str = match cstr_to_str(key) {
+        Ok(s) => s,
+        Err(e) => {
+            set_error(e);
+            return ptr::null_mut();
+        }
+    };
+
+    let path_vec: Vec<&str> = if paths.is_null() || paths_len == 0 {
+        vec!["$"]
+    } else {
+        let slice = unsafe { std::slice::from_raw_parts(paths, paths_len) };
+        let mut v = Vec::with_capacity(paths_len);
+        for &p in slice {
+            match cstr_to_str(p) {
+                Ok(s) => v.push(s),
+                Err(e) => {
+                    set_error(e);
+                    return ptr::null_mut();
+                }
+            }
+        }
+        v
+    };
+
+    let guard = handle.db.lock().unwrap();
+    match guard.json_get(key_str, &path_vec) {
+        Ok(Some(s)) => CString::new(s).unwrap().into_raw(),
+        Ok(None) => ptr::null_mut(),
+        Err(e) => {
+            set_error(format!("JSON.GET failed: {}", e));
+            ptr::null_mut()
+        }
+    }
+}
+
+/// JSON.DEL key [path]
+/// Delete JSON value at path. Returns number of values deleted.
+#[no_mangle]
+pub extern "C" fn redlite_json_del(
+    db: *mut RedliteDb,
+    key: *const c_char,
+    path: *const c_char,
+) -> i64 {
+    clear_error();
+    let handle = get_db_ret!(db, -1);
+
+    let key_str = match cstr_to_str(key) {
+        Ok(s) => s,
+        Err(e) => {
+            set_error(e);
+            return -1;
+        }
+    };
+    let path_opt = if path.is_null() {
+        None
+    } else {
+        match cstr_to_str(path) {
+            Ok(s) => Some(s),
+            Err(e) => {
+                set_error(e);
+                return -1;
+            }
+        }
+    };
+
+    let guard = handle.db.lock().unwrap();
+    match guard.json_del(key_str, path_opt) {
+        Ok(n) => n,
+        Err(e) => {
+            set_error(format!("JSON.DEL failed: {}", e));
+            -1
+        }
+    }
+}
+
+/// JSON.TYPE key [path]
+/// Get the type of JSON value at path.
+#[no_mangle]
+pub extern "C" fn redlite_json_type(
+    db: *mut RedliteDb,
+    key: *const c_char,
+    path: *const c_char,
+) -> *mut c_char {
+    clear_error();
+    let handle = get_db_ret!(db, ptr::null_mut());
+
+    let key_str = match cstr_to_str(key) {
+        Ok(s) => s,
+        Err(e) => {
+            set_error(e);
+            return ptr::null_mut();
+        }
+    };
+    let path_opt = if path.is_null() {
+        None
+    } else {
+        match cstr_to_str(path) {
+            Ok(s) => Some(s),
+            Err(e) => {
+                set_error(e);
+                return ptr::null_mut();
+            }
+        }
+    };
+
+    let guard = handle.db.lock().unwrap();
+    match guard.json_type(key_str, path_opt) {
+        Ok(Some(s)) => CString::new(s).unwrap().into_raw(),
+        Ok(None) => ptr::null_mut(),
+        Err(e) => {
+            set_error(format!("JSON.TYPE failed: {}", e));
+            ptr::null_mut()
+        }
+    }
+}
+
+/// JSON.NUMINCRBY key path increment
+/// Increment numeric value at path. Returns the new value as string.
+#[no_mangle]
+pub extern "C" fn redlite_json_numincrby(
+    db: *mut RedliteDb,
+    key: *const c_char,
+    path: *const c_char,
+    increment: f64,
+) -> *mut c_char {
+    clear_error();
+    let handle = get_db_ret!(db, ptr::null_mut());
+
+    let key_str = match cstr_to_str(key) {
+        Ok(s) => s,
+        Err(e) => {
+            set_error(e);
+            return ptr::null_mut();
+        }
+    };
+    let path_str = match cstr_to_str(path) {
+        Ok(s) => s,
+        Err(e) => {
+            set_error(e);
+            return ptr::null_mut();
+        }
+    };
+
+    let guard = handle.db.lock().unwrap();
+    match guard.json_numincrby(key_str, path_str, increment) {
+        Ok(s) => CString::new(s).unwrap().into_raw(),
+        Err(e) => {
+            set_error(format!("JSON.NUMINCRBY failed: {}", e));
+            ptr::null_mut()
+        }
+    }
+}
+
+/// JSON.STRAPPEND key [path] value
+/// Append string to JSON string at path. Returns new length.
+#[no_mangle]
+pub extern "C" fn redlite_json_strappend(
+    db: *mut RedliteDb,
+    key: *const c_char,
+    path: *const c_char,
+    value: *const c_char,
+) -> i64 {
+    clear_error();
+    let handle = get_db_ret!(db, -1);
+
+    let key_str = match cstr_to_str(key) {
+        Ok(s) => s,
+        Err(e) => {
+            set_error(e);
+            return -1;
+        }
+    };
+    let path_opt = if path.is_null() {
+        None
+    } else {
+        match cstr_to_str(path) {
+            Ok(s) => Some(s),
+            Err(e) => {
+                set_error(e);
+                return -1;
+            }
+        }
+    };
+    let value_str = match cstr_to_str(value) {
+        Ok(s) => s,
+        Err(e) => {
+            set_error(e);
+            return -1;
+        }
+    };
+
+    let guard = handle.db.lock().unwrap();
+    match guard.json_strappend(key_str, path_opt, value_str) {
+        Ok(n) => n,
+        Err(e) => {
+            set_error(format!("JSON.STRAPPEND failed: {}", e));
+            -1
+        }
+    }
+}
+
+/// JSON.STRLEN key [path]
+/// Get length of JSON string at path.
+#[no_mangle]
+pub extern "C" fn redlite_json_strlen(
+    db: *mut RedliteDb,
+    key: *const c_char,
+    path: *const c_char,
+) -> i64 {
+    clear_error();
+    let handle = get_db_ret!(db, -1);
+
+    let key_str = match cstr_to_str(key) {
+        Ok(s) => s,
+        Err(e) => {
+            set_error(e);
+            return -1;
+        }
+    };
+    let path_opt = if path.is_null() {
+        None
+    } else {
+        match cstr_to_str(path) {
+            Ok(s) => Some(s),
+            Err(e) => {
+                set_error(e);
+                return -1;
+            }
+        }
+    };
+
+    let guard = handle.db.lock().unwrap();
+    match guard.json_strlen(key_str, path_opt) {
+        Ok(Some(n)) => n,
+        Ok(None) => -2, // Indicates null/not found (different from error)
+        Err(e) => {
+            set_error(format!("JSON.STRLEN failed: {}", e));
+            -1
+        }
+    }
+}
+
+/// JSON.ARRAPPEND key path value [value...]
+/// Append values to JSON array. Returns new array length.
+#[no_mangle]
+pub extern "C" fn redlite_json_arrappend(
+    db: *mut RedliteDb,
+    key: *const c_char,
+    path: *const c_char,
+    values: *const *const c_char,
+    values_len: usize,
+) -> i64 {
+    clear_error();
+    let handle = get_db_ret!(db, -1);
+
+    let key_str = match cstr_to_str(key) {
+        Ok(s) => s,
+        Err(e) => {
+            set_error(e);
+            return -1;
+        }
+    };
+    let path_str = match cstr_to_str(path) {
+        Ok(s) => s,
+        Err(e) => {
+            set_error(e);
+            return -1;
+        }
+    };
+
+    if values.is_null() || values_len == 0 {
+        set_error("JSON.ARRAPPEND requires at least one value".to_string());
+        return -1;
+    }
+
+    let slice = unsafe { std::slice::from_raw_parts(values, values_len) };
+    let mut value_vec = Vec::with_capacity(values_len);
+    for &v in slice {
+        match cstr_to_str(v) {
+            Ok(s) => value_vec.push(s),
+            Err(e) => {
+                set_error(e);
+                return -1;
+            }
+        }
+    }
+
+    let guard = handle.db.lock().unwrap();
+    match guard.json_arrappend(key_str, path_str, &value_vec) {
+        Ok(n) => n,
+        Err(e) => {
+            set_error(format!("JSON.ARRAPPEND failed: {}", e));
+            -1
+        }
+    }
+}
+
+/// JSON.ARRLEN key [path]
+/// Get length of JSON array at path.
+#[no_mangle]
+pub extern "C" fn redlite_json_arrlen(
+    db: *mut RedliteDb,
+    key: *const c_char,
+    path: *const c_char,
+) -> i64 {
+    clear_error();
+    let handle = get_db_ret!(db, -1);
+
+    let key_str = match cstr_to_str(key) {
+        Ok(s) => s,
+        Err(e) => {
+            set_error(e);
+            return -1;
+        }
+    };
+    let path_opt = if path.is_null() {
+        None
+    } else {
+        match cstr_to_str(path) {
+            Ok(s) => Some(s),
+            Err(e) => {
+                set_error(e);
+                return -1;
+            }
+        }
+    };
+
+    let guard = handle.db.lock().unwrap();
+    match guard.json_arrlen(key_str, path_opt) {
+        Ok(Some(n)) => n,
+        Ok(None) => -2,
+        Err(e) => {
+            set_error(format!("JSON.ARRLEN failed: {}", e));
+            -1
+        }
+    }
+}
+
+/// JSON.ARRPOP key [path [index]]
+/// Pop element from JSON array. Returns the popped element as JSON string.
+#[no_mangle]
+pub extern "C" fn redlite_json_arrpop(
+    db: *mut RedliteDb,
+    key: *const c_char,
+    path: *const c_char,
+    index: i64,
+    use_index: c_int,
+) -> *mut c_char {
+    clear_error();
+    let handle = get_db_ret!(db, ptr::null_mut());
+
+    let key_str = match cstr_to_str(key) {
+        Ok(s) => s,
+        Err(e) => {
+            set_error(e);
+            return ptr::null_mut();
+        }
+    };
+    let path_opt = if path.is_null() {
+        None
+    } else {
+        match cstr_to_str(path) {
+            Ok(s) => Some(s),
+            Err(e) => {
+                set_error(e);
+                return ptr::null_mut();
+            }
+        }
+    };
+    let index_opt = if use_index != 0 { Some(index) } else { None };
+
+    let guard = handle.db.lock().unwrap();
+    match guard.json_arrpop(key_str, path_opt, index_opt) {
+        Ok(Some(s)) => CString::new(s).unwrap().into_raw(),
+        Ok(None) => ptr::null_mut(),
+        Err(e) => {
+            set_error(format!("JSON.ARRPOP failed: {}", e));
+            ptr::null_mut()
+        }
+    }
+}
+
+/// JSON.CLEAR key [path]
+/// Clear container values (arrays/objects). Returns count of cleared values.
+#[no_mangle]
+pub extern "C" fn redlite_json_clear(
+    db: *mut RedliteDb,
+    key: *const c_char,
+    path: *const c_char,
+) -> i64 {
+    clear_error();
+    let handle = get_db_ret!(db, -1);
+
+    let key_str = match cstr_to_str(key) {
+        Ok(s) => s,
+        Err(e) => {
+            set_error(e);
+            return -1;
+        }
+    };
+    let path_opt = if path.is_null() {
+        None
+    } else {
+        match cstr_to_str(path) {
+            Ok(s) => Some(s),
+            Err(e) => {
+                set_error(e);
+                return -1;
+            }
+        }
+    };
+
+    let guard = handle.db.lock().unwrap();
+    match guard.json_clear(key_str, path_opt) {
+        Ok(n) => n,
+        Err(e) => {
+            set_error(format!("JSON.CLEAR failed: {}", e));
+            -1
+        }
+    }
+}
+
+// =============================================================================
+// History Enable/Disable Commands
+// =============================================================================
+
+/// HISTORY ENABLE GLOBAL [retention_type] [retention_value]
+/// Enable history tracking globally.
+/// retention_type: 0=Unlimited, 1=Time(ms), 2=Count
+#[no_mangle]
+pub extern "C" fn redlite_history_enable_global(
+    db: *mut RedliteDb,
+    retention_type: c_int,
+    retention_value: i64,
+) -> c_int {
+    clear_error();
+    let handle = get_db_ret!(db, -1);
+
+    let retention = match retention_type {
+        0 => redlite::RetentionType::Unlimited,
+        1 => redlite::RetentionType::Time(retention_value),
+        2 => redlite::RetentionType::Count(retention_value),
+        _ => {
+            set_error("Invalid retention type (0=Unlimited, 1=Time, 2=Count)".to_string());
+            return -1;
+        }
+    };
+
+    let guard = handle.db.lock().unwrap();
+    match guard.history_enable_global(retention) {
+        Ok(()) => 0,
+        Err(e) => {
+            set_error(format!("HISTORY ENABLE GLOBAL failed: {}", e));
+            -1
+        }
+    }
+}
+
+/// HISTORY ENABLE DATABASE db_num [retention_type] [retention_value]
+/// Enable history tracking for a specific database.
+#[no_mangle]
+pub extern "C" fn redlite_history_enable_database(
+    db: *mut RedliteDb,
+    db_num: c_int,
+    retention_type: c_int,
+    retention_value: i64,
+) -> c_int {
+    clear_error();
+    let handle = get_db_ret!(db, -1);
+
+    let retention = match retention_type {
+        0 => redlite::RetentionType::Unlimited,
+        1 => redlite::RetentionType::Time(retention_value),
+        2 => redlite::RetentionType::Count(retention_value),
+        _ => {
+            set_error("Invalid retention type".to_string());
+            return -1;
+        }
+    };
+
+    let guard = handle.db.lock().unwrap();
+    match guard.history_enable_database(db_num, retention) {
+        Ok(()) => 0,
+        Err(e) => {
+            set_error(format!("HISTORY ENABLE DATABASE failed: {}", e));
+            -1
+        }
+    }
+}
+
+/// HISTORY ENABLE KEY key [retention_type] [retention_value]
+/// Enable history tracking for a specific key.
+#[no_mangle]
+pub extern "C" fn redlite_history_enable_key(
+    db: *mut RedliteDb,
+    key: *const c_char,
+    retention_type: c_int,
+    retention_value: i64,
+) -> c_int {
+    clear_error();
+    let handle = get_db_ret!(db, -1);
+
+    let key_str = match cstr_to_str(key) {
+        Ok(s) => s,
+        Err(e) => {
+            set_error(e);
+            return -1;
+        }
+    };
+
+    let retention = match retention_type {
+        0 => redlite::RetentionType::Unlimited,
+        1 => redlite::RetentionType::Time(retention_value),
+        2 => redlite::RetentionType::Count(retention_value),
+        _ => {
+            set_error("Invalid retention type".to_string());
+            return -1;
+        }
+    };
+
+    let guard = handle.db.lock().unwrap();
+    match guard.history_enable_key(key_str, retention) {
+        Ok(()) => 0,
+        Err(e) => {
+            set_error(format!("HISTORY ENABLE KEY failed: {}", e));
+            -1
+        }
+    }
+}
+
+/// HISTORY DISABLE GLOBAL
+/// Disable history tracking globally.
+#[no_mangle]
+pub extern "C" fn redlite_history_disable_global(db: *mut RedliteDb) -> c_int {
+    clear_error();
+    let handle = get_db_ret!(db, -1);
+
+    let guard = handle.db.lock().unwrap();
+    match guard.history_disable_global() {
+        Ok(()) => 0,
+        Err(e) => {
+            set_error(format!("HISTORY DISABLE GLOBAL failed: {}", e));
+            -1
+        }
+    }
+}
+
+/// HISTORY DISABLE DATABASE db_num
+/// Disable history tracking for a specific database.
+#[no_mangle]
+pub extern "C" fn redlite_history_disable_database(db: *mut RedliteDb, db_num: c_int) -> c_int {
+    clear_error();
+    let handle = get_db_ret!(db, -1);
+
+    let guard = handle.db.lock().unwrap();
+    match guard.history_disable_database(db_num) {
+        Ok(()) => 0,
+        Err(e) => {
+            set_error(format!("HISTORY DISABLE DATABASE failed: {}", e));
+            -1
+        }
+    }
+}
+
+/// HISTORY DISABLE KEY key
+/// Disable history tracking for a specific key.
+#[no_mangle]
+pub extern "C" fn redlite_history_disable_key(db: *mut RedliteDb, key: *const c_char) -> c_int {
+    clear_error();
+    let handle = get_db_ret!(db, -1);
+
+    let key_str = match cstr_to_str(key) {
+        Ok(s) => s,
+        Err(e) => {
+            set_error(e);
+            return -1;
+        }
+    };
+
+    let guard = handle.db.lock().unwrap();
+    match guard.history_disable_key(key_str) {
+        Ok(()) => 0,
+        Err(e) => {
+            set_error(format!("HISTORY DISABLE KEY failed: {}", e));
+            -1
+        }
+    }
+}
+
+/// Check if history is enabled for a key
+/// Returns: 1 if enabled, 0 if disabled, -1 on error
+#[no_mangle]
+pub extern "C" fn redlite_is_history_enabled(db: *mut RedliteDb, key: *const c_char) -> c_int {
+    clear_error();
+    let handle = get_db_ret!(db, -1);
+
+    let key_str = match cstr_to_str(key) {
+        Ok(s) => s,
+        Err(e) => {
+            set_error(e);
+            return -1;
+        }
+    };
+
+    let guard = handle.db.lock().unwrap();
+    match guard.is_history_enabled(key_str) {
+        Ok(true) => 1,
+        Ok(false) => 0,
+        Err(e) => {
+            set_error(format!("IS_HISTORY_ENABLED failed: {}", e));
+            -1
+        }
+    }
+}
+
+// =============================================================================
+// FTS Enable/Disable Commands
+// =============================================================================
+
+/// FTS ENABLE GLOBAL
+/// Enable full-text search indexing globally.
+#[no_mangle]
+pub extern "C" fn redlite_fts_enable_global(db: *mut RedliteDb) -> c_int {
+    clear_error();
+    let handle = get_db_ret!(db, -1);
+
+    let guard = handle.db.lock().unwrap();
+    match guard.fts_enable_global() {
+        Ok(()) => 0,
+        Err(e) => {
+            set_error(format!("FTS ENABLE GLOBAL failed: {}", e));
+            -1
+        }
+    }
+}
+
+/// FTS ENABLE DATABASE db_num
+/// Enable full-text search indexing for a specific database.
+#[no_mangle]
+pub extern "C" fn redlite_fts_enable_database(db: *mut RedliteDb, db_num: c_int) -> c_int {
+    clear_error();
+    let handle = get_db_ret!(db, -1);
+
+    let guard = handle.db.lock().unwrap();
+    match guard.fts_enable_database(db_num) {
+        Ok(()) => 0,
+        Err(e) => {
+            set_error(format!("FTS ENABLE DATABASE failed: {}", e));
+            -1
+        }
+    }
+}
+
+/// FTS ENABLE PATTERN pattern
+/// Enable full-text search indexing for keys matching a pattern.
+#[no_mangle]
+pub extern "C" fn redlite_fts_enable_pattern(db: *mut RedliteDb, pattern: *const c_char) -> c_int {
+    clear_error();
+    let handle = get_db_ret!(db, -1);
+
+    let pattern_str = match cstr_to_str(pattern) {
+        Ok(s) => s,
+        Err(e) => {
+            set_error(e);
+            return -1;
+        }
+    };
+
+    let guard = handle.db.lock().unwrap();
+    match guard.fts_enable_pattern(pattern_str) {
+        Ok(()) => 0,
+        Err(e) => {
+            set_error(format!("FTS ENABLE PATTERN failed: {}", e));
+            -1
+        }
+    }
+}
+
+/// FTS ENABLE KEY key
+/// Enable full-text search indexing for a specific key.
+#[no_mangle]
+pub extern "C" fn redlite_fts_enable_key(db: *mut RedliteDb, key: *const c_char) -> c_int {
+    clear_error();
+    let handle = get_db_ret!(db, -1);
+
+    let key_str = match cstr_to_str(key) {
+        Ok(s) => s,
+        Err(e) => {
+            set_error(e);
+            return -1;
+        }
+    };
+
+    let guard = handle.db.lock().unwrap();
+    match guard.fts_enable_key(key_str) {
+        Ok(()) => 0,
+        Err(e) => {
+            set_error(format!("FTS ENABLE KEY failed: {}", e));
+            -1
+        }
+    }
+}
+
+/// FTS DISABLE GLOBAL
+/// Disable full-text search indexing globally.
+#[no_mangle]
+pub extern "C" fn redlite_fts_disable_global(db: *mut RedliteDb) -> c_int {
+    clear_error();
+    let handle = get_db_ret!(db, -1);
+
+    let guard = handle.db.lock().unwrap();
+    match guard.fts_disable_global() {
+        Ok(()) => 0,
+        Err(e) => {
+            set_error(format!("FTS DISABLE GLOBAL failed: {}", e));
+            -1
+        }
+    }
+}
+
+/// FTS DISABLE DATABASE db_num
+/// Disable full-text search indexing for a specific database.
+#[no_mangle]
+pub extern "C" fn redlite_fts_disable_database(db: *mut RedliteDb, db_num: c_int) -> c_int {
+    clear_error();
+    let handle = get_db_ret!(db, -1);
+
+    let guard = handle.db.lock().unwrap();
+    match guard.fts_disable_database(db_num) {
+        Ok(()) => 0,
+        Err(e) => {
+            set_error(format!("FTS DISABLE DATABASE failed: {}", e));
+            -1
+        }
+    }
+}
+
+/// FTS DISABLE PATTERN pattern
+/// Disable full-text search indexing for keys matching a pattern.
+#[no_mangle]
+pub extern "C" fn redlite_fts_disable_pattern(db: *mut RedliteDb, pattern: *const c_char) -> c_int {
+    clear_error();
+    let handle = get_db_ret!(db, -1);
+
+    let pattern_str = match cstr_to_str(pattern) {
+        Ok(s) => s,
+        Err(e) => {
+            set_error(e);
+            return -1;
+        }
+    };
+
+    let guard = handle.db.lock().unwrap();
+    match guard.fts_disable_pattern(pattern_str) {
+        Ok(()) => 0,
+        Err(e) => {
+            set_error(format!("FTS DISABLE PATTERN failed: {}", e));
+            -1
+        }
+    }
+}
+
+/// FTS DISABLE KEY key
+/// Disable full-text search indexing for a specific key.
+#[no_mangle]
+pub extern "C" fn redlite_fts_disable_key(db: *mut RedliteDb, key: *const c_char) -> c_int {
+    clear_error();
+    let handle = get_db_ret!(db, -1);
+
+    let key_str = match cstr_to_str(key) {
+        Ok(s) => s,
+        Err(e) => {
+            set_error(e);
+            return -1;
+        }
+    };
+
+    let guard = handle.db.lock().unwrap();
+    match guard.fts_disable_key(key_str) {
+        Ok(()) => 0,
+        Err(e) => {
+            set_error(format!("FTS DISABLE KEY failed: {}", e));
+            -1
+        }
+    }
+}
+
+/// Check if FTS is enabled for a key
+/// Returns: 1 if enabled, 0 if disabled, -1 on error
+#[no_mangle]
+pub extern "C" fn redlite_is_fts_enabled(db: *mut RedliteDb, key: *const c_char) -> c_int {
+    clear_error();
+    let handle = get_db_ret!(db, -1);
+
+    let key_str = match cstr_to_str(key) {
+        Ok(s) => s,
+        Err(e) => {
+            set_error(e);
+            return -1;
+        }
+    };
+
+    let guard = handle.db.lock().unwrap();
+    match guard.is_fts_enabled(key_str) {
+        Ok(true) => 1,
+        Ok(false) => 0,
+        Err(e) => {
+            set_error(format!("IS_FTS_ENABLED failed: {}", e));
+            -1
+        }
+    }
+}
+
+// =============================================================================
+// KeyInfo Command
+// =============================================================================
+
+/// KeyInfo result struct
+#[repr(C)]
+pub struct RedliteKeyInfo {
+    /// Key type as string (string, list, set, hash, zset, stream, none)
+    pub key_type: *mut c_char,
+    /// TTL in seconds (-1 if no expiry, -2 if key doesn't exist)
+    pub ttl: i64,
+    /// Created at timestamp in milliseconds
+    pub created_at: i64,
+    /// Updated at timestamp in milliseconds
+    pub updated_at: i64,
+    /// Whether the struct is valid (1) or null (0)
+    pub valid: c_int,
+}
+
+/// Free a KeyInfo result
+#[no_mangle]
+pub extern "C" fn redlite_free_keyinfo(info: RedliteKeyInfo) {
+    if !info.key_type.is_null() {
+        unsafe { drop(CString::from_raw(info.key_type)); }
+    }
+}
+
+/// KEYINFO key
+/// Get detailed information about a key.
+#[no_mangle]
+pub extern "C" fn redlite_keyinfo(db: *mut RedliteDb, key: *const c_char) -> RedliteKeyInfo {
+    clear_error();
+
+    let null_result = RedliteKeyInfo {
+        key_type: ptr::null_mut(),
+        ttl: -2,
+        created_at: 0,
+        updated_at: 0,
+        valid: 0,
+    };
+
+    let handle = match unsafe { db.as_ref() } {
+        Some(h) => h,
+        None => {
+            set_error("Invalid database handle".to_string());
+            return null_result;
+        }
+    };
+
+    let key_str = match cstr_to_str(key) {
+        Ok(s) => s,
+        Err(e) => {
+            set_error(e);
+            return null_result;
+        }
+    };
+
+    let guard = handle.db.lock().unwrap();
+    match guard.keyinfo(key_str) {
+        Ok(Some(info)) => {
+            let type_str = match info.key_type {
+                redlite::KeyType::String => "string",
+                redlite::KeyType::List => "list",
+                redlite::KeyType::Set => "set",
+                redlite::KeyType::Hash => "hash",
+                redlite::KeyType::ZSet => "zset",
+                redlite::KeyType::Stream => "stream",
+                redlite::KeyType::Json => "ReJSON-RL",
+            };
+            RedliteKeyInfo {
+                key_type: CString::new(type_str).unwrap().into_raw(),
+                ttl: info.ttl,
+                created_at: info.created_at,
+                updated_at: info.updated_at,
+                valid: 1,
+            }
+        }
+        Ok(None) => null_result,
+        Err(e) => {
+            set_error(format!("KEYINFO failed: {}", e));
+            null_result
+        }
+    }
 }

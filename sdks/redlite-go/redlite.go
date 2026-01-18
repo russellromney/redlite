@@ -59,6 +59,9 @@ type Redlite struct {
 	// Geo provides geospatial commands with a Pythonic API
 	Geo *GeoNamespace
 
+	// JSON provides ReJSON-compatible JSON commands
+	JSON *JSONNamespace
+
 	// embedded server management
 	embeddedCmd  *exec.Cmd
 	embeddedPort int
@@ -208,6 +211,7 @@ func newRedlite(client *redis.Client, cmd *exec.Cmd, port int) *Redlite {
 	r.History = &HistoryNamespace{client: r}
 	r.Vector = &VectorNamespace{client: r}
 	r.Geo = &GeoNamespace{client: r}
+	r.JSON = &JSONNamespace{client: r}
 	return r
 }
 
