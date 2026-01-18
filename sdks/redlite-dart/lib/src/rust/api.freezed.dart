@@ -15,6 +15,190 @@ final _privateConstructorUsedError = UnsupportedError(
     'It seems like you constructed your class using `MyClass._()`. This constructor is only meant to be used by freezed and you are not supposed to need it nor use it.\nPlease check the documentation here for more information: https://github.com/rrousselGit/freezed#adding-getters-and-methods-to-our-models');
 
 /// @nodoc
+mixin _$KeyInfo {
+  KeyType get keyType => throw _privateConstructorUsedError;
+  int get ttl => throw _privateConstructorUsedError;
+  int get createdAt => throw _privateConstructorUsedError;
+  int get updatedAt => throw _privateConstructorUsedError;
+
+  /// Create a copy of KeyInfo
+  /// with the given fields replaced by the non-null parameter values.
+  @JsonKey(includeFromJson: false, includeToJson: false)
+  $KeyInfoCopyWith<KeyInfo> get copyWith => throw _privateConstructorUsedError;
+}
+
+/// @nodoc
+abstract class $KeyInfoCopyWith<$Res> {
+  factory $KeyInfoCopyWith(KeyInfo value, $Res Function(KeyInfo) then) =
+      _$KeyInfoCopyWithImpl<$Res, KeyInfo>;
+  @useResult
+  $Res call({KeyType keyType, int ttl, int createdAt, int updatedAt});
+}
+
+/// @nodoc
+class _$KeyInfoCopyWithImpl<$Res, $Val extends KeyInfo>
+    implements $KeyInfoCopyWith<$Res> {
+  _$KeyInfoCopyWithImpl(this._value, this._then);
+
+  // ignore: unused_field
+  final $Val _value;
+  // ignore: unused_field
+  final $Res Function($Val) _then;
+
+  /// Create a copy of KeyInfo
+  /// with the given fields replaced by the non-null parameter values.
+  @pragma('vm:prefer-inline')
+  @override
+  $Res call({
+    Object? keyType = null,
+    Object? ttl = null,
+    Object? createdAt = null,
+    Object? updatedAt = null,
+  }) {
+    return _then(_value.copyWith(
+      keyType: null == keyType
+          ? _value.keyType
+          : keyType // ignore: cast_nullable_to_non_nullable
+              as KeyType,
+      ttl: null == ttl
+          ? _value.ttl
+          : ttl // ignore: cast_nullable_to_non_nullable
+              as int,
+      createdAt: null == createdAt
+          ? _value.createdAt
+          : createdAt // ignore: cast_nullable_to_non_nullable
+              as int,
+      updatedAt: null == updatedAt
+          ? _value.updatedAt
+          : updatedAt // ignore: cast_nullable_to_non_nullable
+              as int,
+    ) as $Val);
+  }
+}
+
+/// @nodoc
+abstract class _$$KeyInfoImplCopyWith<$Res> implements $KeyInfoCopyWith<$Res> {
+  factory _$$KeyInfoImplCopyWith(
+          _$KeyInfoImpl value, $Res Function(_$KeyInfoImpl) then) =
+      __$$KeyInfoImplCopyWithImpl<$Res>;
+  @override
+  @useResult
+  $Res call({KeyType keyType, int ttl, int createdAt, int updatedAt});
+}
+
+/// @nodoc
+class __$$KeyInfoImplCopyWithImpl<$Res>
+    extends _$KeyInfoCopyWithImpl<$Res, _$KeyInfoImpl>
+    implements _$$KeyInfoImplCopyWith<$Res> {
+  __$$KeyInfoImplCopyWithImpl(
+      _$KeyInfoImpl _value, $Res Function(_$KeyInfoImpl) _then)
+      : super(_value, _then);
+
+  /// Create a copy of KeyInfo
+  /// with the given fields replaced by the non-null parameter values.
+  @pragma('vm:prefer-inline')
+  @override
+  $Res call({
+    Object? keyType = null,
+    Object? ttl = null,
+    Object? createdAt = null,
+    Object? updatedAt = null,
+  }) {
+    return _then(_$KeyInfoImpl(
+      keyType: null == keyType
+          ? _value.keyType
+          : keyType // ignore: cast_nullable_to_non_nullable
+              as KeyType,
+      ttl: null == ttl
+          ? _value.ttl
+          : ttl // ignore: cast_nullable_to_non_nullable
+              as int,
+      createdAt: null == createdAt
+          ? _value.createdAt
+          : createdAt // ignore: cast_nullable_to_non_nullable
+              as int,
+      updatedAt: null == updatedAt
+          ? _value.updatedAt
+          : updatedAt // ignore: cast_nullable_to_non_nullable
+              as int,
+    ));
+  }
+}
+
+/// @nodoc
+
+class _$KeyInfoImpl implements _KeyInfo {
+  const _$KeyInfoImpl(
+      {required this.keyType,
+      required this.ttl,
+      required this.createdAt,
+      required this.updatedAt});
+
+  @override
+  final KeyType keyType;
+  @override
+  final int ttl;
+  @override
+  final int createdAt;
+  @override
+  final int updatedAt;
+
+  @override
+  String toString() {
+    return 'KeyInfo(keyType: $keyType, ttl: $ttl, createdAt: $createdAt, updatedAt: $updatedAt)';
+  }
+
+  @override
+  bool operator ==(Object other) {
+    return identical(this, other) ||
+        (other.runtimeType == runtimeType &&
+            other is _$KeyInfoImpl &&
+            (identical(other.keyType, keyType) || other.keyType == keyType) &&
+            (identical(other.ttl, ttl) || other.ttl == ttl) &&
+            (identical(other.createdAt, createdAt) ||
+                other.createdAt == createdAt) &&
+            (identical(other.updatedAt, updatedAt) ||
+                other.updatedAt == updatedAt));
+  }
+
+  @override
+  int get hashCode =>
+      Object.hash(runtimeType, keyType, ttl, createdAt, updatedAt);
+
+  /// Create a copy of KeyInfo
+  /// with the given fields replaced by the non-null parameter values.
+  @JsonKey(includeFromJson: false, includeToJson: false)
+  @override
+  @pragma('vm:prefer-inline')
+  _$$KeyInfoImplCopyWith<_$KeyInfoImpl> get copyWith =>
+      __$$KeyInfoImplCopyWithImpl<_$KeyInfoImpl>(this, _$identity);
+}
+
+abstract class _KeyInfo implements KeyInfo {
+  const factory _KeyInfo(
+      {required final KeyType keyType,
+      required final int ttl,
+      required final int createdAt,
+      required final int updatedAt}) = _$KeyInfoImpl;
+
+  @override
+  KeyType get keyType;
+  @override
+  int get ttl;
+  @override
+  int get createdAt;
+  @override
+  int get updatedAt;
+
+  /// Create a copy of KeyInfo
+  /// with the given fields replaced by the non-null parameter values.
+  @override
+  @JsonKey(includeFromJson: false, includeToJson: false)
+  _$$KeyInfoImplCopyWith<_$KeyInfoImpl> get copyWith =>
+      throw _privateConstructorUsedError;
+}
+
+/// @nodoc
 mixin _$SetOptions {
   int? get ex => throw _privateConstructorUsedError;
   int? get px => throw _privateConstructorUsedError;

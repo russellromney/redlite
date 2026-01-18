@@ -61,6 +61,7 @@ pub enum KeyType {
     Hash,
     ZSet,
     Stream,
+    Json,
     None,
 }
 
@@ -73,6 +74,7 @@ impl From<Option<redlite::KeyType>> for KeyType {
             Some(redlite::KeyType::Hash) => KeyType::Hash,
             Some(redlite::KeyType::ZSet) => KeyType::ZSet,
             Some(redlite::KeyType::Stream) => KeyType::Stream,
+            Some(redlite::KeyType::Json) => KeyType::Json,
             None => KeyType::None,
         }
     }
@@ -753,13 +755,13 @@ impl Db {
     }
 
     /// Delete JSON value at the given path.
-    pub fn json_del(&self, key: String, path: String) -> Result<i64, RedliteError> {
-        self.inner.json_del(&key, &path).map_err(Into::into)
+    pub fn json_del(&self, key: String, path: Option<String>) -> Result<i64, RedliteError> {
+        self.inner.json_del(&key, path.as_deref()).map_err(Into::into)
     }
 
     /// Get the type of JSON value at the given path.
-    pub fn json_type(&self, key: String, path: String) -> Result<Option<String>, RedliteError> {
-        self.inner.json_type(&key, &path).map_err(Into::into)
+    pub fn json_type(&self, key: String, path: Option<String>) -> Result<Option<String>, RedliteError> {
+        self.inner.json_type(&key, path.as_deref()).map_err(Into::into)
     }
 
     /// Increment a numeric JSON value.
@@ -768,7 +770,7 @@ impl Db {
         key: String,
         path: String,
         increment: f64,
-    ) -> Result<Option<String>, RedliteError> {
+    ) -> Result<String, RedliteError> {
         self.inner
             .json_numincrby(&key, &path, increment)
             .map_err(Into::into)
@@ -778,17 +780,17 @@ impl Db {
     pub fn json_strappend(
         &self,
         key: String,
-        path: String,
+        path: Option<String>,
         value: String,
     ) -> Result<i64, RedliteError> {
         self.inner
-            .json_strappend(&key, &path, &value)
+            .json_strappend(&key, path.as_deref(), &value)
             .map_err(Into::into)
     }
 
     /// Get length of a string JSON value.
-    pub fn json_strlen(&self, key: String, path: String) -> Result<i64, RedliteError> {
-        self.inner.json_strlen(&key, &path).map_err(Into::into)
+    pub fn json_strlen(&self, key: String, path: Option<String>) -> Result<Option<i64>, RedliteError> {
+        self.inner.json_strlen(&key, path.as_deref()).map_err(Into::into)
     }
 
     /// Append values to a JSON array.
@@ -805,25 +807,25 @@ impl Db {
     }
 
     /// Get length of a JSON array.
-    pub fn json_arrlen(&self, key: String, path: String) -> Result<i64, RedliteError> {
-        self.inner.json_arrlen(&key, &path).map_err(Into::into)
+    pub fn json_arrlen(&self, key: String, path: Option<String>) -> Result<Option<i64>, RedliteError> {
+        self.inner.json_arrlen(&key, path.as_deref()).map_err(Into::into)
     }
 
     /// Pop an element from a JSON array.
     pub fn json_arrpop(
         &self,
         key: String,
-        path: String,
-        index: i64,
+        path: Option<String>,
+        index: Option<i64>,
     ) -> Result<Option<String>, RedliteError> {
         self.inner
-            .json_arrpop(&key, &path, index)
+            .json_arrpop(&key, path.as_deref(), index)
             .map_err(Into::into)
     }
 
     /// Clear container JSON values (arrays/objects become empty).
-    pub fn json_clear(&self, key: String, path: String) -> Result<i64, RedliteError> {
-        self.inner.json_clear(&key, &path).map_err(Into::into)
+    pub fn json_clear(&self, key: String, path: Option<String>) -> Result<i64, RedliteError> {
+        self.inner.json_clear(&key, path.as_deref()).map_err(Into::into)
     }
 
     // =========================================================================
@@ -837,8 +839,14 @@ impl Db {
         retention_type: String,
         retention_value: i64,
     ) -> Result<(), RedliteError> {
+        let retention = match retention_type.as_str() {
+            "unlimited" => redlite::RetentionType::Unlimited,
+            "time" => redlite::RetentionType::Time(retention_value),
+            "count" => redlite::RetentionType::Count(retention_value),
+            _ => redlite::RetentionType::Unlimited,
+        };
         self.inner
-            .history_enable_global(&retention_type, retention_value as u64)
+            .history_enable_global(retention)
             .map_err(Into::into)
     }
 
@@ -849,8 +857,14 @@ impl Db {
         retention_type: String,
         retention_value: i64,
     ) -> Result<(), RedliteError> {
+        let retention = match retention_type.as_str() {
+            "unlimited" => redlite::RetentionType::Unlimited,
+            "time" => redlite::RetentionType::Time(retention_value),
+            "count" => redlite::RetentionType::Count(retention_value),
+            _ => redlite::RetentionType::Unlimited,
+        };
         self.inner
-            .history_enable_database(db_num as u32, &retention_type, retention_value as u64)
+            .history_enable_database(db_num as i32, retention)
             .map_err(Into::into)
     }
 
@@ -861,8 +875,14 @@ impl Db {
         retention_type: String,
         retention_value: i64,
     ) -> Result<(), RedliteError> {
+        let retention = match retention_type.as_str() {
+            "unlimited" => redlite::RetentionType::Unlimited,
+            "time" => redlite::RetentionType::Time(retention_value),
+            "count" => redlite::RetentionType::Count(retention_value),
+            _ => redlite::RetentionType::Unlimited,
+        };
         self.inner
-            .history_enable_key(&key, &retention_type, retention_value as u64)
+            .history_enable_key(&key, retention)
             .map_err(Into::into)
     }
 
@@ -874,7 +894,7 @@ impl Db {
     /// Disable history tracking for a specific database.
     pub fn history_disable_database(&self, db_num: i64) -> Result<(), RedliteError> {
         self.inner
-            .history_disable_database(db_num as u32)
+            .history_disable_database(db_num as i32)
             .map_err(Into::into)
     }
 
@@ -900,7 +920,7 @@ impl Db {
     /// Enable FTS indexing for a specific database.
     pub fn fts_enable_database(&self, db_num: i64) -> Result<(), RedliteError> {
         self.inner
-            .fts_enable_database(db_num as u32)
+            .fts_enable_database(db_num as i32)
             .map_err(Into::into)
     }
 
@@ -922,7 +942,7 @@ impl Db {
     /// Disable FTS indexing for a specific database.
     pub fn fts_disable_database(&self, db_num: i64) -> Result<(), RedliteError> {
         self.inner
-            .fts_disable_database(db_num as u32)
+            .fts_disable_database(db_num as i32)
             .map_err(Into::into)
     }
 
@@ -953,14 +973,15 @@ impl Db {
         self.inner
             .keyinfo(&key)
             .map(|opt| opt.map(|info| KeyInfo {
-                key_type: info.key_type.map(|kt| match kt {
+                key_type: match info.key_type {
                     redlite::KeyType::String => KeyType::String,
                     redlite::KeyType::List => KeyType::List,
                     redlite::KeyType::Set => KeyType::Set,
                     redlite::KeyType::Hash => KeyType::Hash,
                     redlite::KeyType::ZSet => KeyType::ZSet,
                     redlite::KeyType::Stream => KeyType::Stream,
-                }).unwrap_or(KeyType::None),
+                    redlite::KeyType::Json => KeyType::Json,
+                },
                 ttl: info.ttl,
                 created_at: info.created_at,
                 updated_at: info.updated_at,

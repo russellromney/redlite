@@ -35,8 +35,12 @@ class RustLib extends BaseEntrypoint<RustLibApi, RustLibApiImpl, RustLibWire> {
 
   /// Initialize flutter_rust_bridge in mock mode.
   /// No libraries for FFI are loaded.
-  static void initMock({required RustLibApi api}) {
-    instance.initMockImpl(api: api);
+  static void initMock({
+    required RustLibApi api,
+  }) {
+    instance.initMockImpl(
+      api: api,
+    );
   }
 
   /// Dispose flutter_rust_bridge
@@ -64,429 +68,414 @@ class RustLib extends BaseEntrypoint<RustLibApi, RustLibApiImpl, RustLibWire> {
   String get codegenVersion => '2.11.1';
 
   @override
-  int get rustContentHash => 1381450474;
+  int get rustContentHash => -530941926;
 
   static const kDefaultExternalLibraryLoaderConfig =
       ExternalLibraryLoaderConfig(
-        stem: 'redlite_dart',
-        ioDirectory: 'rust/target/release/',
-        webPrefix: 'pkg/',
-      );
+    stem: 'redlite_dart',
+    ioDirectory: 'rust/target/release/',
+    webPrefix: 'pkg/',
+  );
 }
 
 abstract class RustLibApi extends BaseApi {
-  Future<PlatformInt64> crateApiDbAppend({
-    required Db that,
-    required String key,
-    required List<int> value,
-  });
+  Future<PlatformInt64> crateApiDbAppend(
+      {required Db that, required String key, required List<int> value});
 
   Future<PlatformInt64> crateApiDbDbsize({required Db that});
 
   Future<PlatformInt64> crateApiDbDecr({required Db that, required String key});
 
-  Future<PlatformInt64> crateApiDbDecrby({
-    required Db that,
-    required String key,
-    required PlatformInt64 decrement,
-  });
+  Future<PlatformInt64> crateApiDbDecrby(
+      {required Db that,
+      required String key,
+      required PlatformInt64 decrement});
 
-  Future<PlatformInt64> crateApiDbDel({
-    required Db that,
-    required List<String> keys,
-  });
+  Future<PlatformInt64> crateApiDbDel(
+      {required Db that, required List<String> keys});
 
-  Future<PlatformInt64> crateApiDbExists({
-    required Db that,
-    required List<String> keys,
-  });
+  Future<PlatformInt64> crateApiDbExists(
+      {required Db that, required List<String> keys});
 
-  Future<bool> crateApiDbExpire({
-    required Db that,
-    required String key,
-    required PlatformInt64 seconds,
-  });
+  Future<bool> crateApiDbExpire(
+      {required Db that, required String key, required PlatformInt64 seconds});
 
-  Future<bool> crateApiDbExpireat({
-    required Db that,
-    required String key,
-    required PlatformInt64 unixTime,
-  });
+  Future<bool> crateApiDbExpireat(
+      {required Db that, required String key, required PlatformInt64 unixTime});
 
   Future<void> crateApiDbFlushdb({required Db that});
+
+  Future<void> crateApiDbFtsDisableDatabase(
+      {required Db that, required PlatformInt64 dbNum});
+
+  Future<void> crateApiDbFtsDisableGlobal({required Db that});
+
+  Future<void> crateApiDbFtsDisableKey({required Db that, required String key});
+
+  Future<void> crateApiDbFtsDisablePattern(
+      {required Db that, required String pattern});
+
+  Future<void> crateApiDbFtsEnableDatabase(
+      {required Db that, required PlatformInt64 dbNum});
+
+  Future<void> crateApiDbFtsEnableGlobal({required Db that});
+
+  Future<void> crateApiDbFtsEnableKey({required Db that, required String key});
+
+  Future<void> crateApiDbFtsEnablePattern(
+      {required Db that, required String pattern});
 
   Future<Uint8List?> crateApiDbGet({required Db that, required String key});
 
   Future<Uint8List?> crateApiDbGetdel({required Db that, required String key});
 
-  Future<Uint8List> crateApiDbGetrange({
-    required Db that,
-    required String key,
-    required PlatformInt64 start,
-    required PlatformInt64 end,
-  });
+  Future<Uint8List> crateApiDbGetrange(
+      {required Db that,
+      required String key,
+      required PlatformInt64 start,
+      required PlatformInt64 end});
 
-  Future<PlatformInt64> crateApiDbHdel({
-    required Db that,
-    required String key,
-    required List<String> fields,
-  });
+  Future<PlatformInt64> crateApiDbHdel(
+      {required Db that, required String key, required List<String> fields});
 
-  Future<bool> crateApiDbHexists({
-    required Db that,
-    required String key,
-    required String field,
-  });
+  Future<bool> crateApiDbHexists(
+      {required Db that, required String key, required String field});
 
-  Future<Uint8List?> crateApiDbHget({
-    required Db that,
-    required String key,
-    required String field,
-  });
+  Future<Uint8List?> crateApiDbHget(
+      {required Db that, required String key, required String field});
 
-  Future<List<(String, Uint8List)>> crateApiDbHgetall({
-    required Db that,
-    required String key,
-  });
+  Future<List<(String, Uint8List)>> crateApiDbHgetall(
+      {required Db that, required String key});
 
-  Future<PlatformInt64> crateApiDbHincrby({
-    required Db that,
-    required String key,
-    required String field,
-    required PlatformInt64 increment,
-  });
+  Future<PlatformInt64> crateApiDbHincrby(
+      {required Db that,
+      required String key,
+      required String field,
+      required PlatformInt64 increment});
+
+  Future<void> crateApiDbHistoryDisableDatabase(
+      {required Db that, required PlatformInt64 dbNum});
+
+  Future<void> crateApiDbHistoryDisableGlobal({required Db that});
+
+  Future<void> crateApiDbHistoryDisableKey(
+      {required Db that, required String key});
+
+  Future<void> crateApiDbHistoryEnableDatabase(
+      {required Db that,
+      required PlatformInt64 dbNum,
+      required String retentionType,
+      required PlatformInt64 retentionValue});
+
+  Future<void> crateApiDbHistoryEnableGlobal(
+      {required Db that,
+      required String retentionType,
+      required PlatformInt64 retentionValue});
+
+  Future<void> crateApiDbHistoryEnableKey(
+      {required Db that,
+      required String key,
+      required String retentionType,
+      required PlatformInt64 retentionValue});
 
   Future<List<String>> crateApiDbHkeys({required Db that, required String key});
 
   Future<PlatformInt64> crateApiDbHlen({required Db that, required String key});
 
-  Future<List<Uint8List?>> crateApiDbHmget({
-    required Db that,
-    required String key,
-    required List<String> fields,
-  });
+  Future<List<Uint8List?>> crateApiDbHmget(
+      {required Db that, required String key, required List<String> fields});
 
-  Future<PlatformInt64> crateApiDbHmset({
-    required Db that,
-    required String key,
-    required List<(String, Uint8List)> mapping,
-  });
+  Future<PlatformInt64> crateApiDbHmset(
+      {required Db that,
+      required String key,
+      required List<(String, Uint8List)> mapping});
 
-  Future<(String, List<(String, Uint8List)>)> crateApiDbHscan({
-    required Db that,
-    required String key,
-    required String cursor,
-    String? pattern,
-    required PlatformInt64 count,
-  });
+  Future<(String, List<(String, Uint8List)>)> crateApiDbHscan(
+      {required Db that,
+      required String key,
+      required String cursor,
+      String? pattern,
+      required PlatformInt64 count});
 
-  Future<PlatformInt64> crateApiDbHset({
-    required Db that,
-    required String key,
-    required String field,
-    required List<int> value,
-  });
+  Future<PlatformInt64> crateApiDbHset(
+      {required Db that,
+      required String key,
+      required String field,
+      required List<int> value});
 
-  Future<List<Uint8List>> crateApiDbHvals({
-    required Db that,
-    required String key,
-  });
+  Future<List<Uint8List>> crateApiDbHvals(
+      {required Db that, required String key});
 
   Future<PlatformInt64> crateApiDbIncr({required Db that, required String key});
 
-  Future<PlatformInt64> crateApiDbIncrby({
-    required Db that,
-    required String key,
-    required PlatformInt64 increment,
-  });
+  Future<PlatformInt64> crateApiDbIncrby(
+      {required Db that,
+      required String key,
+      required PlatformInt64 increment});
 
-  Future<double> crateApiDbIncrbyfloat({
-    required Db that,
-    required String key,
-    required double increment,
-  });
+  Future<double> crateApiDbIncrbyfloat(
+      {required Db that, required String key, required double increment});
+
+  Future<bool> crateApiDbIsFtsEnabled({required Db that, required String key});
+
+  Future<bool> crateApiDbIsHistoryEnabled(
+      {required Db that, required String key});
+
+  Future<PlatformInt64> crateApiDbJsonArrappend(
+      {required Db that,
+      required String key,
+      required String path,
+      required List<String> values});
+
+  Future<PlatformInt64?> crateApiDbJsonArrlen(
+      {required Db that, required String key, String? path});
+
+  Future<String?> crateApiDbJsonArrpop(
+      {required Db that,
+      required String key,
+      String? path,
+      PlatformInt64? index});
+
+  Future<PlatformInt64> crateApiDbJsonClear(
+      {required Db that, required String key, String? path});
+
+  Future<PlatformInt64> crateApiDbJsonDel(
+      {required Db that, required String key, String? path});
+
+  Future<String?> crateApiDbJsonGet(
+      {required Db that, required String key, required List<String> paths});
+
+  Future<String> crateApiDbJsonNumincrby(
+      {required Db that,
+      required String key,
+      required String path,
+      required double increment});
+
+  Future<bool> crateApiDbJsonSet(
+      {required Db that,
+      required String key,
+      required String path,
+      required String value,
+      required bool nx,
+      required bool xx});
+
+  Future<PlatformInt64> crateApiDbJsonStrappend(
+      {required Db that,
+      required String key,
+      String? path,
+      required String value});
+
+  Future<PlatformInt64?> crateApiDbJsonStrlen(
+      {required Db that, required String key, String? path});
+
+  Future<String?> crateApiDbJsonType(
+      {required Db that, required String key, String? path});
 
   Future<KeyType> crateApiDbKeyType({required Db that, required String key});
 
-  Future<List<String>> crateApiDbKeys({
-    required Db that,
-    required String pattern,
-  });
+  Future<KeyInfo?> crateApiDbKeyinfo({required Db that, required String key});
 
-  Future<Uint8List?> crateApiDbLindex({
-    required Db that,
-    required String key,
-    required PlatformInt64 index,
-  });
+  Future<List<String>> crateApiDbKeys(
+      {required Db that, required String pattern});
+
+  Future<Uint8List?> crateApiDbLindex(
+      {required Db that, required String key, required PlatformInt64 index});
 
   Future<PlatformInt64> crateApiDbLlen({required Db that, required String key});
 
-  Future<List<Uint8List>> crateApiDbLpop({
-    required Db that,
-    required String key,
-    PlatformInt64? count,
-  });
+  Future<List<Uint8List>> crateApiDbLpop(
+      {required Db that, required String key, PlatformInt64? count});
 
-  Future<PlatformInt64> crateApiDbLpush({
-    required Db that,
-    required String key,
-    required List<Uint8List> values,
-  });
+  Future<PlatformInt64> crateApiDbLpush(
+      {required Db that, required String key, required List<Uint8List> values});
 
-  Future<List<Uint8List>> crateApiDbLrange({
-    required Db that,
-    required String key,
-    required PlatformInt64 start,
-    required PlatformInt64 stop,
-  });
+  Future<List<Uint8List>> crateApiDbLrange(
+      {required Db that,
+      required String key,
+      required PlatformInt64 start,
+      required PlatformInt64 stop});
 
-  Future<void> crateApiDbLset({
-    required Db that,
-    required String key,
-    required PlatformInt64 index,
-    required List<int> value,
-  });
+  Future<void> crateApiDbLset(
+      {required Db that,
+      required String key,
+      required PlatformInt64 index,
+      required List<int> value});
 
-  Future<void> crateApiDbLtrim({
-    required Db that,
-    required String key,
-    required PlatformInt64 start,
-    required PlatformInt64 stop,
-  });
+  Future<void> crateApiDbLtrim(
+      {required Db that,
+      required String key,
+      required PlatformInt64 start,
+      required PlatformInt64 stop});
 
-  Future<List<Uint8List?>> crateApiDbMget({
-    required Db that,
-    required List<String> keys,
-  });
+  Future<List<Uint8List?>> crateApiDbMget(
+      {required Db that, required List<String> keys});
 
-  Future<void> crateApiDbMset({
-    required Db that,
-    required List<(String, Uint8List)> pairs,
-  });
+  Future<void> crateApiDbMset(
+      {required Db that, required List<(String, Uint8List)> pairs});
 
   Db crateApiDbOpen({required String path});
 
   Db crateApiDbOpenMemory();
 
-  Db crateApiDbOpenWithCache({
-    required String path,
-    required PlatformInt64 cacheMb,
-  });
+  Db crateApiDbOpenWithCache(
+      {required String path, required PlatformInt64 cacheMb});
 
   Future<bool> crateApiDbPersist({required Db that, required String key});
 
-  Future<bool> crateApiDbPexpire({
-    required Db that,
-    required String key,
-    required PlatformInt64 milliseconds,
-  });
+  Future<bool> crateApiDbPexpire(
+      {required Db that,
+      required String key,
+      required PlatformInt64 milliseconds});
 
-  Future<bool> crateApiDbPexpireat({
-    required Db that,
-    required String key,
-    required PlatformInt64 unixTimeMs,
-  });
+  Future<bool> crateApiDbPexpireat(
+      {required Db that,
+      required String key,
+      required PlatformInt64 unixTimeMs});
 
-  Future<void> crateApiDbPsetex({
-    required Db that,
-    required String key,
-    required PlatformInt64 milliseconds,
-    required List<int> value,
-  });
+  Future<void> crateApiDbPsetex(
+      {required Db that,
+      required String key,
+      required PlatformInt64 milliseconds,
+      required List<int> value});
 
   Future<PlatformInt64> crateApiDbPttl({required Db that, required String key});
 
-  Future<void> crateApiDbRename({
-    required Db that,
-    required String key,
-    required String newkey,
-  });
+  Future<void> crateApiDbRename(
+      {required Db that, required String key, required String newkey});
 
-  Future<bool> crateApiDbRenamenx({
-    required Db that,
-    required String key,
-    required String newkey,
-  });
+  Future<bool> crateApiDbRenamenx(
+      {required Db that, required String key, required String newkey});
 
-  Future<List<Uint8List>> crateApiDbRpop({
-    required Db that,
-    required String key,
-    PlatformInt64? count,
-  });
+  Future<List<Uint8List>> crateApiDbRpop(
+      {required Db that, required String key, PlatformInt64? count});
 
-  Future<PlatformInt64> crateApiDbRpush({
-    required Db that,
-    required String key,
-    required List<Uint8List> values,
-  });
+  Future<PlatformInt64> crateApiDbRpush(
+      {required Db that, required String key, required List<Uint8List> values});
 
-  Future<PlatformInt64> crateApiDbSadd({
-    required Db that,
-    required String key,
-    required List<Uint8List> members,
-  });
+  Future<PlatformInt64> crateApiDbSadd(
+      {required Db that,
+      required String key,
+      required List<Uint8List> members});
 
-  Future<(String, List<String>)> crateApiDbScan({
-    required Db that,
-    required String cursor,
-    String? pattern,
-    required PlatformInt64 count,
-  });
+  Future<(String, List<String>)> crateApiDbScan(
+      {required Db that,
+      required String cursor,
+      String? pattern,
+      required PlatformInt64 count});
 
-  Future<PlatformInt64> crateApiDbScard({
-    required Db that,
-    required String key,
-  });
+  Future<PlatformInt64> crateApiDbScard(
+      {required Db that, required String key});
 
-  Future<List<Uint8List>> crateApiDbSdiff({
-    required Db that,
-    required List<String> keys,
-  });
+  Future<List<Uint8List>> crateApiDbSdiff(
+      {required Db that, required List<String> keys});
 
-  Future<void> crateApiDbSet({
-    required Db that,
-    required String key,
-    required List<int> value,
-    PlatformInt64? ttlSeconds,
-  });
+  Future<void> crateApiDbSet(
+      {required Db that,
+      required String key,
+      required List<int> value,
+      PlatformInt64? ttlSeconds});
 
-  Future<bool> crateApiDbSetOpts({
-    required Db that,
-    required String key,
-    required List<int> value,
-    required SetOptions options,
-  });
+  Future<bool> crateApiDbSetOpts(
+      {required Db that,
+      required String key,
+      required List<int> value,
+      required SetOptions options});
 
-  Future<void> crateApiDbSetex({
-    required Db that,
-    required String key,
-    required PlatformInt64 seconds,
-    required List<int> value,
-  });
+  Future<void> crateApiDbSetex(
+      {required Db that,
+      required String key,
+      required PlatformInt64 seconds,
+      required List<int> value});
 
-  Future<PlatformInt64> crateApiDbSetrange({
-    required Db that,
-    required String key,
-    required PlatformInt64 offset,
-    required List<int> value,
-  });
+  Future<PlatformInt64> crateApiDbSetrange(
+      {required Db that,
+      required String key,
+      required PlatformInt64 offset,
+      required List<int> value});
 
-  Future<List<Uint8List>> crateApiDbSinter({
-    required Db that,
-    required List<String> keys,
-  });
+  Future<List<Uint8List>> crateApiDbSinter(
+      {required Db that, required List<String> keys});
 
-  Future<bool> crateApiDbSismember({
-    required Db that,
-    required String key,
-    required List<int> member,
-  });
+  Future<bool> crateApiDbSismember(
+      {required Db that, required String key, required List<int> member});
 
-  Future<List<Uint8List>> crateApiDbSmembers({
-    required Db that,
-    required String key,
-  });
+  Future<List<Uint8List>> crateApiDbSmembers(
+      {required Db that, required String key});
 
-  Future<PlatformInt64> crateApiDbSrem({
-    required Db that,
-    required String key,
-    required List<Uint8List> members,
-  });
+  Future<PlatformInt64> crateApiDbSrem(
+      {required Db that,
+      required String key,
+      required List<Uint8List> members});
 
-  Future<(String, List<Uint8List>)> crateApiDbSscan({
-    required Db that,
-    required String key,
-    required String cursor,
-    String? pattern,
-    required PlatformInt64 count,
-  });
+  Future<(String, List<Uint8List>)> crateApiDbSscan(
+      {required Db that,
+      required String key,
+      required String cursor,
+      String? pattern,
+      required PlatformInt64 count});
 
-  Future<PlatformInt64> crateApiDbStrlen({
-    required Db that,
-    required String key,
-  });
+  Future<PlatformInt64> crateApiDbStrlen(
+      {required Db that, required String key});
 
-  Future<List<Uint8List>> crateApiDbSunion({
-    required Db that,
-    required List<String> keys,
-  });
+  Future<List<Uint8List>> crateApiDbSunion(
+      {required Db that, required List<String> keys});
 
   Future<PlatformInt64> crateApiDbTtl({required Db that, required String key});
 
   Future<PlatformInt64> crateApiDbVacuum({required Db that});
 
-  Future<PlatformInt64> crateApiDbZadd({
-    required Db that,
-    required String key,
-    required List<ZMember> members,
-  });
+  Future<PlatformInt64> crateApiDbZadd(
+      {required Db that, required String key, required List<ZMember> members});
 
-  Future<PlatformInt64> crateApiDbZcard({
-    required Db that,
-    required String key,
-  });
+  Future<PlatformInt64> crateApiDbZcard(
+      {required Db that, required String key});
 
-  Future<PlatformInt64> crateApiDbZcount({
-    required Db that,
-    required String key,
-    required double minScore,
-    required double maxScore,
-  });
+  Future<PlatformInt64> crateApiDbZcount(
+      {required Db that,
+      required String key,
+      required double minScore,
+      required double maxScore});
 
-  Future<double> crateApiDbZincrby({
-    required Db that,
-    required String key,
-    required double increment,
-    required List<int> member,
-  });
+  Future<double> crateApiDbZincrby(
+      {required Db that,
+      required String key,
+      required double increment,
+      required List<int> member});
 
-  Future<List<ZMember>> crateApiDbZrange({
-    required Db that,
-    required String key,
-    required PlatformInt64 start,
-    required PlatformInt64 stop,
-    required bool withScores,
-  });
+  Future<List<ZMember>> crateApiDbZrange(
+      {required Db that,
+      required String key,
+      required PlatformInt64 start,
+      required PlatformInt64 stop,
+      required bool withScores});
 
-  Future<PlatformInt64?> crateApiDbZrank({
-    required Db that,
-    required String key,
-    required List<int> member,
-  });
+  Future<PlatformInt64?> crateApiDbZrank(
+      {required Db that, required String key, required List<int> member});
 
-  Future<PlatformInt64> crateApiDbZrem({
-    required Db that,
-    required String key,
-    required List<Uint8List> members,
-  });
+  Future<PlatformInt64> crateApiDbZrem(
+      {required Db that,
+      required String key,
+      required List<Uint8List> members});
 
-  Future<List<ZMember>> crateApiDbZrevrange({
-    required Db that,
-    required String key,
-    required PlatformInt64 start,
-    required PlatformInt64 stop,
-    required bool withScores,
-  });
+  Future<List<ZMember>> crateApiDbZrevrange(
+      {required Db that,
+      required String key,
+      required PlatformInt64 start,
+      required PlatformInt64 stop,
+      required bool withScores});
 
-  Future<PlatformInt64?> crateApiDbZrevrank({
-    required Db that,
-    required String key,
-    required List<int> member,
-  });
+  Future<PlatformInt64?> crateApiDbZrevrank(
+      {required Db that, required String key, required List<int> member});
 
-  Future<(String, List<(Uint8List, double)>)> crateApiDbZscan({
-    required Db that,
-    required String key,
-    required String cursor,
-    String? pattern,
-    required PlatformInt64 count,
-  });
+  Future<(String, List<(Uint8List, double)>)> crateApiDbZscan(
+      {required Db that,
+      required String key,
+      required String cursor,
+      String? pattern,
+      required PlatformInt64 count});
 
-  Future<double?> crateApiDbZscore({
-    required Db that,
-    required String key,
-    required List<int> member,
-  });
+  Future<double?> crateApiDbZscore(
+      {required Db that, required String key, required List<int> member});
 
   Future<SetOptions> crateApiSetOptionsDefault();
 
@@ -506,2979 +495,3098 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   });
 
   @override
-  Future<PlatformInt64> crateApiDbAppend({
-    required Db that,
-    required String key,
-    required List<int> value,
-  }) {
-    return handler.executeNormal(
-      NormalTask(
-        callFfi: (port_) {
-          final serializer = SseSerializer(generalizedFrbRustBinding);
-          sse_encode_Auto_Ref_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerDb(
-            that,
-            serializer,
-          );
-          sse_encode_String(key, serializer);
-          sse_encode_list_prim_u_8_loose(value, serializer);
-          pdeCallFfi(
-            generalizedFrbRustBinding,
-            serializer,
-            funcId: 1,
-            port: port_,
-          );
-        },
-        codec: SseCodec(
-          decodeSuccessData: sse_decode_i_64,
-          decodeErrorData: sse_decode_redlite_error,
-        ),
-        constMeta: kCrateApiDbAppendConstMeta,
-        argValues: [that, key, value],
-        apiImpl: this,
+  Future<PlatformInt64> crateApiDbAppend(
+      {required Db that, required String key, required List<int> value}) {
+    return handler.executeNormal(NormalTask(
+      callFfi: (port_) {
+        final serializer = SseSerializer(generalizedFrbRustBinding);
+        sse_encode_Auto_Ref_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerDb(
+            that, serializer);
+        sse_encode_String(key, serializer);
+        sse_encode_list_prim_u_8_loose(value, serializer);
+        pdeCallFfi(generalizedFrbRustBinding, serializer,
+            funcId: 1, port: port_);
+      },
+      codec: SseCodec(
+        decodeSuccessData: sse_decode_i_64,
+        decodeErrorData: sse_decode_redlite_error,
       ),
-    );
+      constMeta: kCrateApiDbAppendConstMeta,
+      argValues: [that, key, value],
+      apiImpl: this,
+    ));
   }
 
   TaskConstMeta get kCrateApiDbAppendConstMeta => const TaskConstMeta(
-    debugName: "Db_append",
-    argNames: ["that", "key", "value"],
-  );
+        debugName: "Db_append",
+        argNames: ["that", "key", "value"],
+      );
 
   @override
   Future<PlatformInt64> crateApiDbDbsize({required Db that}) {
-    return handler.executeNormal(
-      NormalTask(
-        callFfi: (port_) {
-          final serializer = SseSerializer(generalizedFrbRustBinding);
-          sse_encode_Auto_Ref_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerDb(
-            that,
-            serializer,
-          );
-          pdeCallFfi(
-            generalizedFrbRustBinding,
-            serializer,
-            funcId: 2,
-            port: port_,
-          );
-        },
-        codec: SseCodec(
-          decodeSuccessData: sse_decode_i_64,
-          decodeErrorData: sse_decode_redlite_error,
-        ),
-        constMeta: kCrateApiDbDbsizeConstMeta,
-        argValues: [that],
-        apiImpl: this,
+    return handler.executeNormal(NormalTask(
+      callFfi: (port_) {
+        final serializer = SseSerializer(generalizedFrbRustBinding);
+        sse_encode_Auto_Ref_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerDb(
+            that, serializer);
+        pdeCallFfi(generalizedFrbRustBinding, serializer,
+            funcId: 2, port: port_);
+      },
+      codec: SseCodec(
+        decodeSuccessData: sse_decode_i_64,
+        decodeErrorData: sse_decode_redlite_error,
       ),
-    );
+      constMeta: kCrateApiDbDbsizeConstMeta,
+      argValues: [that],
+      apiImpl: this,
+    ));
   }
 
-  TaskConstMeta get kCrateApiDbDbsizeConstMeta =>
-      const TaskConstMeta(debugName: "Db_dbsize", argNames: ["that"]);
+  TaskConstMeta get kCrateApiDbDbsizeConstMeta => const TaskConstMeta(
+        debugName: "Db_dbsize",
+        argNames: ["that"],
+      );
 
   @override
-  Future<PlatformInt64> crateApiDbDecr({
-    required Db that,
-    required String key,
-  }) {
-    return handler.executeNormal(
-      NormalTask(
-        callFfi: (port_) {
-          final serializer = SseSerializer(generalizedFrbRustBinding);
-          sse_encode_Auto_Ref_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerDb(
-            that,
-            serializer,
-          );
-          sse_encode_String(key, serializer);
-          pdeCallFfi(
-            generalizedFrbRustBinding,
-            serializer,
-            funcId: 3,
-            port: port_,
-          );
-        },
-        codec: SseCodec(
-          decodeSuccessData: sse_decode_i_64,
-          decodeErrorData: sse_decode_redlite_error,
-        ),
-        constMeta: kCrateApiDbDecrConstMeta,
-        argValues: [that, key],
-        apiImpl: this,
+  Future<PlatformInt64> crateApiDbDecr(
+      {required Db that, required String key}) {
+    return handler.executeNormal(NormalTask(
+      callFfi: (port_) {
+        final serializer = SseSerializer(generalizedFrbRustBinding);
+        sse_encode_Auto_Ref_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerDb(
+            that, serializer);
+        sse_encode_String(key, serializer);
+        pdeCallFfi(generalizedFrbRustBinding, serializer,
+            funcId: 3, port: port_);
+      },
+      codec: SseCodec(
+        decodeSuccessData: sse_decode_i_64,
+        decodeErrorData: sse_decode_redlite_error,
       ),
-    );
+      constMeta: kCrateApiDbDecrConstMeta,
+      argValues: [that, key],
+      apiImpl: this,
+    ));
   }
 
-  TaskConstMeta get kCrateApiDbDecrConstMeta =>
-      const TaskConstMeta(debugName: "Db_decr", argNames: ["that", "key"]);
+  TaskConstMeta get kCrateApiDbDecrConstMeta => const TaskConstMeta(
+        debugName: "Db_decr",
+        argNames: ["that", "key"],
+      );
 
   @override
-  Future<PlatformInt64> crateApiDbDecrby({
-    required Db that,
-    required String key,
-    required PlatformInt64 decrement,
-  }) {
-    return handler.executeNormal(
-      NormalTask(
-        callFfi: (port_) {
-          final serializer = SseSerializer(generalizedFrbRustBinding);
-          sse_encode_Auto_Ref_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerDb(
-            that,
-            serializer,
-          );
-          sse_encode_String(key, serializer);
-          sse_encode_i_64(decrement, serializer);
-          pdeCallFfi(
-            generalizedFrbRustBinding,
-            serializer,
-            funcId: 4,
-            port: port_,
-          );
-        },
-        codec: SseCodec(
-          decodeSuccessData: sse_decode_i_64,
-          decodeErrorData: sse_decode_redlite_error,
-        ),
-        constMeta: kCrateApiDbDecrbyConstMeta,
-        argValues: [that, key, decrement],
-        apiImpl: this,
+  Future<PlatformInt64> crateApiDbDecrby(
+      {required Db that,
+      required String key,
+      required PlatformInt64 decrement}) {
+    return handler.executeNormal(NormalTask(
+      callFfi: (port_) {
+        final serializer = SseSerializer(generalizedFrbRustBinding);
+        sse_encode_Auto_Ref_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerDb(
+            that, serializer);
+        sse_encode_String(key, serializer);
+        sse_encode_i_64(decrement, serializer);
+        pdeCallFfi(generalizedFrbRustBinding, serializer,
+            funcId: 4, port: port_);
+      },
+      codec: SseCodec(
+        decodeSuccessData: sse_decode_i_64,
+        decodeErrorData: sse_decode_redlite_error,
       ),
-    );
+      constMeta: kCrateApiDbDecrbyConstMeta,
+      argValues: [that, key, decrement],
+      apiImpl: this,
+    ));
   }
 
   TaskConstMeta get kCrateApiDbDecrbyConstMeta => const TaskConstMeta(
-    debugName: "Db_decrby",
-    argNames: ["that", "key", "decrement"],
-  );
+        debugName: "Db_decrby",
+        argNames: ["that", "key", "decrement"],
+      );
 
   @override
-  Future<PlatformInt64> crateApiDbDel({
-    required Db that,
-    required List<String> keys,
-  }) {
-    return handler.executeNormal(
-      NormalTask(
-        callFfi: (port_) {
-          final serializer = SseSerializer(generalizedFrbRustBinding);
-          sse_encode_Auto_Ref_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerDb(
-            that,
-            serializer,
-          );
-          sse_encode_list_String(keys, serializer);
-          pdeCallFfi(
-            generalizedFrbRustBinding,
-            serializer,
-            funcId: 5,
-            port: port_,
-          );
-        },
-        codec: SseCodec(
-          decodeSuccessData: sse_decode_i_64,
-          decodeErrorData: sse_decode_redlite_error,
-        ),
-        constMeta: kCrateApiDbDelConstMeta,
-        argValues: [that, keys],
-        apiImpl: this,
+  Future<PlatformInt64> crateApiDbDel(
+      {required Db that, required List<String> keys}) {
+    return handler.executeNormal(NormalTask(
+      callFfi: (port_) {
+        final serializer = SseSerializer(generalizedFrbRustBinding);
+        sse_encode_Auto_Ref_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerDb(
+            that, serializer);
+        sse_encode_list_String(keys, serializer);
+        pdeCallFfi(generalizedFrbRustBinding, serializer,
+            funcId: 5, port: port_);
+      },
+      codec: SseCodec(
+        decodeSuccessData: sse_decode_i_64,
+        decodeErrorData: sse_decode_redlite_error,
       ),
-    );
+      constMeta: kCrateApiDbDelConstMeta,
+      argValues: [that, keys],
+      apiImpl: this,
+    ));
   }
 
-  TaskConstMeta get kCrateApiDbDelConstMeta =>
-      const TaskConstMeta(debugName: "Db_del", argNames: ["that", "keys"]);
+  TaskConstMeta get kCrateApiDbDelConstMeta => const TaskConstMeta(
+        debugName: "Db_del",
+        argNames: ["that", "keys"],
+      );
 
   @override
-  Future<PlatformInt64> crateApiDbExists({
-    required Db that,
-    required List<String> keys,
-  }) {
-    return handler.executeNormal(
-      NormalTask(
-        callFfi: (port_) {
-          final serializer = SseSerializer(generalizedFrbRustBinding);
-          sse_encode_Auto_Ref_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerDb(
-            that,
-            serializer,
-          );
-          sse_encode_list_String(keys, serializer);
-          pdeCallFfi(
-            generalizedFrbRustBinding,
-            serializer,
-            funcId: 6,
-            port: port_,
-          );
-        },
-        codec: SseCodec(
-          decodeSuccessData: sse_decode_i_64,
-          decodeErrorData: sse_decode_redlite_error,
-        ),
-        constMeta: kCrateApiDbExistsConstMeta,
-        argValues: [that, keys],
-        apiImpl: this,
+  Future<PlatformInt64> crateApiDbExists(
+      {required Db that, required List<String> keys}) {
+    return handler.executeNormal(NormalTask(
+      callFfi: (port_) {
+        final serializer = SseSerializer(generalizedFrbRustBinding);
+        sse_encode_Auto_Ref_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerDb(
+            that, serializer);
+        sse_encode_list_String(keys, serializer);
+        pdeCallFfi(generalizedFrbRustBinding, serializer,
+            funcId: 6, port: port_);
+      },
+      codec: SseCodec(
+        decodeSuccessData: sse_decode_i_64,
+        decodeErrorData: sse_decode_redlite_error,
       ),
-    );
+      constMeta: kCrateApiDbExistsConstMeta,
+      argValues: [that, keys],
+      apiImpl: this,
+    ));
   }
 
-  TaskConstMeta get kCrateApiDbExistsConstMeta =>
-      const TaskConstMeta(debugName: "Db_exists", argNames: ["that", "keys"]);
+  TaskConstMeta get kCrateApiDbExistsConstMeta => const TaskConstMeta(
+        debugName: "Db_exists",
+        argNames: ["that", "keys"],
+      );
 
   @override
-  Future<bool> crateApiDbExpire({
-    required Db that,
-    required String key,
-    required PlatformInt64 seconds,
-  }) {
-    return handler.executeNormal(
-      NormalTask(
-        callFfi: (port_) {
-          final serializer = SseSerializer(generalizedFrbRustBinding);
-          sse_encode_Auto_Ref_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerDb(
-            that,
-            serializer,
-          );
-          sse_encode_String(key, serializer);
-          sse_encode_i_64(seconds, serializer);
-          pdeCallFfi(
-            generalizedFrbRustBinding,
-            serializer,
-            funcId: 7,
-            port: port_,
-          );
-        },
-        codec: SseCodec(
-          decodeSuccessData: sse_decode_bool,
-          decodeErrorData: sse_decode_redlite_error,
-        ),
-        constMeta: kCrateApiDbExpireConstMeta,
-        argValues: [that, key, seconds],
-        apiImpl: this,
+  Future<bool> crateApiDbExpire(
+      {required Db that, required String key, required PlatformInt64 seconds}) {
+    return handler.executeNormal(NormalTask(
+      callFfi: (port_) {
+        final serializer = SseSerializer(generalizedFrbRustBinding);
+        sse_encode_Auto_Ref_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerDb(
+            that, serializer);
+        sse_encode_String(key, serializer);
+        sse_encode_i_64(seconds, serializer);
+        pdeCallFfi(generalizedFrbRustBinding, serializer,
+            funcId: 7, port: port_);
+      },
+      codec: SseCodec(
+        decodeSuccessData: sse_decode_bool,
+        decodeErrorData: sse_decode_redlite_error,
       ),
-    );
+      constMeta: kCrateApiDbExpireConstMeta,
+      argValues: [that, key, seconds],
+      apiImpl: this,
+    ));
   }
 
   TaskConstMeta get kCrateApiDbExpireConstMeta => const TaskConstMeta(
-    debugName: "Db_expire",
-    argNames: ["that", "key", "seconds"],
-  );
+        debugName: "Db_expire",
+        argNames: ["that", "key", "seconds"],
+      );
 
   @override
-  Future<bool> crateApiDbExpireat({
-    required Db that,
-    required String key,
-    required PlatformInt64 unixTime,
-  }) {
-    return handler.executeNormal(
-      NormalTask(
-        callFfi: (port_) {
-          final serializer = SseSerializer(generalizedFrbRustBinding);
-          sse_encode_Auto_Ref_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerDb(
-            that,
-            serializer,
-          );
-          sse_encode_String(key, serializer);
-          sse_encode_i_64(unixTime, serializer);
-          pdeCallFfi(
-            generalizedFrbRustBinding,
-            serializer,
-            funcId: 8,
-            port: port_,
-          );
-        },
-        codec: SseCodec(
-          decodeSuccessData: sse_decode_bool,
-          decodeErrorData: sse_decode_redlite_error,
-        ),
-        constMeta: kCrateApiDbExpireatConstMeta,
-        argValues: [that, key, unixTime],
-        apiImpl: this,
+  Future<bool> crateApiDbExpireat(
+      {required Db that,
+      required String key,
+      required PlatformInt64 unixTime}) {
+    return handler.executeNormal(NormalTask(
+      callFfi: (port_) {
+        final serializer = SseSerializer(generalizedFrbRustBinding);
+        sse_encode_Auto_Ref_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerDb(
+            that, serializer);
+        sse_encode_String(key, serializer);
+        sse_encode_i_64(unixTime, serializer);
+        pdeCallFfi(generalizedFrbRustBinding, serializer,
+            funcId: 8, port: port_);
+      },
+      codec: SseCodec(
+        decodeSuccessData: sse_decode_bool,
+        decodeErrorData: sse_decode_redlite_error,
       ),
-    );
+      constMeta: kCrateApiDbExpireatConstMeta,
+      argValues: [that, key, unixTime],
+      apiImpl: this,
+    ));
   }
 
   TaskConstMeta get kCrateApiDbExpireatConstMeta => const TaskConstMeta(
-    debugName: "Db_expireat",
-    argNames: ["that", "key", "unixTime"],
-  );
+        debugName: "Db_expireat",
+        argNames: ["that", "key", "unixTime"],
+      );
 
   @override
   Future<void> crateApiDbFlushdb({required Db that}) {
-    return handler.executeNormal(
-      NormalTask(
-        callFfi: (port_) {
-          final serializer = SseSerializer(generalizedFrbRustBinding);
-          sse_encode_Auto_Ref_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerDb(
-            that,
-            serializer,
-          );
-          pdeCallFfi(
-            generalizedFrbRustBinding,
-            serializer,
-            funcId: 9,
-            port: port_,
-          );
-        },
-        codec: SseCodec(
-          decodeSuccessData: sse_decode_unit,
-          decodeErrorData: sse_decode_redlite_error,
-        ),
-        constMeta: kCrateApiDbFlushdbConstMeta,
-        argValues: [that],
-        apiImpl: this,
+    return handler.executeNormal(NormalTask(
+      callFfi: (port_) {
+        final serializer = SseSerializer(generalizedFrbRustBinding);
+        sse_encode_Auto_Ref_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerDb(
+            that, serializer);
+        pdeCallFfi(generalizedFrbRustBinding, serializer,
+            funcId: 9, port: port_);
+      },
+      codec: SseCodec(
+        decodeSuccessData: sse_decode_unit,
+        decodeErrorData: sse_decode_redlite_error,
       ),
-    );
+      constMeta: kCrateApiDbFlushdbConstMeta,
+      argValues: [that],
+      apiImpl: this,
+    ));
   }
 
-  TaskConstMeta get kCrateApiDbFlushdbConstMeta =>
-      const TaskConstMeta(debugName: "Db_flushdb", argNames: ["that"]);
+  TaskConstMeta get kCrateApiDbFlushdbConstMeta => const TaskConstMeta(
+        debugName: "Db_flushdb",
+        argNames: ["that"],
+      );
+
+  @override
+  Future<void> crateApiDbFtsDisableDatabase(
+      {required Db that, required PlatformInt64 dbNum}) {
+    return handler.executeNormal(NormalTask(
+      callFfi: (port_) {
+        final serializer = SseSerializer(generalizedFrbRustBinding);
+        sse_encode_Auto_Ref_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerDb(
+            that, serializer);
+        sse_encode_i_64(dbNum, serializer);
+        pdeCallFfi(generalizedFrbRustBinding, serializer,
+            funcId: 10, port: port_);
+      },
+      codec: SseCodec(
+        decodeSuccessData: sse_decode_unit,
+        decodeErrorData: sse_decode_redlite_error,
+      ),
+      constMeta: kCrateApiDbFtsDisableDatabaseConstMeta,
+      argValues: [that, dbNum],
+      apiImpl: this,
+    ));
+  }
+
+  TaskConstMeta get kCrateApiDbFtsDisableDatabaseConstMeta =>
+      const TaskConstMeta(
+        debugName: "Db_fts_disable_database",
+        argNames: ["that", "dbNum"],
+      );
+
+  @override
+  Future<void> crateApiDbFtsDisableGlobal({required Db that}) {
+    return handler.executeNormal(NormalTask(
+      callFfi: (port_) {
+        final serializer = SseSerializer(generalizedFrbRustBinding);
+        sse_encode_Auto_Ref_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerDb(
+            that, serializer);
+        pdeCallFfi(generalizedFrbRustBinding, serializer,
+            funcId: 11, port: port_);
+      },
+      codec: SseCodec(
+        decodeSuccessData: sse_decode_unit,
+        decodeErrorData: sse_decode_redlite_error,
+      ),
+      constMeta: kCrateApiDbFtsDisableGlobalConstMeta,
+      argValues: [that],
+      apiImpl: this,
+    ));
+  }
+
+  TaskConstMeta get kCrateApiDbFtsDisableGlobalConstMeta => const TaskConstMeta(
+        debugName: "Db_fts_disable_global",
+        argNames: ["that"],
+      );
+
+  @override
+  Future<void> crateApiDbFtsDisableKey(
+      {required Db that, required String key}) {
+    return handler.executeNormal(NormalTask(
+      callFfi: (port_) {
+        final serializer = SseSerializer(generalizedFrbRustBinding);
+        sse_encode_Auto_Ref_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerDb(
+            that, serializer);
+        sse_encode_String(key, serializer);
+        pdeCallFfi(generalizedFrbRustBinding, serializer,
+            funcId: 12, port: port_);
+      },
+      codec: SseCodec(
+        decodeSuccessData: sse_decode_unit,
+        decodeErrorData: sse_decode_redlite_error,
+      ),
+      constMeta: kCrateApiDbFtsDisableKeyConstMeta,
+      argValues: [that, key],
+      apiImpl: this,
+    ));
+  }
+
+  TaskConstMeta get kCrateApiDbFtsDisableKeyConstMeta => const TaskConstMeta(
+        debugName: "Db_fts_disable_key",
+        argNames: ["that", "key"],
+      );
+
+  @override
+  Future<void> crateApiDbFtsDisablePattern(
+      {required Db that, required String pattern}) {
+    return handler.executeNormal(NormalTask(
+      callFfi: (port_) {
+        final serializer = SseSerializer(generalizedFrbRustBinding);
+        sse_encode_Auto_Ref_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerDb(
+            that, serializer);
+        sse_encode_String(pattern, serializer);
+        pdeCallFfi(generalizedFrbRustBinding, serializer,
+            funcId: 13, port: port_);
+      },
+      codec: SseCodec(
+        decodeSuccessData: sse_decode_unit,
+        decodeErrorData: sse_decode_redlite_error,
+      ),
+      constMeta: kCrateApiDbFtsDisablePatternConstMeta,
+      argValues: [that, pattern],
+      apiImpl: this,
+    ));
+  }
+
+  TaskConstMeta get kCrateApiDbFtsDisablePatternConstMeta =>
+      const TaskConstMeta(
+        debugName: "Db_fts_disable_pattern",
+        argNames: ["that", "pattern"],
+      );
+
+  @override
+  Future<void> crateApiDbFtsEnableDatabase(
+      {required Db that, required PlatformInt64 dbNum}) {
+    return handler.executeNormal(NormalTask(
+      callFfi: (port_) {
+        final serializer = SseSerializer(generalizedFrbRustBinding);
+        sse_encode_Auto_Ref_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerDb(
+            that, serializer);
+        sse_encode_i_64(dbNum, serializer);
+        pdeCallFfi(generalizedFrbRustBinding, serializer,
+            funcId: 14, port: port_);
+      },
+      codec: SseCodec(
+        decodeSuccessData: sse_decode_unit,
+        decodeErrorData: sse_decode_redlite_error,
+      ),
+      constMeta: kCrateApiDbFtsEnableDatabaseConstMeta,
+      argValues: [that, dbNum],
+      apiImpl: this,
+    ));
+  }
+
+  TaskConstMeta get kCrateApiDbFtsEnableDatabaseConstMeta =>
+      const TaskConstMeta(
+        debugName: "Db_fts_enable_database",
+        argNames: ["that", "dbNum"],
+      );
+
+  @override
+  Future<void> crateApiDbFtsEnableGlobal({required Db that}) {
+    return handler.executeNormal(NormalTask(
+      callFfi: (port_) {
+        final serializer = SseSerializer(generalizedFrbRustBinding);
+        sse_encode_Auto_Ref_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerDb(
+            that, serializer);
+        pdeCallFfi(generalizedFrbRustBinding, serializer,
+            funcId: 15, port: port_);
+      },
+      codec: SseCodec(
+        decodeSuccessData: sse_decode_unit,
+        decodeErrorData: sse_decode_redlite_error,
+      ),
+      constMeta: kCrateApiDbFtsEnableGlobalConstMeta,
+      argValues: [that],
+      apiImpl: this,
+    ));
+  }
+
+  TaskConstMeta get kCrateApiDbFtsEnableGlobalConstMeta => const TaskConstMeta(
+        debugName: "Db_fts_enable_global",
+        argNames: ["that"],
+      );
+
+  @override
+  Future<void> crateApiDbFtsEnableKey({required Db that, required String key}) {
+    return handler.executeNormal(NormalTask(
+      callFfi: (port_) {
+        final serializer = SseSerializer(generalizedFrbRustBinding);
+        sse_encode_Auto_Ref_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerDb(
+            that, serializer);
+        sse_encode_String(key, serializer);
+        pdeCallFfi(generalizedFrbRustBinding, serializer,
+            funcId: 16, port: port_);
+      },
+      codec: SseCodec(
+        decodeSuccessData: sse_decode_unit,
+        decodeErrorData: sse_decode_redlite_error,
+      ),
+      constMeta: kCrateApiDbFtsEnableKeyConstMeta,
+      argValues: [that, key],
+      apiImpl: this,
+    ));
+  }
+
+  TaskConstMeta get kCrateApiDbFtsEnableKeyConstMeta => const TaskConstMeta(
+        debugName: "Db_fts_enable_key",
+        argNames: ["that", "key"],
+      );
+
+  @override
+  Future<void> crateApiDbFtsEnablePattern(
+      {required Db that, required String pattern}) {
+    return handler.executeNormal(NormalTask(
+      callFfi: (port_) {
+        final serializer = SseSerializer(generalizedFrbRustBinding);
+        sse_encode_Auto_Ref_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerDb(
+            that, serializer);
+        sse_encode_String(pattern, serializer);
+        pdeCallFfi(generalizedFrbRustBinding, serializer,
+            funcId: 17, port: port_);
+      },
+      codec: SseCodec(
+        decodeSuccessData: sse_decode_unit,
+        decodeErrorData: sse_decode_redlite_error,
+      ),
+      constMeta: kCrateApiDbFtsEnablePatternConstMeta,
+      argValues: [that, pattern],
+      apiImpl: this,
+    ));
+  }
+
+  TaskConstMeta get kCrateApiDbFtsEnablePatternConstMeta => const TaskConstMeta(
+        debugName: "Db_fts_enable_pattern",
+        argNames: ["that", "pattern"],
+      );
 
   @override
   Future<Uint8List?> crateApiDbGet({required Db that, required String key}) {
-    return handler.executeNormal(
-      NormalTask(
-        callFfi: (port_) {
-          final serializer = SseSerializer(generalizedFrbRustBinding);
-          sse_encode_Auto_Ref_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerDb(
-            that,
-            serializer,
-          );
-          sse_encode_String(key, serializer);
-          pdeCallFfi(
-            generalizedFrbRustBinding,
-            serializer,
-            funcId: 10,
-            port: port_,
-          );
-        },
-        codec: SseCodec(
-          decodeSuccessData: sse_decode_opt_list_prim_u_8_strict,
-          decodeErrorData: sse_decode_redlite_error,
-        ),
-        constMeta: kCrateApiDbGetConstMeta,
-        argValues: [that, key],
-        apiImpl: this,
+    return handler.executeNormal(NormalTask(
+      callFfi: (port_) {
+        final serializer = SseSerializer(generalizedFrbRustBinding);
+        sse_encode_Auto_Ref_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerDb(
+            that, serializer);
+        sse_encode_String(key, serializer);
+        pdeCallFfi(generalizedFrbRustBinding, serializer,
+            funcId: 18, port: port_);
+      },
+      codec: SseCodec(
+        decodeSuccessData: sse_decode_opt_list_prim_u_8_strict,
+        decodeErrorData: sse_decode_redlite_error,
       ),
-    );
+      constMeta: kCrateApiDbGetConstMeta,
+      argValues: [that, key],
+      apiImpl: this,
+    ));
   }
 
-  TaskConstMeta get kCrateApiDbGetConstMeta =>
-      const TaskConstMeta(debugName: "Db_get", argNames: ["that", "key"]);
+  TaskConstMeta get kCrateApiDbGetConstMeta => const TaskConstMeta(
+        debugName: "Db_get",
+        argNames: ["that", "key"],
+      );
 
   @override
   Future<Uint8List?> crateApiDbGetdel({required Db that, required String key}) {
-    return handler.executeNormal(
-      NormalTask(
-        callFfi: (port_) {
-          final serializer = SseSerializer(generalizedFrbRustBinding);
-          sse_encode_Auto_Ref_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerDb(
-            that,
-            serializer,
-          );
-          sse_encode_String(key, serializer);
-          pdeCallFfi(
-            generalizedFrbRustBinding,
-            serializer,
-            funcId: 11,
-            port: port_,
-          );
-        },
-        codec: SseCodec(
-          decodeSuccessData: sse_decode_opt_list_prim_u_8_strict,
-          decodeErrorData: sse_decode_redlite_error,
-        ),
-        constMeta: kCrateApiDbGetdelConstMeta,
-        argValues: [that, key],
-        apiImpl: this,
+    return handler.executeNormal(NormalTask(
+      callFfi: (port_) {
+        final serializer = SseSerializer(generalizedFrbRustBinding);
+        sse_encode_Auto_Ref_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerDb(
+            that, serializer);
+        sse_encode_String(key, serializer);
+        pdeCallFfi(generalizedFrbRustBinding, serializer,
+            funcId: 19, port: port_);
+      },
+      codec: SseCodec(
+        decodeSuccessData: sse_decode_opt_list_prim_u_8_strict,
+        decodeErrorData: sse_decode_redlite_error,
       ),
-    );
+      constMeta: kCrateApiDbGetdelConstMeta,
+      argValues: [that, key],
+      apiImpl: this,
+    ));
   }
 
-  TaskConstMeta get kCrateApiDbGetdelConstMeta =>
-      const TaskConstMeta(debugName: "Db_getdel", argNames: ["that", "key"]);
+  TaskConstMeta get kCrateApiDbGetdelConstMeta => const TaskConstMeta(
+        debugName: "Db_getdel",
+        argNames: ["that", "key"],
+      );
 
   @override
-  Future<Uint8List> crateApiDbGetrange({
-    required Db that,
-    required String key,
-    required PlatformInt64 start,
-    required PlatformInt64 end,
-  }) {
-    return handler.executeNormal(
-      NormalTask(
-        callFfi: (port_) {
-          final serializer = SseSerializer(generalizedFrbRustBinding);
-          sse_encode_Auto_Ref_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerDb(
-            that,
-            serializer,
-          );
-          sse_encode_String(key, serializer);
-          sse_encode_i_64(start, serializer);
-          sse_encode_i_64(end, serializer);
-          pdeCallFfi(
-            generalizedFrbRustBinding,
-            serializer,
-            funcId: 12,
-            port: port_,
-          );
-        },
-        codec: SseCodec(
-          decodeSuccessData: sse_decode_list_prim_u_8_strict,
-          decodeErrorData: sse_decode_redlite_error,
-        ),
-        constMeta: kCrateApiDbGetrangeConstMeta,
-        argValues: [that, key, start, end],
-        apiImpl: this,
+  Future<Uint8List> crateApiDbGetrange(
+      {required Db that,
+      required String key,
+      required PlatformInt64 start,
+      required PlatformInt64 end}) {
+    return handler.executeNormal(NormalTask(
+      callFfi: (port_) {
+        final serializer = SseSerializer(generalizedFrbRustBinding);
+        sse_encode_Auto_Ref_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerDb(
+            that, serializer);
+        sse_encode_String(key, serializer);
+        sse_encode_i_64(start, serializer);
+        sse_encode_i_64(end, serializer);
+        pdeCallFfi(generalizedFrbRustBinding, serializer,
+            funcId: 20, port: port_);
+      },
+      codec: SseCodec(
+        decodeSuccessData: sse_decode_list_prim_u_8_strict,
+        decodeErrorData: sse_decode_redlite_error,
       ),
-    );
+      constMeta: kCrateApiDbGetrangeConstMeta,
+      argValues: [that, key, start, end],
+      apiImpl: this,
+    ));
   }
 
   TaskConstMeta get kCrateApiDbGetrangeConstMeta => const TaskConstMeta(
-    debugName: "Db_getrange",
-    argNames: ["that", "key", "start", "end"],
-  );
+        debugName: "Db_getrange",
+        argNames: ["that", "key", "start", "end"],
+      );
 
   @override
-  Future<PlatformInt64> crateApiDbHdel({
-    required Db that,
-    required String key,
-    required List<String> fields,
-  }) {
-    return handler.executeNormal(
-      NormalTask(
-        callFfi: (port_) {
-          final serializer = SseSerializer(generalizedFrbRustBinding);
-          sse_encode_Auto_Ref_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerDb(
-            that,
-            serializer,
-          );
-          sse_encode_String(key, serializer);
-          sse_encode_list_String(fields, serializer);
-          pdeCallFfi(
-            generalizedFrbRustBinding,
-            serializer,
-            funcId: 13,
-            port: port_,
-          );
-        },
-        codec: SseCodec(
-          decodeSuccessData: sse_decode_i_64,
-          decodeErrorData: sse_decode_redlite_error,
-        ),
-        constMeta: kCrateApiDbHdelConstMeta,
-        argValues: [that, key, fields],
-        apiImpl: this,
+  Future<PlatformInt64> crateApiDbHdel(
+      {required Db that, required String key, required List<String> fields}) {
+    return handler.executeNormal(NormalTask(
+      callFfi: (port_) {
+        final serializer = SseSerializer(generalizedFrbRustBinding);
+        sse_encode_Auto_Ref_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerDb(
+            that, serializer);
+        sse_encode_String(key, serializer);
+        sse_encode_list_String(fields, serializer);
+        pdeCallFfi(generalizedFrbRustBinding, serializer,
+            funcId: 21, port: port_);
+      },
+      codec: SseCodec(
+        decodeSuccessData: sse_decode_i_64,
+        decodeErrorData: sse_decode_redlite_error,
       ),
-    );
+      constMeta: kCrateApiDbHdelConstMeta,
+      argValues: [that, key, fields],
+      apiImpl: this,
+    ));
   }
 
   TaskConstMeta get kCrateApiDbHdelConstMeta => const TaskConstMeta(
-    debugName: "Db_hdel",
-    argNames: ["that", "key", "fields"],
-  );
+        debugName: "Db_hdel",
+        argNames: ["that", "key", "fields"],
+      );
 
   @override
-  Future<bool> crateApiDbHexists({
-    required Db that,
-    required String key,
-    required String field,
-  }) {
-    return handler.executeNormal(
-      NormalTask(
-        callFfi: (port_) {
-          final serializer = SseSerializer(generalizedFrbRustBinding);
-          sse_encode_Auto_Ref_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerDb(
-            that,
-            serializer,
-          );
-          sse_encode_String(key, serializer);
-          sse_encode_String(field, serializer);
-          pdeCallFfi(
-            generalizedFrbRustBinding,
-            serializer,
-            funcId: 14,
-            port: port_,
-          );
-        },
-        codec: SseCodec(
-          decodeSuccessData: sse_decode_bool,
-          decodeErrorData: sse_decode_redlite_error,
-        ),
-        constMeta: kCrateApiDbHexistsConstMeta,
-        argValues: [that, key, field],
-        apiImpl: this,
+  Future<bool> crateApiDbHexists(
+      {required Db that, required String key, required String field}) {
+    return handler.executeNormal(NormalTask(
+      callFfi: (port_) {
+        final serializer = SseSerializer(generalizedFrbRustBinding);
+        sse_encode_Auto_Ref_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerDb(
+            that, serializer);
+        sse_encode_String(key, serializer);
+        sse_encode_String(field, serializer);
+        pdeCallFfi(generalizedFrbRustBinding, serializer,
+            funcId: 22, port: port_);
+      },
+      codec: SseCodec(
+        decodeSuccessData: sse_decode_bool,
+        decodeErrorData: sse_decode_redlite_error,
       ),
-    );
+      constMeta: kCrateApiDbHexistsConstMeta,
+      argValues: [that, key, field],
+      apiImpl: this,
+    ));
   }
 
   TaskConstMeta get kCrateApiDbHexistsConstMeta => const TaskConstMeta(
-    debugName: "Db_hexists",
-    argNames: ["that", "key", "field"],
-  );
+        debugName: "Db_hexists",
+        argNames: ["that", "key", "field"],
+      );
 
   @override
-  Future<Uint8List?> crateApiDbHget({
-    required Db that,
-    required String key,
-    required String field,
-  }) {
-    return handler.executeNormal(
-      NormalTask(
-        callFfi: (port_) {
-          final serializer = SseSerializer(generalizedFrbRustBinding);
-          sse_encode_Auto_Ref_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerDb(
-            that,
-            serializer,
-          );
-          sse_encode_String(key, serializer);
-          sse_encode_String(field, serializer);
-          pdeCallFfi(
-            generalizedFrbRustBinding,
-            serializer,
-            funcId: 15,
-            port: port_,
-          );
-        },
-        codec: SseCodec(
-          decodeSuccessData: sse_decode_opt_list_prim_u_8_strict,
-          decodeErrorData: sse_decode_redlite_error,
-        ),
-        constMeta: kCrateApiDbHgetConstMeta,
-        argValues: [that, key, field],
-        apiImpl: this,
+  Future<Uint8List?> crateApiDbHget(
+      {required Db that, required String key, required String field}) {
+    return handler.executeNormal(NormalTask(
+      callFfi: (port_) {
+        final serializer = SseSerializer(generalizedFrbRustBinding);
+        sse_encode_Auto_Ref_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerDb(
+            that, serializer);
+        sse_encode_String(key, serializer);
+        sse_encode_String(field, serializer);
+        pdeCallFfi(generalizedFrbRustBinding, serializer,
+            funcId: 23, port: port_);
+      },
+      codec: SseCodec(
+        decodeSuccessData: sse_decode_opt_list_prim_u_8_strict,
+        decodeErrorData: sse_decode_redlite_error,
       ),
-    );
+      constMeta: kCrateApiDbHgetConstMeta,
+      argValues: [that, key, field],
+      apiImpl: this,
+    ));
   }
 
   TaskConstMeta get kCrateApiDbHgetConstMeta => const TaskConstMeta(
-    debugName: "Db_hget",
-    argNames: ["that", "key", "field"],
-  );
+        debugName: "Db_hget",
+        argNames: ["that", "key", "field"],
+      );
 
   @override
-  Future<List<(String, Uint8List)>> crateApiDbHgetall({
-    required Db that,
-    required String key,
-  }) {
-    return handler.executeNormal(
-      NormalTask(
-        callFfi: (port_) {
-          final serializer = SseSerializer(generalizedFrbRustBinding);
-          sse_encode_Auto_Ref_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerDb(
-            that,
-            serializer,
-          );
-          sse_encode_String(key, serializer);
-          pdeCallFfi(
-            generalizedFrbRustBinding,
-            serializer,
-            funcId: 16,
-            port: port_,
-          );
-        },
-        codec: SseCodec(
-          decodeSuccessData: sse_decode_list_record_string_list_prim_u_8_strict,
-          decodeErrorData: sse_decode_redlite_error,
-        ),
-        constMeta: kCrateApiDbHgetallConstMeta,
-        argValues: [that, key],
-        apiImpl: this,
+  Future<List<(String, Uint8List)>> crateApiDbHgetall(
+      {required Db that, required String key}) {
+    return handler.executeNormal(NormalTask(
+      callFfi: (port_) {
+        final serializer = SseSerializer(generalizedFrbRustBinding);
+        sse_encode_Auto_Ref_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerDb(
+            that, serializer);
+        sse_encode_String(key, serializer);
+        pdeCallFfi(generalizedFrbRustBinding, serializer,
+            funcId: 24, port: port_);
+      },
+      codec: SseCodec(
+        decodeSuccessData: sse_decode_list_record_string_list_prim_u_8_strict,
+        decodeErrorData: sse_decode_redlite_error,
       ),
-    );
+      constMeta: kCrateApiDbHgetallConstMeta,
+      argValues: [that, key],
+      apiImpl: this,
+    ));
   }
 
-  TaskConstMeta get kCrateApiDbHgetallConstMeta =>
-      const TaskConstMeta(debugName: "Db_hgetall", argNames: ["that", "key"]);
+  TaskConstMeta get kCrateApiDbHgetallConstMeta => const TaskConstMeta(
+        debugName: "Db_hgetall",
+        argNames: ["that", "key"],
+      );
 
   @override
-  Future<PlatformInt64> crateApiDbHincrby({
-    required Db that,
-    required String key,
-    required String field,
-    required PlatformInt64 increment,
-  }) {
-    return handler.executeNormal(
-      NormalTask(
-        callFfi: (port_) {
-          final serializer = SseSerializer(generalizedFrbRustBinding);
-          sse_encode_Auto_Ref_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerDb(
-            that,
-            serializer,
-          );
-          sse_encode_String(key, serializer);
-          sse_encode_String(field, serializer);
-          sse_encode_i_64(increment, serializer);
-          pdeCallFfi(
-            generalizedFrbRustBinding,
-            serializer,
-            funcId: 17,
-            port: port_,
-          );
-        },
-        codec: SseCodec(
-          decodeSuccessData: sse_decode_i_64,
-          decodeErrorData: sse_decode_redlite_error,
-        ),
-        constMeta: kCrateApiDbHincrbyConstMeta,
-        argValues: [that, key, field, increment],
-        apiImpl: this,
+  Future<PlatformInt64> crateApiDbHincrby(
+      {required Db that,
+      required String key,
+      required String field,
+      required PlatformInt64 increment}) {
+    return handler.executeNormal(NormalTask(
+      callFfi: (port_) {
+        final serializer = SseSerializer(generalizedFrbRustBinding);
+        sse_encode_Auto_Ref_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerDb(
+            that, serializer);
+        sse_encode_String(key, serializer);
+        sse_encode_String(field, serializer);
+        sse_encode_i_64(increment, serializer);
+        pdeCallFfi(generalizedFrbRustBinding, serializer,
+            funcId: 25, port: port_);
+      },
+      codec: SseCodec(
+        decodeSuccessData: sse_decode_i_64,
+        decodeErrorData: sse_decode_redlite_error,
       ),
-    );
+      constMeta: kCrateApiDbHincrbyConstMeta,
+      argValues: [that, key, field, increment],
+      apiImpl: this,
+    ));
   }
 
   TaskConstMeta get kCrateApiDbHincrbyConstMeta => const TaskConstMeta(
-    debugName: "Db_hincrby",
-    argNames: ["that", "key", "field", "increment"],
-  );
+        debugName: "Db_hincrby",
+        argNames: ["that", "key", "field", "increment"],
+      );
 
   @override
-  Future<List<String>> crateApiDbHkeys({
-    required Db that,
-    required String key,
-  }) {
-    return handler.executeNormal(
-      NormalTask(
-        callFfi: (port_) {
-          final serializer = SseSerializer(generalizedFrbRustBinding);
-          sse_encode_Auto_Ref_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerDb(
-            that,
-            serializer,
-          );
-          sse_encode_String(key, serializer);
-          pdeCallFfi(
-            generalizedFrbRustBinding,
-            serializer,
-            funcId: 18,
-            port: port_,
-          );
-        },
-        codec: SseCodec(
-          decodeSuccessData: sse_decode_list_String,
-          decodeErrorData: sse_decode_redlite_error,
-        ),
-        constMeta: kCrateApiDbHkeysConstMeta,
-        argValues: [that, key],
-        apiImpl: this,
+  Future<void> crateApiDbHistoryDisableDatabase(
+      {required Db that, required PlatformInt64 dbNum}) {
+    return handler.executeNormal(NormalTask(
+      callFfi: (port_) {
+        final serializer = SseSerializer(generalizedFrbRustBinding);
+        sse_encode_Auto_Ref_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerDb(
+            that, serializer);
+        sse_encode_i_64(dbNum, serializer);
+        pdeCallFfi(generalizedFrbRustBinding, serializer,
+            funcId: 26, port: port_);
+      },
+      codec: SseCodec(
+        decodeSuccessData: sse_decode_unit,
+        decodeErrorData: sse_decode_redlite_error,
       ),
-    );
+      constMeta: kCrateApiDbHistoryDisableDatabaseConstMeta,
+      argValues: [that, dbNum],
+      apiImpl: this,
+    ));
   }
 
-  TaskConstMeta get kCrateApiDbHkeysConstMeta =>
-      const TaskConstMeta(debugName: "Db_hkeys", argNames: ["that", "key"]);
+  TaskConstMeta get kCrateApiDbHistoryDisableDatabaseConstMeta =>
+      const TaskConstMeta(
+        debugName: "Db_history_disable_database",
+        argNames: ["that", "dbNum"],
+      );
 
   @override
-  Future<PlatformInt64> crateApiDbHlen({
-    required Db that,
-    required String key,
-  }) {
-    return handler.executeNormal(
-      NormalTask(
-        callFfi: (port_) {
-          final serializer = SseSerializer(generalizedFrbRustBinding);
-          sse_encode_Auto_Ref_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerDb(
-            that,
-            serializer,
-          );
-          sse_encode_String(key, serializer);
-          pdeCallFfi(
-            generalizedFrbRustBinding,
-            serializer,
-            funcId: 19,
-            port: port_,
-          );
-        },
-        codec: SseCodec(
-          decodeSuccessData: sse_decode_i_64,
-          decodeErrorData: sse_decode_redlite_error,
-        ),
-        constMeta: kCrateApiDbHlenConstMeta,
-        argValues: [that, key],
-        apiImpl: this,
+  Future<void> crateApiDbHistoryDisableGlobal({required Db that}) {
+    return handler.executeNormal(NormalTask(
+      callFfi: (port_) {
+        final serializer = SseSerializer(generalizedFrbRustBinding);
+        sse_encode_Auto_Ref_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerDb(
+            that, serializer);
+        pdeCallFfi(generalizedFrbRustBinding, serializer,
+            funcId: 27, port: port_);
+      },
+      codec: SseCodec(
+        decodeSuccessData: sse_decode_unit,
+        decodeErrorData: sse_decode_redlite_error,
       ),
-    );
+      constMeta: kCrateApiDbHistoryDisableGlobalConstMeta,
+      argValues: [that],
+      apiImpl: this,
+    ));
   }
 
-  TaskConstMeta get kCrateApiDbHlenConstMeta =>
-      const TaskConstMeta(debugName: "Db_hlen", argNames: ["that", "key"]);
+  TaskConstMeta get kCrateApiDbHistoryDisableGlobalConstMeta =>
+      const TaskConstMeta(
+        debugName: "Db_history_disable_global",
+        argNames: ["that"],
+      );
 
   @override
-  Future<List<Uint8List?>> crateApiDbHmget({
-    required Db that,
-    required String key,
-    required List<String> fields,
-  }) {
-    return handler.executeNormal(
-      NormalTask(
-        callFfi: (port_) {
-          final serializer = SseSerializer(generalizedFrbRustBinding);
-          sse_encode_Auto_Ref_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerDb(
-            that,
-            serializer,
-          );
-          sse_encode_String(key, serializer);
-          sse_encode_list_String(fields, serializer);
-          pdeCallFfi(
-            generalizedFrbRustBinding,
-            serializer,
-            funcId: 20,
-            port: port_,
-          );
-        },
-        codec: SseCodec(
-          decodeSuccessData: sse_decode_list_opt_list_prim_u_8_strict,
-          decodeErrorData: sse_decode_redlite_error,
-        ),
-        constMeta: kCrateApiDbHmgetConstMeta,
-        argValues: [that, key, fields],
-        apiImpl: this,
+  Future<void> crateApiDbHistoryDisableKey(
+      {required Db that, required String key}) {
+    return handler.executeNormal(NormalTask(
+      callFfi: (port_) {
+        final serializer = SseSerializer(generalizedFrbRustBinding);
+        sse_encode_Auto_Ref_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerDb(
+            that, serializer);
+        sse_encode_String(key, serializer);
+        pdeCallFfi(generalizedFrbRustBinding, serializer,
+            funcId: 28, port: port_);
+      },
+      codec: SseCodec(
+        decodeSuccessData: sse_decode_unit,
+        decodeErrorData: sse_decode_redlite_error,
       ),
-    );
+      constMeta: kCrateApiDbHistoryDisableKeyConstMeta,
+      argValues: [that, key],
+      apiImpl: this,
+    ));
+  }
+
+  TaskConstMeta get kCrateApiDbHistoryDisableKeyConstMeta =>
+      const TaskConstMeta(
+        debugName: "Db_history_disable_key",
+        argNames: ["that", "key"],
+      );
+
+  @override
+  Future<void> crateApiDbHistoryEnableDatabase(
+      {required Db that,
+      required PlatformInt64 dbNum,
+      required String retentionType,
+      required PlatformInt64 retentionValue}) {
+    return handler.executeNormal(NormalTask(
+      callFfi: (port_) {
+        final serializer = SseSerializer(generalizedFrbRustBinding);
+        sse_encode_Auto_Ref_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerDb(
+            that, serializer);
+        sse_encode_i_64(dbNum, serializer);
+        sse_encode_String(retentionType, serializer);
+        sse_encode_i_64(retentionValue, serializer);
+        pdeCallFfi(generalizedFrbRustBinding, serializer,
+            funcId: 29, port: port_);
+      },
+      codec: SseCodec(
+        decodeSuccessData: sse_decode_unit,
+        decodeErrorData: sse_decode_redlite_error,
+      ),
+      constMeta: kCrateApiDbHistoryEnableDatabaseConstMeta,
+      argValues: [that, dbNum, retentionType, retentionValue],
+      apiImpl: this,
+    ));
+  }
+
+  TaskConstMeta get kCrateApiDbHistoryEnableDatabaseConstMeta =>
+      const TaskConstMeta(
+        debugName: "Db_history_enable_database",
+        argNames: ["that", "dbNum", "retentionType", "retentionValue"],
+      );
+
+  @override
+  Future<void> crateApiDbHistoryEnableGlobal(
+      {required Db that,
+      required String retentionType,
+      required PlatformInt64 retentionValue}) {
+    return handler.executeNormal(NormalTask(
+      callFfi: (port_) {
+        final serializer = SseSerializer(generalizedFrbRustBinding);
+        sse_encode_Auto_Ref_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerDb(
+            that, serializer);
+        sse_encode_String(retentionType, serializer);
+        sse_encode_i_64(retentionValue, serializer);
+        pdeCallFfi(generalizedFrbRustBinding, serializer,
+            funcId: 30, port: port_);
+      },
+      codec: SseCodec(
+        decodeSuccessData: sse_decode_unit,
+        decodeErrorData: sse_decode_redlite_error,
+      ),
+      constMeta: kCrateApiDbHistoryEnableGlobalConstMeta,
+      argValues: [that, retentionType, retentionValue],
+      apiImpl: this,
+    ));
+  }
+
+  TaskConstMeta get kCrateApiDbHistoryEnableGlobalConstMeta =>
+      const TaskConstMeta(
+        debugName: "Db_history_enable_global",
+        argNames: ["that", "retentionType", "retentionValue"],
+      );
+
+  @override
+  Future<void> crateApiDbHistoryEnableKey(
+      {required Db that,
+      required String key,
+      required String retentionType,
+      required PlatformInt64 retentionValue}) {
+    return handler.executeNormal(NormalTask(
+      callFfi: (port_) {
+        final serializer = SseSerializer(generalizedFrbRustBinding);
+        sse_encode_Auto_Ref_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerDb(
+            that, serializer);
+        sse_encode_String(key, serializer);
+        sse_encode_String(retentionType, serializer);
+        sse_encode_i_64(retentionValue, serializer);
+        pdeCallFfi(generalizedFrbRustBinding, serializer,
+            funcId: 31, port: port_);
+      },
+      codec: SseCodec(
+        decodeSuccessData: sse_decode_unit,
+        decodeErrorData: sse_decode_redlite_error,
+      ),
+      constMeta: kCrateApiDbHistoryEnableKeyConstMeta,
+      argValues: [that, key, retentionType, retentionValue],
+      apiImpl: this,
+    ));
+  }
+
+  TaskConstMeta get kCrateApiDbHistoryEnableKeyConstMeta => const TaskConstMeta(
+        debugName: "Db_history_enable_key",
+        argNames: ["that", "key", "retentionType", "retentionValue"],
+      );
+
+  @override
+  Future<List<String>> crateApiDbHkeys(
+      {required Db that, required String key}) {
+    return handler.executeNormal(NormalTask(
+      callFfi: (port_) {
+        final serializer = SseSerializer(generalizedFrbRustBinding);
+        sse_encode_Auto_Ref_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerDb(
+            that, serializer);
+        sse_encode_String(key, serializer);
+        pdeCallFfi(generalizedFrbRustBinding, serializer,
+            funcId: 32, port: port_);
+      },
+      codec: SseCodec(
+        decodeSuccessData: sse_decode_list_String,
+        decodeErrorData: sse_decode_redlite_error,
+      ),
+      constMeta: kCrateApiDbHkeysConstMeta,
+      argValues: [that, key],
+      apiImpl: this,
+    ));
+  }
+
+  TaskConstMeta get kCrateApiDbHkeysConstMeta => const TaskConstMeta(
+        debugName: "Db_hkeys",
+        argNames: ["that", "key"],
+      );
+
+  @override
+  Future<PlatformInt64> crateApiDbHlen(
+      {required Db that, required String key}) {
+    return handler.executeNormal(NormalTask(
+      callFfi: (port_) {
+        final serializer = SseSerializer(generalizedFrbRustBinding);
+        sse_encode_Auto_Ref_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerDb(
+            that, serializer);
+        sse_encode_String(key, serializer);
+        pdeCallFfi(generalizedFrbRustBinding, serializer,
+            funcId: 33, port: port_);
+      },
+      codec: SseCodec(
+        decodeSuccessData: sse_decode_i_64,
+        decodeErrorData: sse_decode_redlite_error,
+      ),
+      constMeta: kCrateApiDbHlenConstMeta,
+      argValues: [that, key],
+      apiImpl: this,
+    ));
+  }
+
+  TaskConstMeta get kCrateApiDbHlenConstMeta => const TaskConstMeta(
+        debugName: "Db_hlen",
+        argNames: ["that", "key"],
+      );
+
+  @override
+  Future<List<Uint8List?>> crateApiDbHmget(
+      {required Db that, required String key, required List<String> fields}) {
+    return handler.executeNormal(NormalTask(
+      callFfi: (port_) {
+        final serializer = SseSerializer(generalizedFrbRustBinding);
+        sse_encode_Auto_Ref_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerDb(
+            that, serializer);
+        sse_encode_String(key, serializer);
+        sse_encode_list_String(fields, serializer);
+        pdeCallFfi(generalizedFrbRustBinding, serializer,
+            funcId: 34, port: port_);
+      },
+      codec: SseCodec(
+        decodeSuccessData: sse_decode_list_opt_list_prim_u_8_strict,
+        decodeErrorData: sse_decode_redlite_error,
+      ),
+      constMeta: kCrateApiDbHmgetConstMeta,
+      argValues: [that, key, fields],
+      apiImpl: this,
+    ));
   }
 
   TaskConstMeta get kCrateApiDbHmgetConstMeta => const TaskConstMeta(
-    debugName: "Db_hmget",
-    argNames: ["that", "key", "fields"],
-  );
+        debugName: "Db_hmget",
+        argNames: ["that", "key", "fields"],
+      );
 
   @override
-  Future<PlatformInt64> crateApiDbHmset({
-    required Db that,
-    required String key,
-    required List<(String, Uint8List)> mapping,
-  }) {
-    return handler.executeNormal(
-      NormalTask(
-        callFfi: (port_) {
-          final serializer = SseSerializer(generalizedFrbRustBinding);
-          sse_encode_Auto_Ref_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerDb(
-            that,
-            serializer,
-          );
-          sse_encode_String(key, serializer);
-          sse_encode_list_record_string_list_prim_u_8_strict(
-            mapping,
-            serializer,
-          );
-          pdeCallFfi(
-            generalizedFrbRustBinding,
-            serializer,
-            funcId: 21,
-            port: port_,
-          );
-        },
-        codec: SseCodec(
-          decodeSuccessData: sse_decode_i_64,
-          decodeErrorData: sse_decode_redlite_error,
-        ),
-        constMeta: kCrateApiDbHmsetConstMeta,
-        argValues: [that, key, mapping],
-        apiImpl: this,
+  Future<PlatformInt64> crateApiDbHmset(
+      {required Db that,
+      required String key,
+      required List<(String, Uint8List)> mapping}) {
+    return handler.executeNormal(NormalTask(
+      callFfi: (port_) {
+        final serializer = SseSerializer(generalizedFrbRustBinding);
+        sse_encode_Auto_Ref_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerDb(
+            that, serializer);
+        sse_encode_String(key, serializer);
+        sse_encode_list_record_string_list_prim_u_8_strict(mapping, serializer);
+        pdeCallFfi(generalizedFrbRustBinding, serializer,
+            funcId: 35, port: port_);
+      },
+      codec: SseCodec(
+        decodeSuccessData: sse_decode_i_64,
+        decodeErrorData: sse_decode_redlite_error,
       ),
-    );
+      constMeta: kCrateApiDbHmsetConstMeta,
+      argValues: [that, key, mapping],
+      apiImpl: this,
+    ));
   }
 
   TaskConstMeta get kCrateApiDbHmsetConstMeta => const TaskConstMeta(
-    debugName: "Db_hmset",
-    argNames: ["that", "key", "mapping"],
-  );
+        debugName: "Db_hmset",
+        argNames: ["that", "key", "mapping"],
+      );
 
   @override
-  Future<(String, List<(String, Uint8List)>)> crateApiDbHscan({
-    required Db that,
-    required String key,
-    required String cursor,
-    String? pattern,
-    required PlatformInt64 count,
-  }) {
-    return handler.executeNormal(
-      NormalTask(
-        callFfi: (port_) {
-          final serializer = SseSerializer(generalizedFrbRustBinding);
-          sse_encode_Auto_Ref_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerDb(
-            that,
-            serializer,
-          );
-          sse_encode_String(key, serializer);
-          sse_encode_String(cursor, serializer);
-          sse_encode_opt_String(pattern, serializer);
-          sse_encode_i_64(count, serializer);
-          pdeCallFfi(
-            generalizedFrbRustBinding,
-            serializer,
-            funcId: 22,
-            port: port_,
-          );
-        },
-        codec: SseCodec(
-          decodeSuccessData:
-              sse_decode_record_string_list_record_string_list_prim_u_8_strict,
-          decodeErrorData: sse_decode_redlite_error,
-        ),
-        constMeta: kCrateApiDbHscanConstMeta,
-        argValues: [that, key, cursor, pattern, count],
-        apiImpl: this,
+  Future<(String, List<(String, Uint8List)>)> crateApiDbHscan(
+      {required Db that,
+      required String key,
+      required String cursor,
+      String? pattern,
+      required PlatformInt64 count}) {
+    return handler.executeNormal(NormalTask(
+      callFfi: (port_) {
+        final serializer = SseSerializer(generalizedFrbRustBinding);
+        sse_encode_Auto_Ref_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerDb(
+            that, serializer);
+        sse_encode_String(key, serializer);
+        sse_encode_String(cursor, serializer);
+        sse_encode_opt_String(pattern, serializer);
+        sse_encode_i_64(count, serializer);
+        pdeCallFfi(generalizedFrbRustBinding, serializer,
+            funcId: 36, port: port_);
+      },
+      codec: SseCodec(
+        decodeSuccessData:
+            sse_decode_record_string_list_record_string_list_prim_u_8_strict,
+        decodeErrorData: sse_decode_redlite_error,
       ),
-    );
+      constMeta: kCrateApiDbHscanConstMeta,
+      argValues: [that, key, cursor, pattern, count],
+      apiImpl: this,
+    ));
   }
 
   TaskConstMeta get kCrateApiDbHscanConstMeta => const TaskConstMeta(
-    debugName: "Db_hscan",
-    argNames: ["that", "key", "cursor", "pattern", "count"],
-  );
+        debugName: "Db_hscan",
+        argNames: ["that", "key", "cursor", "pattern", "count"],
+      );
 
   @override
-  Future<PlatformInt64> crateApiDbHset({
-    required Db that,
-    required String key,
-    required String field,
-    required List<int> value,
-  }) {
-    return handler.executeNormal(
-      NormalTask(
-        callFfi: (port_) {
-          final serializer = SseSerializer(generalizedFrbRustBinding);
-          sse_encode_Auto_Ref_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerDb(
-            that,
-            serializer,
-          );
-          sse_encode_String(key, serializer);
-          sse_encode_String(field, serializer);
-          sse_encode_list_prim_u_8_loose(value, serializer);
-          pdeCallFfi(
-            generalizedFrbRustBinding,
-            serializer,
-            funcId: 23,
-            port: port_,
-          );
-        },
-        codec: SseCodec(
-          decodeSuccessData: sse_decode_i_64,
-          decodeErrorData: sse_decode_redlite_error,
-        ),
-        constMeta: kCrateApiDbHsetConstMeta,
-        argValues: [that, key, field, value],
-        apiImpl: this,
+  Future<PlatformInt64> crateApiDbHset(
+      {required Db that,
+      required String key,
+      required String field,
+      required List<int> value}) {
+    return handler.executeNormal(NormalTask(
+      callFfi: (port_) {
+        final serializer = SseSerializer(generalizedFrbRustBinding);
+        sse_encode_Auto_Ref_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerDb(
+            that, serializer);
+        sse_encode_String(key, serializer);
+        sse_encode_String(field, serializer);
+        sse_encode_list_prim_u_8_loose(value, serializer);
+        pdeCallFfi(generalizedFrbRustBinding, serializer,
+            funcId: 37, port: port_);
+      },
+      codec: SseCodec(
+        decodeSuccessData: sse_decode_i_64,
+        decodeErrorData: sse_decode_redlite_error,
       ),
-    );
+      constMeta: kCrateApiDbHsetConstMeta,
+      argValues: [that, key, field, value],
+      apiImpl: this,
+    ));
   }
 
   TaskConstMeta get kCrateApiDbHsetConstMeta => const TaskConstMeta(
-    debugName: "Db_hset",
-    argNames: ["that", "key", "field", "value"],
-  );
+        debugName: "Db_hset",
+        argNames: ["that", "key", "field", "value"],
+      );
 
   @override
-  Future<List<Uint8List>> crateApiDbHvals({
-    required Db that,
-    required String key,
-  }) {
-    return handler.executeNormal(
-      NormalTask(
-        callFfi: (port_) {
-          final serializer = SseSerializer(generalizedFrbRustBinding);
-          sse_encode_Auto_Ref_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerDb(
-            that,
-            serializer,
-          );
-          sse_encode_String(key, serializer);
-          pdeCallFfi(
-            generalizedFrbRustBinding,
-            serializer,
-            funcId: 24,
-            port: port_,
-          );
-        },
-        codec: SseCodec(
-          decodeSuccessData: sse_decode_list_list_prim_u_8_strict,
-          decodeErrorData: sse_decode_redlite_error,
-        ),
-        constMeta: kCrateApiDbHvalsConstMeta,
-        argValues: [that, key],
-        apiImpl: this,
+  Future<List<Uint8List>> crateApiDbHvals(
+      {required Db that, required String key}) {
+    return handler.executeNormal(NormalTask(
+      callFfi: (port_) {
+        final serializer = SseSerializer(generalizedFrbRustBinding);
+        sse_encode_Auto_Ref_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerDb(
+            that, serializer);
+        sse_encode_String(key, serializer);
+        pdeCallFfi(generalizedFrbRustBinding, serializer,
+            funcId: 38, port: port_);
+      },
+      codec: SseCodec(
+        decodeSuccessData: sse_decode_list_list_prim_u_8_strict,
+        decodeErrorData: sse_decode_redlite_error,
       ),
-    );
+      constMeta: kCrateApiDbHvalsConstMeta,
+      argValues: [that, key],
+      apiImpl: this,
+    ));
   }
 
-  TaskConstMeta get kCrateApiDbHvalsConstMeta =>
-      const TaskConstMeta(debugName: "Db_hvals", argNames: ["that", "key"]);
+  TaskConstMeta get kCrateApiDbHvalsConstMeta => const TaskConstMeta(
+        debugName: "Db_hvals",
+        argNames: ["that", "key"],
+      );
 
   @override
-  Future<PlatformInt64> crateApiDbIncr({
-    required Db that,
-    required String key,
-  }) {
-    return handler.executeNormal(
-      NormalTask(
-        callFfi: (port_) {
-          final serializer = SseSerializer(generalizedFrbRustBinding);
-          sse_encode_Auto_Ref_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerDb(
-            that,
-            serializer,
-          );
-          sse_encode_String(key, serializer);
-          pdeCallFfi(
-            generalizedFrbRustBinding,
-            serializer,
-            funcId: 25,
-            port: port_,
-          );
-        },
-        codec: SseCodec(
-          decodeSuccessData: sse_decode_i_64,
-          decodeErrorData: sse_decode_redlite_error,
-        ),
-        constMeta: kCrateApiDbIncrConstMeta,
-        argValues: [that, key],
-        apiImpl: this,
+  Future<PlatformInt64> crateApiDbIncr(
+      {required Db that, required String key}) {
+    return handler.executeNormal(NormalTask(
+      callFfi: (port_) {
+        final serializer = SseSerializer(generalizedFrbRustBinding);
+        sse_encode_Auto_Ref_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerDb(
+            that, serializer);
+        sse_encode_String(key, serializer);
+        pdeCallFfi(generalizedFrbRustBinding, serializer,
+            funcId: 39, port: port_);
+      },
+      codec: SseCodec(
+        decodeSuccessData: sse_decode_i_64,
+        decodeErrorData: sse_decode_redlite_error,
       ),
-    );
+      constMeta: kCrateApiDbIncrConstMeta,
+      argValues: [that, key],
+      apiImpl: this,
+    ));
   }
 
-  TaskConstMeta get kCrateApiDbIncrConstMeta =>
-      const TaskConstMeta(debugName: "Db_incr", argNames: ["that", "key"]);
+  TaskConstMeta get kCrateApiDbIncrConstMeta => const TaskConstMeta(
+        debugName: "Db_incr",
+        argNames: ["that", "key"],
+      );
 
   @override
-  Future<PlatformInt64> crateApiDbIncrby({
-    required Db that,
-    required String key,
-    required PlatformInt64 increment,
-  }) {
-    return handler.executeNormal(
-      NormalTask(
-        callFfi: (port_) {
-          final serializer = SseSerializer(generalizedFrbRustBinding);
-          sse_encode_Auto_Ref_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerDb(
-            that,
-            serializer,
-          );
-          sse_encode_String(key, serializer);
-          sse_encode_i_64(increment, serializer);
-          pdeCallFfi(
-            generalizedFrbRustBinding,
-            serializer,
-            funcId: 26,
-            port: port_,
-          );
-        },
-        codec: SseCodec(
-          decodeSuccessData: sse_decode_i_64,
-          decodeErrorData: sse_decode_redlite_error,
-        ),
-        constMeta: kCrateApiDbIncrbyConstMeta,
-        argValues: [that, key, increment],
-        apiImpl: this,
+  Future<PlatformInt64> crateApiDbIncrby(
+      {required Db that,
+      required String key,
+      required PlatformInt64 increment}) {
+    return handler.executeNormal(NormalTask(
+      callFfi: (port_) {
+        final serializer = SseSerializer(generalizedFrbRustBinding);
+        sse_encode_Auto_Ref_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerDb(
+            that, serializer);
+        sse_encode_String(key, serializer);
+        sse_encode_i_64(increment, serializer);
+        pdeCallFfi(generalizedFrbRustBinding, serializer,
+            funcId: 40, port: port_);
+      },
+      codec: SseCodec(
+        decodeSuccessData: sse_decode_i_64,
+        decodeErrorData: sse_decode_redlite_error,
       ),
-    );
+      constMeta: kCrateApiDbIncrbyConstMeta,
+      argValues: [that, key, increment],
+      apiImpl: this,
+    ));
   }
 
   TaskConstMeta get kCrateApiDbIncrbyConstMeta => const TaskConstMeta(
-    debugName: "Db_incrby",
-    argNames: ["that", "key", "increment"],
-  );
+        debugName: "Db_incrby",
+        argNames: ["that", "key", "increment"],
+      );
 
   @override
-  Future<double> crateApiDbIncrbyfloat({
-    required Db that,
-    required String key,
-    required double increment,
-  }) {
-    return handler.executeNormal(
-      NormalTask(
-        callFfi: (port_) {
-          final serializer = SseSerializer(generalizedFrbRustBinding);
-          sse_encode_Auto_Ref_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerDb(
-            that,
-            serializer,
-          );
-          sse_encode_String(key, serializer);
-          sse_encode_f_64(increment, serializer);
-          pdeCallFfi(
-            generalizedFrbRustBinding,
-            serializer,
-            funcId: 27,
-            port: port_,
-          );
-        },
-        codec: SseCodec(
-          decodeSuccessData: sse_decode_f_64,
-          decodeErrorData: sse_decode_redlite_error,
-        ),
-        constMeta: kCrateApiDbIncrbyfloatConstMeta,
-        argValues: [that, key, increment],
-        apiImpl: this,
+  Future<double> crateApiDbIncrbyfloat(
+      {required Db that, required String key, required double increment}) {
+    return handler.executeNormal(NormalTask(
+      callFfi: (port_) {
+        final serializer = SseSerializer(generalizedFrbRustBinding);
+        sse_encode_Auto_Ref_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerDb(
+            that, serializer);
+        sse_encode_String(key, serializer);
+        sse_encode_f_64(increment, serializer);
+        pdeCallFfi(generalizedFrbRustBinding, serializer,
+            funcId: 41, port: port_);
+      },
+      codec: SseCodec(
+        decodeSuccessData: sse_decode_f_64,
+        decodeErrorData: sse_decode_redlite_error,
       ),
-    );
+      constMeta: kCrateApiDbIncrbyfloatConstMeta,
+      argValues: [that, key, increment],
+      apiImpl: this,
+    ));
   }
 
   TaskConstMeta get kCrateApiDbIncrbyfloatConstMeta => const TaskConstMeta(
-    debugName: "Db_incrbyfloat",
-    argNames: ["that", "key", "increment"],
-  );
+        debugName: "Db_incrbyfloat",
+        argNames: ["that", "key", "increment"],
+      );
+
+  @override
+  Future<bool> crateApiDbIsFtsEnabled({required Db that, required String key}) {
+    return handler.executeNormal(NormalTask(
+      callFfi: (port_) {
+        final serializer = SseSerializer(generalizedFrbRustBinding);
+        sse_encode_Auto_Ref_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerDb(
+            that, serializer);
+        sse_encode_String(key, serializer);
+        pdeCallFfi(generalizedFrbRustBinding, serializer,
+            funcId: 42, port: port_);
+      },
+      codec: SseCodec(
+        decodeSuccessData: sse_decode_bool,
+        decodeErrorData: sse_decode_redlite_error,
+      ),
+      constMeta: kCrateApiDbIsFtsEnabledConstMeta,
+      argValues: [that, key],
+      apiImpl: this,
+    ));
+  }
+
+  TaskConstMeta get kCrateApiDbIsFtsEnabledConstMeta => const TaskConstMeta(
+        debugName: "Db_is_fts_enabled",
+        argNames: ["that", "key"],
+      );
+
+  @override
+  Future<bool> crateApiDbIsHistoryEnabled(
+      {required Db that, required String key}) {
+    return handler.executeNormal(NormalTask(
+      callFfi: (port_) {
+        final serializer = SseSerializer(generalizedFrbRustBinding);
+        sse_encode_Auto_Ref_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerDb(
+            that, serializer);
+        sse_encode_String(key, serializer);
+        pdeCallFfi(generalizedFrbRustBinding, serializer,
+            funcId: 43, port: port_);
+      },
+      codec: SseCodec(
+        decodeSuccessData: sse_decode_bool,
+        decodeErrorData: sse_decode_redlite_error,
+      ),
+      constMeta: kCrateApiDbIsHistoryEnabledConstMeta,
+      argValues: [that, key],
+      apiImpl: this,
+    ));
+  }
+
+  TaskConstMeta get kCrateApiDbIsHistoryEnabledConstMeta => const TaskConstMeta(
+        debugName: "Db_is_history_enabled",
+        argNames: ["that", "key"],
+      );
+
+  @override
+  Future<PlatformInt64> crateApiDbJsonArrappend(
+      {required Db that,
+      required String key,
+      required String path,
+      required List<String> values}) {
+    return handler.executeNormal(NormalTask(
+      callFfi: (port_) {
+        final serializer = SseSerializer(generalizedFrbRustBinding);
+        sse_encode_Auto_Ref_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerDb(
+            that, serializer);
+        sse_encode_String(key, serializer);
+        sse_encode_String(path, serializer);
+        sse_encode_list_String(values, serializer);
+        pdeCallFfi(generalizedFrbRustBinding, serializer,
+            funcId: 44, port: port_);
+      },
+      codec: SseCodec(
+        decodeSuccessData: sse_decode_i_64,
+        decodeErrorData: sse_decode_redlite_error,
+      ),
+      constMeta: kCrateApiDbJsonArrappendConstMeta,
+      argValues: [that, key, path, values],
+      apiImpl: this,
+    ));
+  }
+
+  TaskConstMeta get kCrateApiDbJsonArrappendConstMeta => const TaskConstMeta(
+        debugName: "Db_json_arrappend",
+        argNames: ["that", "key", "path", "values"],
+      );
+
+  @override
+  Future<PlatformInt64?> crateApiDbJsonArrlen(
+      {required Db that, required String key, String? path}) {
+    return handler.executeNormal(NormalTask(
+      callFfi: (port_) {
+        final serializer = SseSerializer(generalizedFrbRustBinding);
+        sse_encode_Auto_Ref_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerDb(
+            that, serializer);
+        sse_encode_String(key, serializer);
+        sse_encode_opt_String(path, serializer);
+        pdeCallFfi(generalizedFrbRustBinding, serializer,
+            funcId: 45, port: port_);
+      },
+      codec: SseCodec(
+        decodeSuccessData: sse_decode_opt_box_autoadd_i_64,
+        decodeErrorData: sse_decode_redlite_error,
+      ),
+      constMeta: kCrateApiDbJsonArrlenConstMeta,
+      argValues: [that, key, path],
+      apiImpl: this,
+    ));
+  }
+
+  TaskConstMeta get kCrateApiDbJsonArrlenConstMeta => const TaskConstMeta(
+        debugName: "Db_json_arrlen",
+        argNames: ["that", "key", "path"],
+      );
+
+  @override
+  Future<String?> crateApiDbJsonArrpop(
+      {required Db that,
+      required String key,
+      String? path,
+      PlatformInt64? index}) {
+    return handler.executeNormal(NormalTask(
+      callFfi: (port_) {
+        final serializer = SseSerializer(generalizedFrbRustBinding);
+        sse_encode_Auto_Ref_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerDb(
+            that, serializer);
+        sse_encode_String(key, serializer);
+        sse_encode_opt_String(path, serializer);
+        sse_encode_opt_box_autoadd_i_64(index, serializer);
+        pdeCallFfi(generalizedFrbRustBinding, serializer,
+            funcId: 46, port: port_);
+      },
+      codec: SseCodec(
+        decodeSuccessData: sse_decode_opt_String,
+        decodeErrorData: sse_decode_redlite_error,
+      ),
+      constMeta: kCrateApiDbJsonArrpopConstMeta,
+      argValues: [that, key, path, index],
+      apiImpl: this,
+    ));
+  }
+
+  TaskConstMeta get kCrateApiDbJsonArrpopConstMeta => const TaskConstMeta(
+        debugName: "Db_json_arrpop",
+        argNames: ["that", "key", "path", "index"],
+      );
+
+  @override
+  Future<PlatformInt64> crateApiDbJsonClear(
+      {required Db that, required String key, String? path}) {
+    return handler.executeNormal(NormalTask(
+      callFfi: (port_) {
+        final serializer = SseSerializer(generalizedFrbRustBinding);
+        sse_encode_Auto_Ref_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerDb(
+            that, serializer);
+        sse_encode_String(key, serializer);
+        sse_encode_opt_String(path, serializer);
+        pdeCallFfi(generalizedFrbRustBinding, serializer,
+            funcId: 47, port: port_);
+      },
+      codec: SseCodec(
+        decodeSuccessData: sse_decode_i_64,
+        decodeErrorData: sse_decode_redlite_error,
+      ),
+      constMeta: kCrateApiDbJsonClearConstMeta,
+      argValues: [that, key, path],
+      apiImpl: this,
+    ));
+  }
+
+  TaskConstMeta get kCrateApiDbJsonClearConstMeta => const TaskConstMeta(
+        debugName: "Db_json_clear",
+        argNames: ["that", "key", "path"],
+      );
+
+  @override
+  Future<PlatformInt64> crateApiDbJsonDel(
+      {required Db that, required String key, String? path}) {
+    return handler.executeNormal(NormalTask(
+      callFfi: (port_) {
+        final serializer = SseSerializer(generalizedFrbRustBinding);
+        sse_encode_Auto_Ref_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerDb(
+            that, serializer);
+        sse_encode_String(key, serializer);
+        sse_encode_opt_String(path, serializer);
+        pdeCallFfi(generalizedFrbRustBinding, serializer,
+            funcId: 48, port: port_);
+      },
+      codec: SseCodec(
+        decodeSuccessData: sse_decode_i_64,
+        decodeErrorData: sse_decode_redlite_error,
+      ),
+      constMeta: kCrateApiDbJsonDelConstMeta,
+      argValues: [that, key, path],
+      apiImpl: this,
+    ));
+  }
+
+  TaskConstMeta get kCrateApiDbJsonDelConstMeta => const TaskConstMeta(
+        debugName: "Db_json_del",
+        argNames: ["that", "key", "path"],
+      );
+
+  @override
+  Future<String?> crateApiDbJsonGet(
+      {required Db that, required String key, required List<String> paths}) {
+    return handler.executeNormal(NormalTask(
+      callFfi: (port_) {
+        final serializer = SseSerializer(generalizedFrbRustBinding);
+        sse_encode_Auto_Ref_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerDb(
+            that, serializer);
+        sse_encode_String(key, serializer);
+        sse_encode_list_String(paths, serializer);
+        pdeCallFfi(generalizedFrbRustBinding, serializer,
+            funcId: 49, port: port_);
+      },
+      codec: SseCodec(
+        decodeSuccessData: sse_decode_opt_String,
+        decodeErrorData: sse_decode_redlite_error,
+      ),
+      constMeta: kCrateApiDbJsonGetConstMeta,
+      argValues: [that, key, paths],
+      apiImpl: this,
+    ));
+  }
+
+  TaskConstMeta get kCrateApiDbJsonGetConstMeta => const TaskConstMeta(
+        debugName: "Db_json_get",
+        argNames: ["that", "key", "paths"],
+      );
+
+  @override
+  Future<String> crateApiDbJsonNumincrby(
+      {required Db that,
+      required String key,
+      required String path,
+      required double increment}) {
+    return handler.executeNormal(NormalTask(
+      callFfi: (port_) {
+        final serializer = SseSerializer(generalizedFrbRustBinding);
+        sse_encode_Auto_Ref_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerDb(
+            that, serializer);
+        sse_encode_String(key, serializer);
+        sse_encode_String(path, serializer);
+        sse_encode_f_64(increment, serializer);
+        pdeCallFfi(generalizedFrbRustBinding, serializer,
+            funcId: 50, port: port_);
+      },
+      codec: SseCodec(
+        decodeSuccessData: sse_decode_String,
+        decodeErrorData: sse_decode_redlite_error,
+      ),
+      constMeta: kCrateApiDbJsonNumincrbyConstMeta,
+      argValues: [that, key, path, increment],
+      apiImpl: this,
+    ));
+  }
+
+  TaskConstMeta get kCrateApiDbJsonNumincrbyConstMeta => const TaskConstMeta(
+        debugName: "Db_json_numincrby",
+        argNames: ["that", "key", "path", "increment"],
+      );
+
+  @override
+  Future<bool> crateApiDbJsonSet(
+      {required Db that,
+      required String key,
+      required String path,
+      required String value,
+      required bool nx,
+      required bool xx}) {
+    return handler.executeNormal(NormalTask(
+      callFfi: (port_) {
+        final serializer = SseSerializer(generalizedFrbRustBinding);
+        sse_encode_Auto_Ref_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerDb(
+            that, serializer);
+        sse_encode_String(key, serializer);
+        sse_encode_String(path, serializer);
+        sse_encode_String(value, serializer);
+        sse_encode_bool(nx, serializer);
+        sse_encode_bool(xx, serializer);
+        pdeCallFfi(generalizedFrbRustBinding, serializer,
+            funcId: 51, port: port_);
+      },
+      codec: SseCodec(
+        decodeSuccessData: sse_decode_bool,
+        decodeErrorData: sse_decode_redlite_error,
+      ),
+      constMeta: kCrateApiDbJsonSetConstMeta,
+      argValues: [that, key, path, value, nx, xx],
+      apiImpl: this,
+    ));
+  }
+
+  TaskConstMeta get kCrateApiDbJsonSetConstMeta => const TaskConstMeta(
+        debugName: "Db_json_set",
+        argNames: ["that", "key", "path", "value", "nx", "xx"],
+      );
+
+  @override
+  Future<PlatformInt64> crateApiDbJsonStrappend(
+      {required Db that,
+      required String key,
+      String? path,
+      required String value}) {
+    return handler.executeNormal(NormalTask(
+      callFfi: (port_) {
+        final serializer = SseSerializer(generalizedFrbRustBinding);
+        sse_encode_Auto_Ref_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerDb(
+            that, serializer);
+        sse_encode_String(key, serializer);
+        sse_encode_opt_String(path, serializer);
+        sse_encode_String(value, serializer);
+        pdeCallFfi(generalizedFrbRustBinding, serializer,
+            funcId: 52, port: port_);
+      },
+      codec: SseCodec(
+        decodeSuccessData: sse_decode_i_64,
+        decodeErrorData: sse_decode_redlite_error,
+      ),
+      constMeta: kCrateApiDbJsonStrappendConstMeta,
+      argValues: [that, key, path, value],
+      apiImpl: this,
+    ));
+  }
+
+  TaskConstMeta get kCrateApiDbJsonStrappendConstMeta => const TaskConstMeta(
+        debugName: "Db_json_strappend",
+        argNames: ["that", "key", "path", "value"],
+      );
+
+  @override
+  Future<PlatformInt64?> crateApiDbJsonStrlen(
+      {required Db that, required String key, String? path}) {
+    return handler.executeNormal(NormalTask(
+      callFfi: (port_) {
+        final serializer = SseSerializer(generalizedFrbRustBinding);
+        sse_encode_Auto_Ref_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerDb(
+            that, serializer);
+        sse_encode_String(key, serializer);
+        sse_encode_opt_String(path, serializer);
+        pdeCallFfi(generalizedFrbRustBinding, serializer,
+            funcId: 53, port: port_);
+      },
+      codec: SseCodec(
+        decodeSuccessData: sse_decode_opt_box_autoadd_i_64,
+        decodeErrorData: sse_decode_redlite_error,
+      ),
+      constMeta: kCrateApiDbJsonStrlenConstMeta,
+      argValues: [that, key, path],
+      apiImpl: this,
+    ));
+  }
+
+  TaskConstMeta get kCrateApiDbJsonStrlenConstMeta => const TaskConstMeta(
+        debugName: "Db_json_strlen",
+        argNames: ["that", "key", "path"],
+      );
+
+  @override
+  Future<String?> crateApiDbJsonType(
+      {required Db that, required String key, String? path}) {
+    return handler.executeNormal(NormalTask(
+      callFfi: (port_) {
+        final serializer = SseSerializer(generalizedFrbRustBinding);
+        sse_encode_Auto_Ref_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerDb(
+            that, serializer);
+        sse_encode_String(key, serializer);
+        sse_encode_opt_String(path, serializer);
+        pdeCallFfi(generalizedFrbRustBinding, serializer,
+            funcId: 54, port: port_);
+      },
+      codec: SseCodec(
+        decodeSuccessData: sse_decode_opt_String,
+        decodeErrorData: sse_decode_redlite_error,
+      ),
+      constMeta: kCrateApiDbJsonTypeConstMeta,
+      argValues: [that, key, path],
+      apiImpl: this,
+    ));
+  }
+
+  TaskConstMeta get kCrateApiDbJsonTypeConstMeta => const TaskConstMeta(
+        debugName: "Db_json_type",
+        argNames: ["that", "key", "path"],
+      );
 
   @override
   Future<KeyType> crateApiDbKeyType({required Db that, required String key}) {
-    return handler.executeNormal(
-      NormalTask(
-        callFfi: (port_) {
-          final serializer = SseSerializer(generalizedFrbRustBinding);
-          sse_encode_Auto_Ref_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerDb(
-            that,
-            serializer,
-          );
-          sse_encode_String(key, serializer);
-          pdeCallFfi(
-            generalizedFrbRustBinding,
-            serializer,
-            funcId: 28,
-            port: port_,
-          );
-        },
-        codec: SseCodec(
-          decodeSuccessData: sse_decode_key_type,
-          decodeErrorData: sse_decode_redlite_error,
-        ),
-        constMeta: kCrateApiDbKeyTypeConstMeta,
-        argValues: [that, key],
-        apiImpl: this,
+    return handler.executeNormal(NormalTask(
+      callFfi: (port_) {
+        final serializer = SseSerializer(generalizedFrbRustBinding);
+        sse_encode_Auto_Ref_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerDb(
+            that, serializer);
+        sse_encode_String(key, serializer);
+        pdeCallFfi(generalizedFrbRustBinding, serializer,
+            funcId: 55, port: port_);
+      },
+      codec: SseCodec(
+        decodeSuccessData: sse_decode_key_type,
+        decodeErrorData: sse_decode_redlite_error,
       ),
-    );
+      constMeta: kCrateApiDbKeyTypeConstMeta,
+      argValues: [that, key],
+      apiImpl: this,
+    ));
   }
 
-  TaskConstMeta get kCrateApiDbKeyTypeConstMeta =>
-      const TaskConstMeta(debugName: "Db_key_type", argNames: ["that", "key"]);
+  TaskConstMeta get kCrateApiDbKeyTypeConstMeta => const TaskConstMeta(
+        debugName: "Db_key_type",
+        argNames: ["that", "key"],
+      );
 
   @override
-  Future<List<String>> crateApiDbKeys({
-    required Db that,
-    required String pattern,
-  }) {
-    return handler.executeNormal(
-      NormalTask(
-        callFfi: (port_) {
-          final serializer = SseSerializer(generalizedFrbRustBinding);
-          sse_encode_Auto_Ref_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerDb(
-            that,
-            serializer,
-          );
-          sse_encode_String(pattern, serializer);
-          pdeCallFfi(
-            generalizedFrbRustBinding,
-            serializer,
-            funcId: 29,
-            port: port_,
-          );
-        },
-        codec: SseCodec(
-          decodeSuccessData: sse_decode_list_String,
-          decodeErrorData: sse_decode_redlite_error,
-        ),
-        constMeta: kCrateApiDbKeysConstMeta,
-        argValues: [that, pattern],
-        apiImpl: this,
+  Future<KeyInfo?> crateApiDbKeyinfo({required Db that, required String key}) {
+    return handler.executeNormal(NormalTask(
+      callFfi: (port_) {
+        final serializer = SseSerializer(generalizedFrbRustBinding);
+        sse_encode_Auto_Ref_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerDb(
+            that, serializer);
+        sse_encode_String(key, serializer);
+        pdeCallFfi(generalizedFrbRustBinding, serializer,
+            funcId: 56, port: port_);
+      },
+      codec: SseCodec(
+        decodeSuccessData: sse_decode_opt_box_autoadd_key_info,
+        decodeErrorData: sse_decode_redlite_error,
       ),
-    );
+      constMeta: kCrateApiDbKeyinfoConstMeta,
+      argValues: [that, key],
+      apiImpl: this,
+    ));
   }
 
-  TaskConstMeta get kCrateApiDbKeysConstMeta =>
-      const TaskConstMeta(debugName: "Db_keys", argNames: ["that", "pattern"]);
+  TaskConstMeta get kCrateApiDbKeyinfoConstMeta => const TaskConstMeta(
+        debugName: "Db_keyinfo",
+        argNames: ["that", "key"],
+      );
 
   @override
-  Future<Uint8List?> crateApiDbLindex({
-    required Db that,
-    required String key,
-    required PlatformInt64 index,
-  }) {
-    return handler.executeNormal(
-      NormalTask(
-        callFfi: (port_) {
-          final serializer = SseSerializer(generalizedFrbRustBinding);
-          sse_encode_Auto_Ref_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerDb(
-            that,
-            serializer,
-          );
-          sse_encode_String(key, serializer);
-          sse_encode_i_64(index, serializer);
-          pdeCallFfi(
-            generalizedFrbRustBinding,
-            serializer,
-            funcId: 30,
-            port: port_,
-          );
-        },
-        codec: SseCodec(
-          decodeSuccessData: sse_decode_opt_list_prim_u_8_strict,
-          decodeErrorData: sse_decode_redlite_error,
-        ),
-        constMeta: kCrateApiDbLindexConstMeta,
-        argValues: [that, key, index],
-        apiImpl: this,
+  Future<List<String>> crateApiDbKeys(
+      {required Db that, required String pattern}) {
+    return handler.executeNormal(NormalTask(
+      callFfi: (port_) {
+        final serializer = SseSerializer(generalizedFrbRustBinding);
+        sse_encode_Auto_Ref_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerDb(
+            that, serializer);
+        sse_encode_String(pattern, serializer);
+        pdeCallFfi(generalizedFrbRustBinding, serializer,
+            funcId: 57, port: port_);
+      },
+      codec: SseCodec(
+        decodeSuccessData: sse_decode_list_String,
+        decodeErrorData: sse_decode_redlite_error,
       ),
-    );
+      constMeta: kCrateApiDbKeysConstMeta,
+      argValues: [that, pattern],
+      apiImpl: this,
+    ));
+  }
+
+  TaskConstMeta get kCrateApiDbKeysConstMeta => const TaskConstMeta(
+        debugName: "Db_keys",
+        argNames: ["that", "pattern"],
+      );
+
+  @override
+  Future<Uint8List?> crateApiDbLindex(
+      {required Db that, required String key, required PlatformInt64 index}) {
+    return handler.executeNormal(NormalTask(
+      callFfi: (port_) {
+        final serializer = SseSerializer(generalizedFrbRustBinding);
+        sse_encode_Auto_Ref_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerDb(
+            that, serializer);
+        sse_encode_String(key, serializer);
+        sse_encode_i_64(index, serializer);
+        pdeCallFfi(generalizedFrbRustBinding, serializer,
+            funcId: 58, port: port_);
+      },
+      codec: SseCodec(
+        decodeSuccessData: sse_decode_opt_list_prim_u_8_strict,
+        decodeErrorData: sse_decode_redlite_error,
+      ),
+      constMeta: kCrateApiDbLindexConstMeta,
+      argValues: [that, key, index],
+      apiImpl: this,
+    ));
   }
 
   TaskConstMeta get kCrateApiDbLindexConstMeta => const TaskConstMeta(
-    debugName: "Db_lindex",
-    argNames: ["that", "key", "index"],
-  );
+        debugName: "Db_lindex",
+        argNames: ["that", "key", "index"],
+      );
 
   @override
-  Future<PlatformInt64> crateApiDbLlen({
-    required Db that,
-    required String key,
-  }) {
-    return handler.executeNormal(
-      NormalTask(
-        callFfi: (port_) {
-          final serializer = SseSerializer(generalizedFrbRustBinding);
-          sse_encode_Auto_Ref_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerDb(
-            that,
-            serializer,
-          );
-          sse_encode_String(key, serializer);
-          pdeCallFfi(
-            generalizedFrbRustBinding,
-            serializer,
-            funcId: 31,
-            port: port_,
-          );
-        },
-        codec: SseCodec(
-          decodeSuccessData: sse_decode_i_64,
-          decodeErrorData: sse_decode_redlite_error,
-        ),
-        constMeta: kCrateApiDbLlenConstMeta,
-        argValues: [that, key],
-        apiImpl: this,
+  Future<PlatformInt64> crateApiDbLlen(
+      {required Db that, required String key}) {
+    return handler.executeNormal(NormalTask(
+      callFfi: (port_) {
+        final serializer = SseSerializer(generalizedFrbRustBinding);
+        sse_encode_Auto_Ref_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerDb(
+            that, serializer);
+        sse_encode_String(key, serializer);
+        pdeCallFfi(generalizedFrbRustBinding, serializer,
+            funcId: 59, port: port_);
+      },
+      codec: SseCodec(
+        decodeSuccessData: sse_decode_i_64,
+        decodeErrorData: sse_decode_redlite_error,
       ),
-    );
+      constMeta: kCrateApiDbLlenConstMeta,
+      argValues: [that, key],
+      apiImpl: this,
+    ));
   }
 
-  TaskConstMeta get kCrateApiDbLlenConstMeta =>
-      const TaskConstMeta(debugName: "Db_llen", argNames: ["that", "key"]);
+  TaskConstMeta get kCrateApiDbLlenConstMeta => const TaskConstMeta(
+        debugName: "Db_llen",
+        argNames: ["that", "key"],
+      );
 
   @override
-  Future<List<Uint8List>> crateApiDbLpop({
-    required Db that,
-    required String key,
-    PlatformInt64? count,
-  }) {
-    return handler.executeNormal(
-      NormalTask(
-        callFfi: (port_) {
-          final serializer = SseSerializer(generalizedFrbRustBinding);
-          sse_encode_Auto_Ref_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerDb(
-            that,
-            serializer,
-          );
-          sse_encode_String(key, serializer);
-          sse_encode_opt_box_autoadd_i_64(count, serializer);
-          pdeCallFfi(
-            generalizedFrbRustBinding,
-            serializer,
-            funcId: 32,
-            port: port_,
-          );
-        },
-        codec: SseCodec(
-          decodeSuccessData: sse_decode_list_list_prim_u_8_strict,
-          decodeErrorData: sse_decode_redlite_error,
-        ),
-        constMeta: kCrateApiDbLpopConstMeta,
-        argValues: [that, key, count],
-        apiImpl: this,
+  Future<List<Uint8List>> crateApiDbLpop(
+      {required Db that, required String key, PlatformInt64? count}) {
+    return handler.executeNormal(NormalTask(
+      callFfi: (port_) {
+        final serializer = SseSerializer(generalizedFrbRustBinding);
+        sse_encode_Auto_Ref_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerDb(
+            that, serializer);
+        sse_encode_String(key, serializer);
+        sse_encode_opt_box_autoadd_i_64(count, serializer);
+        pdeCallFfi(generalizedFrbRustBinding, serializer,
+            funcId: 60, port: port_);
+      },
+      codec: SseCodec(
+        decodeSuccessData: sse_decode_list_list_prim_u_8_strict,
+        decodeErrorData: sse_decode_redlite_error,
       ),
-    );
+      constMeta: kCrateApiDbLpopConstMeta,
+      argValues: [that, key, count],
+      apiImpl: this,
+    ));
   }
 
   TaskConstMeta get kCrateApiDbLpopConstMeta => const TaskConstMeta(
-    debugName: "Db_lpop",
-    argNames: ["that", "key", "count"],
-  );
+        debugName: "Db_lpop",
+        argNames: ["that", "key", "count"],
+      );
 
   @override
-  Future<PlatformInt64> crateApiDbLpush({
-    required Db that,
-    required String key,
-    required List<Uint8List> values,
-  }) {
-    return handler.executeNormal(
-      NormalTask(
-        callFfi: (port_) {
-          final serializer = SseSerializer(generalizedFrbRustBinding);
-          sse_encode_Auto_Ref_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerDb(
-            that,
-            serializer,
-          );
-          sse_encode_String(key, serializer);
-          sse_encode_list_list_prim_u_8_strict(values, serializer);
-          pdeCallFfi(
-            generalizedFrbRustBinding,
-            serializer,
-            funcId: 33,
-            port: port_,
-          );
-        },
-        codec: SseCodec(
-          decodeSuccessData: sse_decode_i_64,
-          decodeErrorData: sse_decode_redlite_error,
-        ),
-        constMeta: kCrateApiDbLpushConstMeta,
-        argValues: [that, key, values],
-        apiImpl: this,
+  Future<PlatformInt64> crateApiDbLpush(
+      {required Db that,
+      required String key,
+      required List<Uint8List> values}) {
+    return handler.executeNormal(NormalTask(
+      callFfi: (port_) {
+        final serializer = SseSerializer(generalizedFrbRustBinding);
+        sse_encode_Auto_Ref_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerDb(
+            that, serializer);
+        sse_encode_String(key, serializer);
+        sse_encode_list_list_prim_u_8_strict(values, serializer);
+        pdeCallFfi(generalizedFrbRustBinding, serializer,
+            funcId: 61, port: port_);
+      },
+      codec: SseCodec(
+        decodeSuccessData: sse_decode_i_64,
+        decodeErrorData: sse_decode_redlite_error,
       ),
-    );
+      constMeta: kCrateApiDbLpushConstMeta,
+      argValues: [that, key, values],
+      apiImpl: this,
+    ));
   }
 
   TaskConstMeta get kCrateApiDbLpushConstMeta => const TaskConstMeta(
-    debugName: "Db_lpush",
-    argNames: ["that", "key", "values"],
-  );
+        debugName: "Db_lpush",
+        argNames: ["that", "key", "values"],
+      );
 
   @override
-  Future<List<Uint8List>> crateApiDbLrange({
-    required Db that,
-    required String key,
-    required PlatformInt64 start,
-    required PlatformInt64 stop,
-  }) {
-    return handler.executeNormal(
-      NormalTask(
-        callFfi: (port_) {
-          final serializer = SseSerializer(generalizedFrbRustBinding);
-          sse_encode_Auto_Ref_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerDb(
-            that,
-            serializer,
-          );
-          sse_encode_String(key, serializer);
-          sse_encode_i_64(start, serializer);
-          sse_encode_i_64(stop, serializer);
-          pdeCallFfi(
-            generalizedFrbRustBinding,
-            serializer,
-            funcId: 34,
-            port: port_,
-          );
-        },
-        codec: SseCodec(
-          decodeSuccessData: sse_decode_list_list_prim_u_8_strict,
-          decodeErrorData: sse_decode_redlite_error,
-        ),
-        constMeta: kCrateApiDbLrangeConstMeta,
-        argValues: [that, key, start, stop],
-        apiImpl: this,
+  Future<List<Uint8List>> crateApiDbLrange(
+      {required Db that,
+      required String key,
+      required PlatformInt64 start,
+      required PlatformInt64 stop}) {
+    return handler.executeNormal(NormalTask(
+      callFfi: (port_) {
+        final serializer = SseSerializer(generalizedFrbRustBinding);
+        sse_encode_Auto_Ref_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerDb(
+            that, serializer);
+        sse_encode_String(key, serializer);
+        sse_encode_i_64(start, serializer);
+        sse_encode_i_64(stop, serializer);
+        pdeCallFfi(generalizedFrbRustBinding, serializer,
+            funcId: 62, port: port_);
+      },
+      codec: SseCodec(
+        decodeSuccessData: sse_decode_list_list_prim_u_8_strict,
+        decodeErrorData: sse_decode_redlite_error,
       ),
-    );
+      constMeta: kCrateApiDbLrangeConstMeta,
+      argValues: [that, key, start, stop],
+      apiImpl: this,
+    ));
   }
 
   TaskConstMeta get kCrateApiDbLrangeConstMeta => const TaskConstMeta(
-    debugName: "Db_lrange",
-    argNames: ["that", "key", "start", "stop"],
-  );
+        debugName: "Db_lrange",
+        argNames: ["that", "key", "start", "stop"],
+      );
 
   @override
-  Future<void> crateApiDbLset({
-    required Db that,
-    required String key,
-    required PlatformInt64 index,
-    required List<int> value,
-  }) {
-    return handler.executeNormal(
-      NormalTask(
-        callFfi: (port_) {
-          final serializer = SseSerializer(generalizedFrbRustBinding);
-          sse_encode_Auto_Ref_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerDb(
-            that,
-            serializer,
-          );
-          sse_encode_String(key, serializer);
-          sse_encode_i_64(index, serializer);
-          sse_encode_list_prim_u_8_loose(value, serializer);
-          pdeCallFfi(
-            generalizedFrbRustBinding,
-            serializer,
-            funcId: 35,
-            port: port_,
-          );
-        },
-        codec: SseCodec(
-          decodeSuccessData: sse_decode_unit,
-          decodeErrorData: sse_decode_redlite_error,
-        ),
-        constMeta: kCrateApiDbLsetConstMeta,
-        argValues: [that, key, index, value],
-        apiImpl: this,
+  Future<void> crateApiDbLset(
+      {required Db that,
+      required String key,
+      required PlatformInt64 index,
+      required List<int> value}) {
+    return handler.executeNormal(NormalTask(
+      callFfi: (port_) {
+        final serializer = SseSerializer(generalizedFrbRustBinding);
+        sse_encode_Auto_Ref_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerDb(
+            that, serializer);
+        sse_encode_String(key, serializer);
+        sse_encode_i_64(index, serializer);
+        sse_encode_list_prim_u_8_loose(value, serializer);
+        pdeCallFfi(generalizedFrbRustBinding, serializer,
+            funcId: 63, port: port_);
+      },
+      codec: SseCodec(
+        decodeSuccessData: sse_decode_unit,
+        decodeErrorData: sse_decode_redlite_error,
       ),
-    );
+      constMeta: kCrateApiDbLsetConstMeta,
+      argValues: [that, key, index, value],
+      apiImpl: this,
+    ));
   }
 
   TaskConstMeta get kCrateApiDbLsetConstMeta => const TaskConstMeta(
-    debugName: "Db_lset",
-    argNames: ["that", "key", "index", "value"],
-  );
+        debugName: "Db_lset",
+        argNames: ["that", "key", "index", "value"],
+      );
 
   @override
-  Future<void> crateApiDbLtrim({
-    required Db that,
-    required String key,
-    required PlatformInt64 start,
-    required PlatformInt64 stop,
-  }) {
-    return handler.executeNormal(
-      NormalTask(
-        callFfi: (port_) {
-          final serializer = SseSerializer(generalizedFrbRustBinding);
-          sse_encode_Auto_Ref_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerDb(
-            that,
-            serializer,
-          );
-          sse_encode_String(key, serializer);
-          sse_encode_i_64(start, serializer);
-          sse_encode_i_64(stop, serializer);
-          pdeCallFfi(
-            generalizedFrbRustBinding,
-            serializer,
-            funcId: 36,
-            port: port_,
-          );
-        },
-        codec: SseCodec(
-          decodeSuccessData: sse_decode_unit,
-          decodeErrorData: sse_decode_redlite_error,
-        ),
-        constMeta: kCrateApiDbLtrimConstMeta,
-        argValues: [that, key, start, stop],
-        apiImpl: this,
+  Future<void> crateApiDbLtrim(
+      {required Db that,
+      required String key,
+      required PlatformInt64 start,
+      required PlatformInt64 stop}) {
+    return handler.executeNormal(NormalTask(
+      callFfi: (port_) {
+        final serializer = SseSerializer(generalizedFrbRustBinding);
+        sse_encode_Auto_Ref_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerDb(
+            that, serializer);
+        sse_encode_String(key, serializer);
+        sse_encode_i_64(start, serializer);
+        sse_encode_i_64(stop, serializer);
+        pdeCallFfi(generalizedFrbRustBinding, serializer,
+            funcId: 64, port: port_);
+      },
+      codec: SseCodec(
+        decodeSuccessData: sse_decode_unit,
+        decodeErrorData: sse_decode_redlite_error,
       ),
-    );
+      constMeta: kCrateApiDbLtrimConstMeta,
+      argValues: [that, key, start, stop],
+      apiImpl: this,
+    ));
   }
 
   TaskConstMeta get kCrateApiDbLtrimConstMeta => const TaskConstMeta(
-    debugName: "Db_ltrim",
-    argNames: ["that", "key", "start", "stop"],
-  );
+        debugName: "Db_ltrim",
+        argNames: ["that", "key", "start", "stop"],
+      );
 
   @override
-  Future<List<Uint8List?>> crateApiDbMget({
-    required Db that,
-    required List<String> keys,
-  }) {
-    return handler.executeNormal(
-      NormalTask(
-        callFfi: (port_) {
-          final serializer = SseSerializer(generalizedFrbRustBinding);
-          sse_encode_Auto_Ref_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerDb(
-            that,
-            serializer,
-          );
-          sse_encode_list_String(keys, serializer);
-          pdeCallFfi(
-            generalizedFrbRustBinding,
-            serializer,
-            funcId: 37,
-            port: port_,
-          );
-        },
-        codec: SseCodec(
-          decodeSuccessData: sse_decode_list_opt_list_prim_u_8_strict,
-          decodeErrorData: null,
-        ),
-        constMeta: kCrateApiDbMgetConstMeta,
-        argValues: [that, keys],
-        apiImpl: this,
+  Future<List<Uint8List?>> crateApiDbMget(
+      {required Db that, required List<String> keys}) {
+    return handler.executeNormal(NormalTask(
+      callFfi: (port_) {
+        final serializer = SseSerializer(generalizedFrbRustBinding);
+        sse_encode_Auto_Ref_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerDb(
+            that, serializer);
+        sse_encode_list_String(keys, serializer);
+        pdeCallFfi(generalizedFrbRustBinding, serializer,
+            funcId: 65, port: port_);
+      },
+      codec: SseCodec(
+        decodeSuccessData: sse_decode_list_opt_list_prim_u_8_strict,
+        decodeErrorData: null,
       ),
-    );
+      constMeta: kCrateApiDbMgetConstMeta,
+      argValues: [that, keys],
+      apiImpl: this,
+    ));
   }
 
-  TaskConstMeta get kCrateApiDbMgetConstMeta =>
-      const TaskConstMeta(debugName: "Db_mget", argNames: ["that", "keys"]);
+  TaskConstMeta get kCrateApiDbMgetConstMeta => const TaskConstMeta(
+        debugName: "Db_mget",
+        argNames: ["that", "keys"],
+      );
 
   @override
-  Future<void> crateApiDbMset({
-    required Db that,
-    required List<(String, Uint8List)> pairs,
-  }) {
-    return handler.executeNormal(
-      NormalTask(
-        callFfi: (port_) {
-          final serializer = SseSerializer(generalizedFrbRustBinding);
-          sse_encode_Auto_Ref_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerDb(
-            that,
-            serializer,
-          );
-          sse_encode_list_record_string_list_prim_u_8_strict(pairs, serializer);
-          pdeCallFfi(
-            generalizedFrbRustBinding,
-            serializer,
-            funcId: 38,
-            port: port_,
-          );
-        },
-        codec: SseCodec(
-          decodeSuccessData: sse_decode_unit,
-          decodeErrorData: sse_decode_redlite_error,
-        ),
-        constMeta: kCrateApiDbMsetConstMeta,
-        argValues: [that, pairs],
-        apiImpl: this,
+  Future<void> crateApiDbMset(
+      {required Db that, required List<(String, Uint8List)> pairs}) {
+    return handler.executeNormal(NormalTask(
+      callFfi: (port_) {
+        final serializer = SseSerializer(generalizedFrbRustBinding);
+        sse_encode_Auto_Ref_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerDb(
+            that, serializer);
+        sse_encode_list_record_string_list_prim_u_8_strict(pairs, serializer);
+        pdeCallFfi(generalizedFrbRustBinding, serializer,
+            funcId: 66, port: port_);
+      },
+      codec: SseCodec(
+        decodeSuccessData: sse_decode_unit,
+        decodeErrorData: sse_decode_redlite_error,
       ),
-    );
+      constMeta: kCrateApiDbMsetConstMeta,
+      argValues: [that, pairs],
+      apiImpl: this,
+    ));
   }
 
-  TaskConstMeta get kCrateApiDbMsetConstMeta =>
-      const TaskConstMeta(debugName: "Db_mset", argNames: ["that", "pairs"]);
+  TaskConstMeta get kCrateApiDbMsetConstMeta => const TaskConstMeta(
+        debugName: "Db_mset",
+        argNames: ["that", "pairs"],
+      );
 
   @override
   Db crateApiDbOpen({required String path}) {
-    return handler.executeSync(
-      SyncTask(
-        callFfi: () {
-          final serializer = SseSerializer(generalizedFrbRustBinding);
-          sse_encode_String(path, serializer);
-          return pdeCallFfi(generalizedFrbRustBinding, serializer, funcId: 39)!;
-        },
-        codec: SseCodec(
-          decodeSuccessData:
-              sse_decode_Auto_Owned_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerDb,
-          decodeErrorData: sse_decode_redlite_error,
-        ),
-        constMeta: kCrateApiDbOpenConstMeta,
-        argValues: [path],
-        apiImpl: this,
+    return handler.executeSync(SyncTask(
+      callFfi: () {
+        final serializer = SseSerializer(generalizedFrbRustBinding);
+        sse_encode_String(path, serializer);
+        return pdeCallFfi(generalizedFrbRustBinding, serializer, funcId: 67)!;
+      },
+      codec: SseCodec(
+        decodeSuccessData:
+            sse_decode_Auto_Owned_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerDb,
+        decodeErrorData: sse_decode_redlite_error,
       ),
-    );
+      constMeta: kCrateApiDbOpenConstMeta,
+      argValues: [path],
+      apiImpl: this,
+    ));
   }
 
-  TaskConstMeta get kCrateApiDbOpenConstMeta =>
-      const TaskConstMeta(debugName: "Db_open", argNames: ["path"]);
+  TaskConstMeta get kCrateApiDbOpenConstMeta => const TaskConstMeta(
+        debugName: "Db_open",
+        argNames: ["path"],
+      );
 
   @override
   Db crateApiDbOpenMemory() {
-    return handler.executeSync(
-      SyncTask(
-        callFfi: () {
-          final serializer = SseSerializer(generalizedFrbRustBinding);
-          return pdeCallFfi(generalizedFrbRustBinding, serializer, funcId: 40)!;
-        },
-        codec: SseCodec(
-          decodeSuccessData:
-              sse_decode_Auto_Owned_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerDb,
-          decodeErrorData: sse_decode_redlite_error,
-        ),
-        constMeta: kCrateApiDbOpenMemoryConstMeta,
-        argValues: [],
-        apiImpl: this,
+    return handler.executeSync(SyncTask(
+      callFfi: () {
+        final serializer = SseSerializer(generalizedFrbRustBinding);
+        return pdeCallFfi(generalizedFrbRustBinding, serializer, funcId: 68)!;
+      },
+      codec: SseCodec(
+        decodeSuccessData:
+            sse_decode_Auto_Owned_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerDb,
+        decodeErrorData: sse_decode_redlite_error,
       ),
-    );
+      constMeta: kCrateApiDbOpenMemoryConstMeta,
+      argValues: [],
+      apiImpl: this,
+    ));
   }
 
-  TaskConstMeta get kCrateApiDbOpenMemoryConstMeta =>
-      const TaskConstMeta(debugName: "Db_open_memory", argNames: []);
+  TaskConstMeta get kCrateApiDbOpenMemoryConstMeta => const TaskConstMeta(
+        debugName: "Db_open_memory",
+        argNames: [],
+      );
 
   @override
-  Db crateApiDbOpenWithCache({
-    required String path,
-    required PlatformInt64 cacheMb,
-  }) {
-    return handler.executeSync(
-      SyncTask(
-        callFfi: () {
-          final serializer = SseSerializer(generalizedFrbRustBinding);
-          sse_encode_String(path, serializer);
-          sse_encode_i_64(cacheMb, serializer);
-          return pdeCallFfi(generalizedFrbRustBinding, serializer, funcId: 41)!;
-        },
-        codec: SseCodec(
-          decodeSuccessData:
-              sse_decode_Auto_Owned_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerDb,
-          decodeErrorData: sse_decode_redlite_error,
-        ),
-        constMeta: kCrateApiDbOpenWithCacheConstMeta,
-        argValues: [path, cacheMb],
-        apiImpl: this,
+  Db crateApiDbOpenWithCache(
+      {required String path, required PlatformInt64 cacheMb}) {
+    return handler.executeSync(SyncTask(
+      callFfi: () {
+        final serializer = SseSerializer(generalizedFrbRustBinding);
+        sse_encode_String(path, serializer);
+        sse_encode_i_64(cacheMb, serializer);
+        return pdeCallFfi(generalizedFrbRustBinding, serializer, funcId: 69)!;
+      },
+      codec: SseCodec(
+        decodeSuccessData:
+            sse_decode_Auto_Owned_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerDb,
+        decodeErrorData: sse_decode_redlite_error,
       ),
-    );
+      constMeta: kCrateApiDbOpenWithCacheConstMeta,
+      argValues: [path, cacheMb],
+      apiImpl: this,
+    ));
   }
 
   TaskConstMeta get kCrateApiDbOpenWithCacheConstMeta => const TaskConstMeta(
-    debugName: "Db_open_with_cache",
-    argNames: ["path", "cacheMb"],
-  );
+        debugName: "Db_open_with_cache",
+        argNames: ["path", "cacheMb"],
+      );
 
   @override
   Future<bool> crateApiDbPersist({required Db that, required String key}) {
-    return handler.executeNormal(
-      NormalTask(
-        callFfi: (port_) {
-          final serializer = SseSerializer(generalizedFrbRustBinding);
-          sse_encode_Auto_Ref_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerDb(
-            that,
-            serializer,
-          );
-          sse_encode_String(key, serializer);
-          pdeCallFfi(
-            generalizedFrbRustBinding,
-            serializer,
-            funcId: 42,
-            port: port_,
-          );
-        },
-        codec: SseCodec(
-          decodeSuccessData: sse_decode_bool,
-          decodeErrorData: sse_decode_redlite_error,
-        ),
-        constMeta: kCrateApiDbPersistConstMeta,
-        argValues: [that, key],
-        apiImpl: this,
+    return handler.executeNormal(NormalTask(
+      callFfi: (port_) {
+        final serializer = SseSerializer(generalizedFrbRustBinding);
+        sse_encode_Auto_Ref_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerDb(
+            that, serializer);
+        sse_encode_String(key, serializer);
+        pdeCallFfi(generalizedFrbRustBinding, serializer,
+            funcId: 70, port: port_);
+      },
+      codec: SseCodec(
+        decodeSuccessData: sse_decode_bool,
+        decodeErrorData: sse_decode_redlite_error,
       ),
-    );
+      constMeta: kCrateApiDbPersistConstMeta,
+      argValues: [that, key],
+      apiImpl: this,
+    ));
   }
 
-  TaskConstMeta get kCrateApiDbPersistConstMeta =>
-      const TaskConstMeta(debugName: "Db_persist", argNames: ["that", "key"]);
+  TaskConstMeta get kCrateApiDbPersistConstMeta => const TaskConstMeta(
+        debugName: "Db_persist",
+        argNames: ["that", "key"],
+      );
 
   @override
-  Future<bool> crateApiDbPexpire({
-    required Db that,
-    required String key,
-    required PlatformInt64 milliseconds,
-  }) {
-    return handler.executeNormal(
-      NormalTask(
-        callFfi: (port_) {
-          final serializer = SseSerializer(generalizedFrbRustBinding);
-          sse_encode_Auto_Ref_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerDb(
-            that,
-            serializer,
-          );
-          sse_encode_String(key, serializer);
-          sse_encode_i_64(milliseconds, serializer);
-          pdeCallFfi(
-            generalizedFrbRustBinding,
-            serializer,
-            funcId: 43,
-            port: port_,
-          );
-        },
-        codec: SseCodec(
-          decodeSuccessData: sse_decode_bool,
-          decodeErrorData: sse_decode_redlite_error,
-        ),
-        constMeta: kCrateApiDbPexpireConstMeta,
-        argValues: [that, key, milliseconds],
-        apiImpl: this,
+  Future<bool> crateApiDbPexpire(
+      {required Db that,
+      required String key,
+      required PlatformInt64 milliseconds}) {
+    return handler.executeNormal(NormalTask(
+      callFfi: (port_) {
+        final serializer = SseSerializer(generalizedFrbRustBinding);
+        sse_encode_Auto_Ref_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerDb(
+            that, serializer);
+        sse_encode_String(key, serializer);
+        sse_encode_i_64(milliseconds, serializer);
+        pdeCallFfi(generalizedFrbRustBinding, serializer,
+            funcId: 71, port: port_);
+      },
+      codec: SseCodec(
+        decodeSuccessData: sse_decode_bool,
+        decodeErrorData: sse_decode_redlite_error,
       ),
-    );
+      constMeta: kCrateApiDbPexpireConstMeta,
+      argValues: [that, key, milliseconds],
+      apiImpl: this,
+    ));
   }
 
   TaskConstMeta get kCrateApiDbPexpireConstMeta => const TaskConstMeta(
-    debugName: "Db_pexpire",
-    argNames: ["that", "key", "milliseconds"],
-  );
+        debugName: "Db_pexpire",
+        argNames: ["that", "key", "milliseconds"],
+      );
 
   @override
-  Future<bool> crateApiDbPexpireat({
-    required Db that,
-    required String key,
-    required PlatformInt64 unixTimeMs,
-  }) {
-    return handler.executeNormal(
-      NormalTask(
-        callFfi: (port_) {
-          final serializer = SseSerializer(generalizedFrbRustBinding);
-          sse_encode_Auto_Ref_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerDb(
-            that,
-            serializer,
-          );
-          sse_encode_String(key, serializer);
-          sse_encode_i_64(unixTimeMs, serializer);
-          pdeCallFfi(
-            generalizedFrbRustBinding,
-            serializer,
-            funcId: 44,
-            port: port_,
-          );
-        },
-        codec: SseCodec(
-          decodeSuccessData: sse_decode_bool,
-          decodeErrorData: sse_decode_redlite_error,
-        ),
-        constMeta: kCrateApiDbPexpireatConstMeta,
-        argValues: [that, key, unixTimeMs],
-        apiImpl: this,
+  Future<bool> crateApiDbPexpireat(
+      {required Db that,
+      required String key,
+      required PlatformInt64 unixTimeMs}) {
+    return handler.executeNormal(NormalTask(
+      callFfi: (port_) {
+        final serializer = SseSerializer(generalizedFrbRustBinding);
+        sse_encode_Auto_Ref_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerDb(
+            that, serializer);
+        sse_encode_String(key, serializer);
+        sse_encode_i_64(unixTimeMs, serializer);
+        pdeCallFfi(generalizedFrbRustBinding, serializer,
+            funcId: 72, port: port_);
+      },
+      codec: SseCodec(
+        decodeSuccessData: sse_decode_bool,
+        decodeErrorData: sse_decode_redlite_error,
       ),
-    );
+      constMeta: kCrateApiDbPexpireatConstMeta,
+      argValues: [that, key, unixTimeMs],
+      apiImpl: this,
+    ));
   }
 
   TaskConstMeta get kCrateApiDbPexpireatConstMeta => const TaskConstMeta(
-    debugName: "Db_pexpireat",
-    argNames: ["that", "key", "unixTimeMs"],
-  );
+        debugName: "Db_pexpireat",
+        argNames: ["that", "key", "unixTimeMs"],
+      );
 
   @override
-  Future<void> crateApiDbPsetex({
-    required Db that,
-    required String key,
-    required PlatformInt64 milliseconds,
-    required List<int> value,
-  }) {
-    return handler.executeNormal(
-      NormalTask(
-        callFfi: (port_) {
-          final serializer = SseSerializer(generalizedFrbRustBinding);
-          sse_encode_Auto_Ref_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerDb(
-            that,
-            serializer,
-          );
-          sse_encode_String(key, serializer);
-          sse_encode_i_64(milliseconds, serializer);
-          sse_encode_list_prim_u_8_loose(value, serializer);
-          pdeCallFfi(
-            generalizedFrbRustBinding,
-            serializer,
-            funcId: 45,
-            port: port_,
-          );
-        },
-        codec: SseCodec(
-          decodeSuccessData: sse_decode_unit,
-          decodeErrorData: sse_decode_redlite_error,
-        ),
-        constMeta: kCrateApiDbPsetexConstMeta,
-        argValues: [that, key, milliseconds, value],
-        apiImpl: this,
+  Future<void> crateApiDbPsetex(
+      {required Db that,
+      required String key,
+      required PlatformInt64 milliseconds,
+      required List<int> value}) {
+    return handler.executeNormal(NormalTask(
+      callFfi: (port_) {
+        final serializer = SseSerializer(generalizedFrbRustBinding);
+        sse_encode_Auto_Ref_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerDb(
+            that, serializer);
+        sse_encode_String(key, serializer);
+        sse_encode_i_64(milliseconds, serializer);
+        sse_encode_list_prim_u_8_loose(value, serializer);
+        pdeCallFfi(generalizedFrbRustBinding, serializer,
+            funcId: 73, port: port_);
+      },
+      codec: SseCodec(
+        decodeSuccessData: sse_decode_unit,
+        decodeErrorData: sse_decode_redlite_error,
       ),
-    );
+      constMeta: kCrateApiDbPsetexConstMeta,
+      argValues: [that, key, milliseconds, value],
+      apiImpl: this,
+    ));
   }
 
   TaskConstMeta get kCrateApiDbPsetexConstMeta => const TaskConstMeta(
-    debugName: "Db_psetex",
-    argNames: ["that", "key", "milliseconds", "value"],
-  );
+        debugName: "Db_psetex",
+        argNames: ["that", "key", "milliseconds", "value"],
+      );
 
   @override
-  Future<PlatformInt64> crateApiDbPttl({
-    required Db that,
-    required String key,
-  }) {
-    return handler.executeNormal(
-      NormalTask(
-        callFfi: (port_) {
-          final serializer = SseSerializer(generalizedFrbRustBinding);
-          sse_encode_Auto_Ref_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerDb(
-            that,
-            serializer,
-          );
-          sse_encode_String(key, serializer);
-          pdeCallFfi(
-            generalizedFrbRustBinding,
-            serializer,
-            funcId: 46,
-            port: port_,
-          );
-        },
-        codec: SseCodec(
-          decodeSuccessData: sse_decode_i_64,
-          decodeErrorData: sse_decode_redlite_error,
-        ),
-        constMeta: kCrateApiDbPttlConstMeta,
-        argValues: [that, key],
-        apiImpl: this,
+  Future<PlatformInt64> crateApiDbPttl(
+      {required Db that, required String key}) {
+    return handler.executeNormal(NormalTask(
+      callFfi: (port_) {
+        final serializer = SseSerializer(generalizedFrbRustBinding);
+        sse_encode_Auto_Ref_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerDb(
+            that, serializer);
+        sse_encode_String(key, serializer);
+        pdeCallFfi(generalizedFrbRustBinding, serializer,
+            funcId: 74, port: port_);
+      },
+      codec: SseCodec(
+        decodeSuccessData: sse_decode_i_64,
+        decodeErrorData: sse_decode_redlite_error,
       ),
-    );
+      constMeta: kCrateApiDbPttlConstMeta,
+      argValues: [that, key],
+      apiImpl: this,
+    ));
   }
 
-  TaskConstMeta get kCrateApiDbPttlConstMeta =>
-      const TaskConstMeta(debugName: "Db_pttl", argNames: ["that", "key"]);
+  TaskConstMeta get kCrateApiDbPttlConstMeta => const TaskConstMeta(
+        debugName: "Db_pttl",
+        argNames: ["that", "key"],
+      );
 
   @override
-  Future<void> crateApiDbRename({
-    required Db that,
-    required String key,
-    required String newkey,
-  }) {
-    return handler.executeNormal(
-      NormalTask(
-        callFfi: (port_) {
-          final serializer = SseSerializer(generalizedFrbRustBinding);
-          sse_encode_Auto_Ref_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerDb(
-            that,
-            serializer,
-          );
-          sse_encode_String(key, serializer);
-          sse_encode_String(newkey, serializer);
-          pdeCallFfi(
-            generalizedFrbRustBinding,
-            serializer,
-            funcId: 47,
-            port: port_,
-          );
-        },
-        codec: SseCodec(
-          decodeSuccessData: sse_decode_unit,
-          decodeErrorData: sse_decode_redlite_error,
-        ),
-        constMeta: kCrateApiDbRenameConstMeta,
-        argValues: [that, key, newkey],
-        apiImpl: this,
+  Future<void> crateApiDbRename(
+      {required Db that, required String key, required String newkey}) {
+    return handler.executeNormal(NormalTask(
+      callFfi: (port_) {
+        final serializer = SseSerializer(generalizedFrbRustBinding);
+        sse_encode_Auto_Ref_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerDb(
+            that, serializer);
+        sse_encode_String(key, serializer);
+        sse_encode_String(newkey, serializer);
+        pdeCallFfi(generalizedFrbRustBinding, serializer,
+            funcId: 75, port: port_);
+      },
+      codec: SseCodec(
+        decodeSuccessData: sse_decode_unit,
+        decodeErrorData: sse_decode_redlite_error,
       ),
-    );
+      constMeta: kCrateApiDbRenameConstMeta,
+      argValues: [that, key, newkey],
+      apiImpl: this,
+    ));
   }
 
   TaskConstMeta get kCrateApiDbRenameConstMeta => const TaskConstMeta(
-    debugName: "Db_rename",
-    argNames: ["that", "key", "newkey"],
-  );
+        debugName: "Db_rename",
+        argNames: ["that", "key", "newkey"],
+      );
 
   @override
-  Future<bool> crateApiDbRenamenx({
-    required Db that,
-    required String key,
-    required String newkey,
-  }) {
-    return handler.executeNormal(
-      NormalTask(
-        callFfi: (port_) {
-          final serializer = SseSerializer(generalizedFrbRustBinding);
-          sse_encode_Auto_Ref_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerDb(
-            that,
-            serializer,
-          );
-          sse_encode_String(key, serializer);
-          sse_encode_String(newkey, serializer);
-          pdeCallFfi(
-            generalizedFrbRustBinding,
-            serializer,
-            funcId: 48,
-            port: port_,
-          );
-        },
-        codec: SseCodec(
-          decodeSuccessData: sse_decode_bool,
-          decodeErrorData: sse_decode_redlite_error,
-        ),
-        constMeta: kCrateApiDbRenamenxConstMeta,
-        argValues: [that, key, newkey],
-        apiImpl: this,
+  Future<bool> crateApiDbRenamenx(
+      {required Db that, required String key, required String newkey}) {
+    return handler.executeNormal(NormalTask(
+      callFfi: (port_) {
+        final serializer = SseSerializer(generalizedFrbRustBinding);
+        sse_encode_Auto_Ref_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerDb(
+            that, serializer);
+        sse_encode_String(key, serializer);
+        sse_encode_String(newkey, serializer);
+        pdeCallFfi(generalizedFrbRustBinding, serializer,
+            funcId: 76, port: port_);
+      },
+      codec: SseCodec(
+        decodeSuccessData: sse_decode_bool,
+        decodeErrorData: sse_decode_redlite_error,
       ),
-    );
+      constMeta: kCrateApiDbRenamenxConstMeta,
+      argValues: [that, key, newkey],
+      apiImpl: this,
+    ));
   }
 
   TaskConstMeta get kCrateApiDbRenamenxConstMeta => const TaskConstMeta(
-    debugName: "Db_renamenx",
-    argNames: ["that", "key", "newkey"],
-  );
+        debugName: "Db_renamenx",
+        argNames: ["that", "key", "newkey"],
+      );
 
   @override
-  Future<List<Uint8List>> crateApiDbRpop({
-    required Db that,
-    required String key,
-    PlatformInt64? count,
-  }) {
-    return handler.executeNormal(
-      NormalTask(
-        callFfi: (port_) {
-          final serializer = SseSerializer(generalizedFrbRustBinding);
-          sse_encode_Auto_Ref_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerDb(
-            that,
-            serializer,
-          );
-          sse_encode_String(key, serializer);
-          sse_encode_opt_box_autoadd_i_64(count, serializer);
-          pdeCallFfi(
-            generalizedFrbRustBinding,
-            serializer,
-            funcId: 49,
-            port: port_,
-          );
-        },
-        codec: SseCodec(
-          decodeSuccessData: sse_decode_list_list_prim_u_8_strict,
-          decodeErrorData: sse_decode_redlite_error,
-        ),
-        constMeta: kCrateApiDbRpopConstMeta,
-        argValues: [that, key, count],
-        apiImpl: this,
+  Future<List<Uint8List>> crateApiDbRpop(
+      {required Db that, required String key, PlatformInt64? count}) {
+    return handler.executeNormal(NormalTask(
+      callFfi: (port_) {
+        final serializer = SseSerializer(generalizedFrbRustBinding);
+        sse_encode_Auto_Ref_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerDb(
+            that, serializer);
+        sse_encode_String(key, serializer);
+        sse_encode_opt_box_autoadd_i_64(count, serializer);
+        pdeCallFfi(generalizedFrbRustBinding, serializer,
+            funcId: 77, port: port_);
+      },
+      codec: SseCodec(
+        decodeSuccessData: sse_decode_list_list_prim_u_8_strict,
+        decodeErrorData: sse_decode_redlite_error,
       ),
-    );
+      constMeta: kCrateApiDbRpopConstMeta,
+      argValues: [that, key, count],
+      apiImpl: this,
+    ));
   }
 
   TaskConstMeta get kCrateApiDbRpopConstMeta => const TaskConstMeta(
-    debugName: "Db_rpop",
-    argNames: ["that", "key", "count"],
-  );
+        debugName: "Db_rpop",
+        argNames: ["that", "key", "count"],
+      );
 
   @override
-  Future<PlatformInt64> crateApiDbRpush({
-    required Db that,
-    required String key,
-    required List<Uint8List> values,
-  }) {
-    return handler.executeNormal(
-      NormalTask(
-        callFfi: (port_) {
-          final serializer = SseSerializer(generalizedFrbRustBinding);
-          sse_encode_Auto_Ref_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerDb(
-            that,
-            serializer,
-          );
-          sse_encode_String(key, serializer);
-          sse_encode_list_list_prim_u_8_strict(values, serializer);
-          pdeCallFfi(
-            generalizedFrbRustBinding,
-            serializer,
-            funcId: 50,
-            port: port_,
-          );
-        },
-        codec: SseCodec(
-          decodeSuccessData: sse_decode_i_64,
-          decodeErrorData: sse_decode_redlite_error,
-        ),
-        constMeta: kCrateApiDbRpushConstMeta,
-        argValues: [that, key, values],
-        apiImpl: this,
+  Future<PlatformInt64> crateApiDbRpush(
+      {required Db that,
+      required String key,
+      required List<Uint8List> values}) {
+    return handler.executeNormal(NormalTask(
+      callFfi: (port_) {
+        final serializer = SseSerializer(generalizedFrbRustBinding);
+        sse_encode_Auto_Ref_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerDb(
+            that, serializer);
+        sse_encode_String(key, serializer);
+        sse_encode_list_list_prim_u_8_strict(values, serializer);
+        pdeCallFfi(generalizedFrbRustBinding, serializer,
+            funcId: 78, port: port_);
+      },
+      codec: SseCodec(
+        decodeSuccessData: sse_decode_i_64,
+        decodeErrorData: sse_decode_redlite_error,
       ),
-    );
+      constMeta: kCrateApiDbRpushConstMeta,
+      argValues: [that, key, values],
+      apiImpl: this,
+    ));
   }
 
   TaskConstMeta get kCrateApiDbRpushConstMeta => const TaskConstMeta(
-    debugName: "Db_rpush",
-    argNames: ["that", "key", "values"],
-  );
+        debugName: "Db_rpush",
+        argNames: ["that", "key", "values"],
+      );
 
   @override
-  Future<PlatformInt64> crateApiDbSadd({
-    required Db that,
-    required String key,
-    required List<Uint8List> members,
-  }) {
-    return handler.executeNormal(
-      NormalTask(
-        callFfi: (port_) {
-          final serializer = SseSerializer(generalizedFrbRustBinding);
-          sse_encode_Auto_Ref_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerDb(
-            that,
-            serializer,
-          );
-          sse_encode_String(key, serializer);
-          sse_encode_list_list_prim_u_8_strict(members, serializer);
-          pdeCallFfi(
-            generalizedFrbRustBinding,
-            serializer,
-            funcId: 51,
-            port: port_,
-          );
-        },
-        codec: SseCodec(
-          decodeSuccessData: sse_decode_i_64,
-          decodeErrorData: sse_decode_redlite_error,
-        ),
-        constMeta: kCrateApiDbSaddConstMeta,
-        argValues: [that, key, members],
-        apiImpl: this,
+  Future<PlatformInt64> crateApiDbSadd(
+      {required Db that,
+      required String key,
+      required List<Uint8List> members}) {
+    return handler.executeNormal(NormalTask(
+      callFfi: (port_) {
+        final serializer = SseSerializer(generalizedFrbRustBinding);
+        sse_encode_Auto_Ref_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerDb(
+            that, serializer);
+        sse_encode_String(key, serializer);
+        sse_encode_list_list_prim_u_8_strict(members, serializer);
+        pdeCallFfi(generalizedFrbRustBinding, serializer,
+            funcId: 79, port: port_);
+      },
+      codec: SseCodec(
+        decodeSuccessData: sse_decode_i_64,
+        decodeErrorData: sse_decode_redlite_error,
       ),
-    );
+      constMeta: kCrateApiDbSaddConstMeta,
+      argValues: [that, key, members],
+      apiImpl: this,
+    ));
   }
 
   TaskConstMeta get kCrateApiDbSaddConstMeta => const TaskConstMeta(
-    debugName: "Db_sadd",
-    argNames: ["that", "key", "members"],
-  );
+        debugName: "Db_sadd",
+        argNames: ["that", "key", "members"],
+      );
 
   @override
-  Future<(String, List<String>)> crateApiDbScan({
-    required Db that,
-    required String cursor,
-    String? pattern,
-    required PlatformInt64 count,
-  }) {
-    return handler.executeNormal(
-      NormalTask(
-        callFfi: (port_) {
-          final serializer = SseSerializer(generalizedFrbRustBinding);
-          sse_encode_Auto_Ref_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerDb(
-            that,
-            serializer,
-          );
-          sse_encode_String(cursor, serializer);
-          sse_encode_opt_String(pattern, serializer);
-          sse_encode_i_64(count, serializer);
-          pdeCallFfi(
-            generalizedFrbRustBinding,
-            serializer,
-            funcId: 52,
-            port: port_,
-          );
-        },
-        codec: SseCodec(
-          decodeSuccessData: sse_decode_record_string_list_string,
-          decodeErrorData: sse_decode_redlite_error,
-        ),
-        constMeta: kCrateApiDbScanConstMeta,
-        argValues: [that, cursor, pattern, count],
-        apiImpl: this,
+  Future<(String, List<String>)> crateApiDbScan(
+      {required Db that,
+      required String cursor,
+      String? pattern,
+      required PlatformInt64 count}) {
+    return handler.executeNormal(NormalTask(
+      callFfi: (port_) {
+        final serializer = SseSerializer(generalizedFrbRustBinding);
+        sse_encode_Auto_Ref_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerDb(
+            that, serializer);
+        sse_encode_String(cursor, serializer);
+        sse_encode_opt_String(pattern, serializer);
+        sse_encode_i_64(count, serializer);
+        pdeCallFfi(generalizedFrbRustBinding, serializer,
+            funcId: 80, port: port_);
+      },
+      codec: SseCodec(
+        decodeSuccessData: sse_decode_record_string_list_string,
+        decodeErrorData: sse_decode_redlite_error,
       ),
-    );
+      constMeta: kCrateApiDbScanConstMeta,
+      argValues: [that, cursor, pattern, count],
+      apiImpl: this,
+    ));
   }
 
   TaskConstMeta get kCrateApiDbScanConstMeta => const TaskConstMeta(
-    debugName: "Db_scan",
-    argNames: ["that", "cursor", "pattern", "count"],
-  );
+        debugName: "Db_scan",
+        argNames: ["that", "cursor", "pattern", "count"],
+      );
 
   @override
-  Future<PlatformInt64> crateApiDbScard({
-    required Db that,
-    required String key,
-  }) {
-    return handler.executeNormal(
-      NormalTask(
-        callFfi: (port_) {
-          final serializer = SseSerializer(generalizedFrbRustBinding);
-          sse_encode_Auto_Ref_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerDb(
-            that,
-            serializer,
-          );
-          sse_encode_String(key, serializer);
-          pdeCallFfi(
-            generalizedFrbRustBinding,
-            serializer,
-            funcId: 53,
-            port: port_,
-          );
-        },
-        codec: SseCodec(
-          decodeSuccessData: sse_decode_i_64,
-          decodeErrorData: sse_decode_redlite_error,
-        ),
-        constMeta: kCrateApiDbScardConstMeta,
-        argValues: [that, key],
-        apiImpl: this,
+  Future<PlatformInt64> crateApiDbScard(
+      {required Db that, required String key}) {
+    return handler.executeNormal(NormalTask(
+      callFfi: (port_) {
+        final serializer = SseSerializer(generalizedFrbRustBinding);
+        sse_encode_Auto_Ref_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerDb(
+            that, serializer);
+        sse_encode_String(key, serializer);
+        pdeCallFfi(generalizedFrbRustBinding, serializer,
+            funcId: 81, port: port_);
+      },
+      codec: SseCodec(
+        decodeSuccessData: sse_decode_i_64,
+        decodeErrorData: sse_decode_redlite_error,
       ),
-    );
+      constMeta: kCrateApiDbScardConstMeta,
+      argValues: [that, key],
+      apiImpl: this,
+    ));
   }
 
-  TaskConstMeta get kCrateApiDbScardConstMeta =>
-      const TaskConstMeta(debugName: "Db_scard", argNames: ["that", "key"]);
+  TaskConstMeta get kCrateApiDbScardConstMeta => const TaskConstMeta(
+        debugName: "Db_scard",
+        argNames: ["that", "key"],
+      );
 
   @override
-  Future<List<Uint8List>> crateApiDbSdiff({
-    required Db that,
-    required List<String> keys,
-  }) {
-    return handler.executeNormal(
-      NormalTask(
-        callFfi: (port_) {
-          final serializer = SseSerializer(generalizedFrbRustBinding);
-          sse_encode_Auto_Ref_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerDb(
-            that,
-            serializer,
-          );
-          sse_encode_list_String(keys, serializer);
-          pdeCallFfi(
-            generalizedFrbRustBinding,
-            serializer,
-            funcId: 54,
-            port: port_,
-          );
-        },
-        codec: SseCodec(
-          decodeSuccessData: sse_decode_list_list_prim_u_8_strict,
-          decodeErrorData: sse_decode_redlite_error,
-        ),
-        constMeta: kCrateApiDbSdiffConstMeta,
-        argValues: [that, keys],
-        apiImpl: this,
+  Future<List<Uint8List>> crateApiDbSdiff(
+      {required Db that, required List<String> keys}) {
+    return handler.executeNormal(NormalTask(
+      callFfi: (port_) {
+        final serializer = SseSerializer(generalizedFrbRustBinding);
+        sse_encode_Auto_Ref_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerDb(
+            that, serializer);
+        sse_encode_list_String(keys, serializer);
+        pdeCallFfi(generalizedFrbRustBinding, serializer,
+            funcId: 82, port: port_);
+      },
+      codec: SseCodec(
+        decodeSuccessData: sse_decode_list_list_prim_u_8_strict,
+        decodeErrorData: sse_decode_redlite_error,
       ),
-    );
+      constMeta: kCrateApiDbSdiffConstMeta,
+      argValues: [that, keys],
+      apiImpl: this,
+    ));
   }
 
-  TaskConstMeta get kCrateApiDbSdiffConstMeta =>
-      const TaskConstMeta(debugName: "Db_sdiff", argNames: ["that", "keys"]);
+  TaskConstMeta get kCrateApiDbSdiffConstMeta => const TaskConstMeta(
+        debugName: "Db_sdiff",
+        argNames: ["that", "keys"],
+      );
 
   @override
-  Future<void> crateApiDbSet({
-    required Db that,
-    required String key,
-    required List<int> value,
-    PlatformInt64? ttlSeconds,
-  }) {
-    return handler.executeNormal(
-      NormalTask(
-        callFfi: (port_) {
-          final serializer = SseSerializer(generalizedFrbRustBinding);
-          sse_encode_Auto_Ref_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerDb(
-            that,
-            serializer,
-          );
-          sse_encode_String(key, serializer);
-          sse_encode_list_prim_u_8_loose(value, serializer);
-          sse_encode_opt_box_autoadd_i_64(ttlSeconds, serializer);
-          pdeCallFfi(
-            generalizedFrbRustBinding,
-            serializer,
-            funcId: 55,
-            port: port_,
-          );
-        },
-        codec: SseCodec(
-          decodeSuccessData: sse_decode_unit,
-          decodeErrorData: sse_decode_redlite_error,
-        ),
-        constMeta: kCrateApiDbSetConstMeta,
-        argValues: [that, key, value, ttlSeconds],
-        apiImpl: this,
+  Future<void> crateApiDbSet(
+      {required Db that,
+      required String key,
+      required List<int> value,
+      PlatformInt64? ttlSeconds}) {
+    return handler.executeNormal(NormalTask(
+      callFfi: (port_) {
+        final serializer = SseSerializer(generalizedFrbRustBinding);
+        sse_encode_Auto_Ref_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerDb(
+            that, serializer);
+        sse_encode_String(key, serializer);
+        sse_encode_list_prim_u_8_loose(value, serializer);
+        sse_encode_opt_box_autoadd_i_64(ttlSeconds, serializer);
+        pdeCallFfi(generalizedFrbRustBinding, serializer,
+            funcId: 83, port: port_);
+      },
+      codec: SseCodec(
+        decodeSuccessData: sse_decode_unit,
+        decodeErrorData: sse_decode_redlite_error,
       ),
-    );
+      constMeta: kCrateApiDbSetConstMeta,
+      argValues: [that, key, value, ttlSeconds],
+      apiImpl: this,
+    ));
   }
 
   TaskConstMeta get kCrateApiDbSetConstMeta => const TaskConstMeta(
-    debugName: "Db_set",
-    argNames: ["that", "key", "value", "ttlSeconds"],
-  );
+        debugName: "Db_set",
+        argNames: ["that", "key", "value", "ttlSeconds"],
+      );
 
   @override
-  Future<bool> crateApiDbSetOpts({
-    required Db that,
-    required String key,
-    required List<int> value,
-    required SetOptions options,
-  }) {
-    return handler.executeNormal(
-      NormalTask(
-        callFfi: (port_) {
-          final serializer = SseSerializer(generalizedFrbRustBinding);
-          sse_encode_Auto_Ref_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerDb(
-            that,
-            serializer,
-          );
-          sse_encode_String(key, serializer);
-          sse_encode_list_prim_u_8_loose(value, serializer);
-          sse_encode_box_autoadd_set_options(options, serializer);
-          pdeCallFfi(
-            generalizedFrbRustBinding,
-            serializer,
-            funcId: 56,
-            port: port_,
-          );
-        },
-        codec: SseCodec(
-          decodeSuccessData: sse_decode_bool,
-          decodeErrorData: sse_decode_redlite_error,
-        ),
-        constMeta: kCrateApiDbSetOptsConstMeta,
-        argValues: [that, key, value, options],
-        apiImpl: this,
+  Future<bool> crateApiDbSetOpts(
+      {required Db that,
+      required String key,
+      required List<int> value,
+      required SetOptions options}) {
+    return handler.executeNormal(NormalTask(
+      callFfi: (port_) {
+        final serializer = SseSerializer(generalizedFrbRustBinding);
+        sse_encode_Auto_Ref_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerDb(
+            that, serializer);
+        sse_encode_String(key, serializer);
+        sse_encode_list_prim_u_8_loose(value, serializer);
+        sse_encode_box_autoadd_set_options(options, serializer);
+        pdeCallFfi(generalizedFrbRustBinding, serializer,
+            funcId: 84, port: port_);
+      },
+      codec: SseCodec(
+        decodeSuccessData: sse_decode_bool,
+        decodeErrorData: sse_decode_redlite_error,
       ),
-    );
+      constMeta: kCrateApiDbSetOptsConstMeta,
+      argValues: [that, key, value, options],
+      apiImpl: this,
+    ));
   }
 
   TaskConstMeta get kCrateApiDbSetOptsConstMeta => const TaskConstMeta(
-    debugName: "Db_set_opts",
-    argNames: ["that", "key", "value", "options"],
-  );
+        debugName: "Db_set_opts",
+        argNames: ["that", "key", "value", "options"],
+      );
 
   @override
-  Future<void> crateApiDbSetex({
-    required Db that,
-    required String key,
-    required PlatformInt64 seconds,
-    required List<int> value,
-  }) {
-    return handler.executeNormal(
-      NormalTask(
-        callFfi: (port_) {
-          final serializer = SseSerializer(generalizedFrbRustBinding);
-          sse_encode_Auto_Ref_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerDb(
-            that,
-            serializer,
-          );
-          sse_encode_String(key, serializer);
-          sse_encode_i_64(seconds, serializer);
-          sse_encode_list_prim_u_8_loose(value, serializer);
-          pdeCallFfi(
-            generalizedFrbRustBinding,
-            serializer,
-            funcId: 57,
-            port: port_,
-          );
-        },
-        codec: SseCodec(
-          decodeSuccessData: sse_decode_unit,
-          decodeErrorData: sse_decode_redlite_error,
-        ),
-        constMeta: kCrateApiDbSetexConstMeta,
-        argValues: [that, key, seconds, value],
-        apiImpl: this,
+  Future<void> crateApiDbSetex(
+      {required Db that,
+      required String key,
+      required PlatformInt64 seconds,
+      required List<int> value}) {
+    return handler.executeNormal(NormalTask(
+      callFfi: (port_) {
+        final serializer = SseSerializer(generalizedFrbRustBinding);
+        sse_encode_Auto_Ref_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerDb(
+            that, serializer);
+        sse_encode_String(key, serializer);
+        sse_encode_i_64(seconds, serializer);
+        sse_encode_list_prim_u_8_loose(value, serializer);
+        pdeCallFfi(generalizedFrbRustBinding, serializer,
+            funcId: 85, port: port_);
+      },
+      codec: SseCodec(
+        decodeSuccessData: sse_decode_unit,
+        decodeErrorData: sse_decode_redlite_error,
       ),
-    );
+      constMeta: kCrateApiDbSetexConstMeta,
+      argValues: [that, key, seconds, value],
+      apiImpl: this,
+    ));
   }
 
   TaskConstMeta get kCrateApiDbSetexConstMeta => const TaskConstMeta(
-    debugName: "Db_setex",
-    argNames: ["that", "key", "seconds", "value"],
-  );
+        debugName: "Db_setex",
+        argNames: ["that", "key", "seconds", "value"],
+      );
 
   @override
-  Future<PlatformInt64> crateApiDbSetrange({
-    required Db that,
-    required String key,
-    required PlatformInt64 offset,
-    required List<int> value,
-  }) {
-    return handler.executeNormal(
-      NormalTask(
-        callFfi: (port_) {
-          final serializer = SseSerializer(generalizedFrbRustBinding);
-          sse_encode_Auto_Ref_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerDb(
-            that,
-            serializer,
-          );
-          sse_encode_String(key, serializer);
-          sse_encode_i_64(offset, serializer);
-          sse_encode_list_prim_u_8_loose(value, serializer);
-          pdeCallFfi(
-            generalizedFrbRustBinding,
-            serializer,
-            funcId: 58,
-            port: port_,
-          );
-        },
-        codec: SseCodec(
-          decodeSuccessData: sse_decode_i_64,
-          decodeErrorData: sse_decode_redlite_error,
-        ),
-        constMeta: kCrateApiDbSetrangeConstMeta,
-        argValues: [that, key, offset, value],
-        apiImpl: this,
+  Future<PlatformInt64> crateApiDbSetrange(
+      {required Db that,
+      required String key,
+      required PlatformInt64 offset,
+      required List<int> value}) {
+    return handler.executeNormal(NormalTask(
+      callFfi: (port_) {
+        final serializer = SseSerializer(generalizedFrbRustBinding);
+        sse_encode_Auto_Ref_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerDb(
+            that, serializer);
+        sse_encode_String(key, serializer);
+        sse_encode_i_64(offset, serializer);
+        sse_encode_list_prim_u_8_loose(value, serializer);
+        pdeCallFfi(generalizedFrbRustBinding, serializer,
+            funcId: 86, port: port_);
+      },
+      codec: SseCodec(
+        decodeSuccessData: sse_decode_i_64,
+        decodeErrorData: sse_decode_redlite_error,
       ),
-    );
+      constMeta: kCrateApiDbSetrangeConstMeta,
+      argValues: [that, key, offset, value],
+      apiImpl: this,
+    ));
   }
 
   TaskConstMeta get kCrateApiDbSetrangeConstMeta => const TaskConstMeta(
-    debugName: "Db_setrange",
-    argNames: ["that", "key", "offset", "value"],
-  );
+        debugName: "Db_setrange",
+        argNames: ["that", "key", "offset", "value"],
+      );
 
   @override
-  Future<List<Uint8List>> crateApiDbSinter({
-    required Db that,
-    required List<String> keys,
-  }) {
-    return handler.executeNormal(
-      NormalTask(
-        callFfi: (port_) {
-          final serializer = SseSerializer(generalizedFrbRustBinding);
-          sse_encode_Auto_Ref_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerDb(
-            that,
-            serializer,
-          );
-          sse_encode_list_String(keys, serializer);
-          pdeCallFfi(
-            generalizedFrbRustBinding,
-            serializer,
-            funcId: 59,
-            port: port_,
-          );
-        },
-        codec: SseCodec(
-          decodeSuccessData: sse_decode_list_list_prim_u_8_strict,
-          decodeErrorData: sse_decode_redlite_error,
-        ),
-        constMeta: kCrateApiDbSinterConstMeta,
-        argValues: [that, keys],
-        apiImpl: this,
+  Future<List<Uint8List>> crateApiDbSinter(
+      {required Db that, required List<String> keys}) {
+    return handler.executeNormal(NormalTask(
+      callFfi: (port_) {
+        final serializer = SseSerializer(generalizedFrbRustBinding);
+        sse_encode_Auto_Ref_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerDb(
+            that, serializer);
+        sse_encode_list_String(keys, serializer);
+        pdeCallFfi(generalizedFrbRustBinding, serializer,
+            funcId: 87, port: port_);
+      },
+      codec: SseCodec(
+        decodeSuccessData: sse_decode_list_list_prim_u_8_strict,
+        decodeErrorData: sse_decode_redlite_error,
       ),
-    );
+      constMeta: kCrateApiDbSinterConstMeta,
+      argValues: [that, keys],
+      apiImpl: this,
+    ));
   }
 
-  TaskConstMeta get kCrateApiDbSinterConstMeta =>
-      const TaskConstMeta(debugName: "Db_sinter", argNames: ["that", "keys"]);
+  TaskConstMeta get kCrateApiDbSinterConstMeta => const TaskConstMeta(
+        debugName: "Db_sinter",
+        argNames: ["that", "keys"],
+      );
 
   @override
-  Future<bool> crateApiDbSismember({
-    required Db that,
-    required String key,
-    required List<int> member,
-  }) {
-    return handler.executeNormal(
-      NormalTask(
-        callFfi: (port_) {
-          final serializer = SseSerializer(generalizedFrbRustBinding);
-          sse_encode_Auto_Ref_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerDb(
-            that,
-            serializer,
-          );
-          sse_encode_String(key, serializer);
-          sse_encode_list_prim_u_8_loose(member, serializer);
-          pdeCallFfi(
-            generalizedFrbRustBinding,
-            serializer,
-            funcId: 60,
-            port: port_,
-          );
-        },
-        codec: SseCodec(
-          decodeSuccessData: sse_decode_bool,
-          decodeErrorData: sse_decode_redlite_error,
-        ),
-        constMeta: kCrateApiDbSismemberConstMeta,
-        argValues: [that, key, member],
-        apiImpl: this,
+  Future<bool> crateApiDbSismember(
+      {required Db that, required String key, required List<int> member}) {
+    return handler.executeNormal(NormalTask(
+      callFfi: (port_) {
+        final serializer = SseSerializer(generalizedFrbRustBinding);
+        sse_encode_Auto_Ref_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerDb(
+            that, serializer);
+        sse_encode_String(key, serializer);
+        sse_encode_list_prim_u_8_loose(member, serializer);
+        pdeCallFfi(generalizedFrbRustBinding, serializer,
+            funcId: 88, port: port_);
+      },
+      codec: SseCodec(
+        decodeSuccessData: sse_decode_bool,
+        decodeErrorData: sse_decode_redlite_error,
       ),
-    );
+      constMeta: kCrateApiDbSismemberConstMeta,
+      argValues: [that, key, member],
+      apiImpl: this,
+    ));
   }
 
   TaskConstMeta get kCrateApiDbSismemberConstMeta => const TaskConstMeta(
-    debugName: "Db_sismember",
-    argNames: ["that", "key", "member"],
-  );
+        debugName: "Db_sismember",
+        argNames: ["that", "key", "member"],
+      );
 
   @override
-  Future<List<Uint8List>> crateApiDbSmembers({
-    required Db that,
-    required String key,
-  }) {
-    return handler.executeNormal(
-      NormalTask(
-        callFfi: (port_) {
-          final serializer = SseSerializer(generalizedFrbRustBinding);
-          sse_encode_Auto_Ref_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerDb(
-            that,
-            serializer,
-          );
-          sse_encode_String(key, serializer);
-          pdeCallFfi(
-            generalizedFrbRustBinding,
-            serializer,
-            funcId: 61,
-            port: port_,
-          );
-        },
-        codec: SseCodec(
-          decodeSuccessData: sse_decode_list_list_prim_u_8_strict,
-          decodeErrorData: sse_decode_redlite_error,
-        ),
-        constMeta: kCrateApiDbSmembersConstMeta,
-        argValues: [that, key],
-        apiImpl: this,
+  Future<List<Uint8List>> crateApiDbSmembers(
+      {required Db that, required String key}) {
+    return handler.executeNormal(NormalTask(
+      callFfi: (port_) {
+        final serializer = SseSerializer(generalizedFrbRustBinding);
+        sse_encode_Auto_Ref_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerDb(
+            that, serializer);
+        sse_encode_String(key, serializer);
+        pdeCallFfi(generalizedFrbRustBinding, serializer,
+            funcId: 89, port: port_);
+      },
+      codec: SseCodec(
+        decodeSuccessData: sse_decode_list_list_prim_u_8_strict,
+        decodeErrorData: sse_decode_redlite_error,
       ),
-    );
+      constMeta: kCrateApiDbSmembersConstMeta,
+      argValues: [that, key],
+      apiImpl: this,
+    ));
   }
 
-  TaskConstMeta get kCrateApiDbSmembersConstMeta =>
-      const TaskConstMeta(debugName: "Db_smembers", argNames: ["that", "key"]);
+  TaskConstMeta get kCrateApiDbSmembersConstMeta => const TaskConstMeta(
+        debugName: "Db_smembers",
+        argNames: ["that", "key"],
+      );
 
   @override
-  Future<PlatformInt64> crateApiDbSrem({
-    required Db that,
-    required String key,
-    required List<Uint8List> members,
-  }) {
-    return handler.executeNormal(
-      NormalTask(
-        callFfi: (port_) {
-          final serializer = SseSerializer(generalizedFrbRustBinding);
-          sse_encode_Auto_Ref_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerDb(
-            that,
-            serializer,
-          );
-          sse_encode_String(key, serializer);
-          sse_encode_list_list_prim_u_8_strict(members, serializer);
-          pdeCallFfi(
-            generalizedFrbRustBinding,
-            serializer,
-            funcId: 62,
-            port: port_,
-          );
-        },
-        codec: SseCodec(
-          decodeSuccessData: sse_decode_i_64,
-          decodeErrorData: sse_decode_redlite_error,
-        ),
-        constMeta: kCrateApiDbSremConstMeta,
-        argValues: [that, key, members],
-        apiImpl: this,
+  Future<PlatformInt64> crateApiDbSrem(
+      {required Db that,
+      required String key,
+      required List<Uint8List> members}) {
+    return handler.executeNormal(NormalTask(
+      callFfi: (port_) {
+        final serializer = SseSerializer(generalizedFrbRustBinding);
+        sse_encode_Auto_Ref_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerDb(
+            that, serializer);
+        sse_encode_String(key, serializer);
+        sse_encode_list_list_prim_u_8_strict(members, serializer);
+        pdeCallFfi(generalizedFrbRustBinding, serializer,
+            funcId: 90, port: port_);
+      },
+      codec: SseCodec(
+        decodeSuccessData: sse_decode_i_64,
+        decodeErrorData: sse_decode_redlite_error,
       ),
-    );
+      constMeta: kCrateApiDbSremConstMeta,
+      argValues: [that, key, members],
+      apiImpl: this,
+    ));
   }
 
   TaskConstMeta get kCrateApiDbSremConstMeta => const TaskConstMeta(
-    debugName: "Db_srem",
-    argNames: ["that", "key", "members"],
-  );
+        debugName: "Db_srem",
+        argNames: ["that", "key", "members"],
+      );
 
   @override
-  Future<(String, List<Uint8List>)> crateApiDbSscan({
-    required Db that,
-    required String key,
-    required String cursor,
-    String? pattern,
-    required PlatformInt64 count,
-  }) {
-    return handler.executeNormal(
-      NormalTask(
-        callFfi: (port_) {
-          final serializer = SseSerializer(generalizedFrbRustBinding);
-          sse_encode_Auto_Ref_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerDb(
-            that,
-            serializer,
-          );
-          sse_encode_String(key, serializer);
-          sse_encode_String(cursor, serializer);
-          sse_encode_opt_String(pattern, serializer);
-          sse_encode_i_64(count, serializer);
-          pdeCallFfi(
-            generalizedFrbRustBinding,
-            serializer,
-            funcId: 63,
-            port: port_,
-          );
-        },
-        codec: SseCodec(
-          decodeSuccessData: sse_decode_record_string_list_list_prim_u_8_strict,
-          decodeErrorData: sse_decode_redlite_error,
-        ),
-        constMeta: kCrateApiDbSscanConstMeta,
-        argValues: [that, key, cursor, pattern, count],
-        apiImpl: this,
+  Future<(String, List<Uint8List>)> crateApiDbSscan(
+      {required Db that,
+      required String key,
+      required String cursor,
+      String? pattern,
+      required PlatformInt64 count}) {
+    return handler.executeNormal(NormalTask(
+      callFfi: (port_) {
+        final serializer = SseSerializer(generalizedFrbRustBinding);
+        sse_encode_Auto_Ref_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerDb(
+            that, serializer);
+        sse_encode_String(key, serializer);
+        sse_encode_String(cursor, serializer);
+        sse_encode_opt_String(pattern, serializer);
+        sse_encode_i_64(count, serializer);
+        pdeCallFfi(generalizedFrbRustBinding, serializer,
+            funcId: 91, port: port_);
+      },
+      codec: SseCodec(
+        decodeSuccessData: sse_decode_record_string_list_list_prim_u_8_strict,
+        decodeErrorData: sse_decode_redlite_error,
       ),
-    );
+      constMeta: kCrateApiDbSscanConstMeta,
+      argValues: [that, key, cursor, pattern, count],
+      apiImpl: this,
+    ));
   }
 
   TaskConstMeta get kCrateApiDbSscanConstMeta => const TaskConstMeta(
-    debugName: "Db_sscan",
-    argNames: ["that", "key", "cursor", "pattern", "count"],
-  );
+        debugName: "Db_sscan",
+        argNames: ["that", "key", "cursor", "pattern", "count"],
+      );
 
   @override
-  Future<PlatformInt64> crateApiDbStrlen({
-    required Db that,
-    required String key,
-  }) {
-    return handler.executeNormal(
-      NormalTask(
-        callFfi: (port_) {
-          final serializer = SseSerializer(generalizedFrbRustBinding);
-          sse_encode_Auto_Ref_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerDb(
-            that,
-            serializer,
-          );
-          sse_encode_String(key, serializer);
-          pdeCallFfi(
-            generalizedFrbRustBinding,
-            serializer,
-            funcId: 64,
-            port: port_,
-          );
-        },
-        codec: SseCodec(
-          decodeSuccessData: sse_decode_i_64,
-          decodeErrorData: sse_decode_redlite_error,
-        ),
-        constMeta: kCrateApiDbStrlenConstMeta,
-        argValues: [that, key],
-        apiImpl: this,
+  Future<PlatformInt64> crateApiDbStrlen(
+      {required Db that, required String key}) {
+    return handler.executeNormal(NormalTask(
+      callFfi: (port_) {
+        final serializer = SseSerializer(generalizedFrbRustBinding);
+        sse_encode_Auto_Ref_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerDb(
+            that, serializer);
+        sse_encode_String(key, serializer);
+        pdeCallFfi(generalizedFrbRustBinding, serializer,
+            funcId: 92, port: port_);
+      },
+      codec: SseCodec(
+        decodeSuccessData: sse_decode_i_64,
+        decodeErrorData: sse_decode_redlite_error,
       ),
-    );
+      constMeta: kCrateApiDbStrlenConstMeta,
+      argValues: [that, key],
+      apiImpl: this,
+    ));
   }
 
-  TaskConstMeta get kCrateApiDbStrlenConstMeta =>
-      const TaskConstMeta(debugName: "Db_strlen", argNames: ["that", "key"]);
+  TaskConstMeta get kCrateApiDbStrlenConstMeta => const TaskConstMeta(
+        debugName: "Db_strlen",
+        argNames: ["that", "key"],
+      );
 
   @override
-  Future<List<Uint8List>> crateApiDbSunion({
-    required Db that,
-    required List<String> keys,
-  }) {
-    return handler.executeNormal(
-      NormalTask(
-        callFfi: (port_) {
-          final serializer = SseSerializer(generalizedFrbRustBinding);
-          sse_encode_Auto_Ref_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerDb(
-            that,
-            serializer,
-          );
-          sse_encode_list_String(keys, serializer);
-          pdeCallFfi(
-            generalizedFrbRustBinding,
-            serializer,
-            funcId: 65,
-            port: port_,
-          );
-        },
-        codec: SseCodec(
-          decodeSuccessData: sse_decode_list_list_prim_u_8_strict,
-          decodeErrorData: sse_decode_redlite_error,
-        ),
-        constMeta: kCrateApiDbSunionConstMeta,
-        argValues: [that, keys],
-        apiImpl: this,
+  Future<List<Uint8List>> crateApiDbSunion(
+      {required Db that, required List<String> keys}) {
+    return handler.executeNormal(NormalTask(
+      callFfi: (port_) {
+        final serializer = SseSerializer(generalizedFrbRustBinding);
+        sse_encode_Auto_Ref_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerDb(
+            that, serializer);
+        sse_encode_list_String(keys, serializer);
+        pdeCallFfi(generalizedFrbRustBinding, serializer,
+            funcId: 93, port: port_);
+      },
+      codec: SseCodec(
+        decodeSuccessData: sse_decode_list_list_prim_u_8_strict,
+        decodeErrorData: sse_decode_redlite_error,
       ),
-    );
+      constMeta: kCrateApiDbSunionConstMeta,
+      argValues: [that, keys],
+      apiImpl: this,
+    ));
   }
 
-  TaskConstMeta get kCrateApiDbSunionConstMeta =>
-      const TaskConstMeta(debugName: "Db_sunion", argNames: ["that", "keys"]);
+  TaskConstMeta get kCrateApiDbSunionConstMeta => const TaskConstMeta(
+        debugName: "Db_sunion",
+        argNames: ["that", "keys"],
+      );
 
   @override
   Future<PlatformInt64> crateApiDbTtl({required Db that, required String key}) {
-    return handler.executeNormal(
-      NormalTask(
-        callFfi: (port_) {
-          final serializer = SseSerializer(generalizedFrbRustBinding);
-          sse_encode_Auto_Ref_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerDb(
-            that,
-            serializer,
-          );
-          sse_encode_String(key, serializer);
-          pdeCallFfi(
-            generalizedFrbRustBinding,
-            serializer,
-            funcId: 66,
-            port: port_,
-          );
-        },
-        codec: SseCodec(
-          decodeSuccessData: sse_decode_i_64,
-          decodeErrorData: sse_decode_redlite_error,
-        ),
-        constMeta: kCrateApiDbTtlConstMeta,
-        argValues: [that, key],
-        apiImpl: this,
+    return handler.executeNormal(NormalTask(
+      callFfi: (port_) {
+        final serializer = SseSerializer(generalizedFrbRustBinding);
+        sse_encode_Auto_Ref_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerDb(
+            that, serializer);
+        sse_encode_String(key, serializer);
+        pdeCallFfi(generalizedFrbRustBinding, serializer,
+            funcId: 94, port: port_);
+      },
+      codec: SseCodec(
+        decodeSuccessData: sse_decode_i_64,
+        decodeErrorData: sse_decode_redlite_error,
       ),
-    );
+      constMeta: kCrateApiDbTtlConstMeta,
+      argValues: [that, key],
+      apiImpl: this,
+    ));
   }
 
-  TaskConstMeta get kCrateApiDbTtlConstMeta =>
-      const TaskConstMeta(debugName: "Db_ttl", argNames: ["that", "key"]);
+  TaskConstMeta get kCrateApiDbTtlConstMeta => const TaskConstMeta(
+        debugName: "Db_ttl",
+        argNames: ["that", "key"],
+      );
 
   @override
   Future<PlatformInt64> crateApiDbVacuum({required Db that}) {
-    return handler.executeNormal(
-      NormalTask(
-        callFfi: (port_) {
-          final serializer = SseSerializer(generalizedFrbRustBinding);
-          sse_encode_Auto_Ref_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerDb(
-            that,
-            serializer,
-          );
-          pdeCallFfi(
-            generalizedFrbRustBinding,
-            serializer,
-            funcId: 67,
-            port: port_,
-          );
-        },
-        codec: SseCodec(
-          decodeSuccessData: sse_decode_i_64,
-          decodeErrorData: sse_decode_redlite_error,
-        ),
-        constMeta: kCrateApiDbVacuumConstMeta,
-        argValues: [that],
-        apiImpl: this,
+    return handler.executeNormal(NormalTask(
+      callFfi: (port_) {
+        final serializer = SseSerializer(generalizedFrbRustBinding);
+        sse_encode_Auto_Ref_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerDb(
+            that, serializer);
+        pdeCallFfi(generalizedFrbRustBinding, serializer,
+            funcId: 95, port: port_);
+      },
+      codec: SseCodec(
+        decodeSuccessData: sse_decode_i_64,
+        decodeErrorData: sse_decode_redlite_error,
       ),
-    );
+      constMeta: kCrateApiDbVacuumConstMeta,
+      argValues: [that],
+      apiImpl: this,
+    ));
   }
 
-  TaskConstMeta get kCrateApiDbVacuumConstMeta =>
-      const TaskConstMeta(debugName: "Db_vacuum", argNames: ["that"]);
+  TaskConstMeta get kCrateApiDbVacuumConstMeta => const TaskConstMeta(
+        debugName: "Db_vacuum",
+        argNames: ["that"],
+      );
 
   @override
-  Future<PlatformInt64> crateApiDbZadd({
-    required Db that,
-    required String key,
-    required List<ZMember> members,
-  }) {
-    return handler.executeNormal(
-      NormalTask(
-        callFfi: (port_) {
-          final serializer = SseSerializer(generalizedFrbRustBinding);
-          sse_encode_Auto_Ref_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerDb(
-            that,
-            serializer,
-          );
-          sse_encode_String(key, serializer);
-          sse_encode_list_z_member(members, serializer);
-          pdeCallFfi(
-            generalizedFrbRustBinding,
-            serializer,
-            funcId: 68,
-            port: port_,
-          );
-        },
-        codec: SseCodec(
-          decodeSuccessData: sse_decode_i_64,
-          decodeErrorData: sse_decode_redlite_error,
-        ),
-        constMeta: kCrateApiDbZaddConstMeta,
-        argValues: [that, key, members],
-        apiImpl: this,
+  Future<PlatformInt64> crateApiDbZadd(
+      {required Db that, required String key, required List<ZMember> members}) {
+    return handler.executeNormal(NormalTask(
+      callFfi: (port_) {
+        final serializer = SseSerializer(generalizedFrbRustBinding);
+        sse_encode_Auto_Ref_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerDb(
+            that, serializer);
+        sse_encode_String(key, serializer);
+        sse_encode_list_z_member(members, serializer);
+        pdeCallFfi(generalizedFrbRustBinding, serializer,
+            funcId: 96, port: port_);
+      },
+      codec: SseCodec(
+        decodeSuccessData: sse_decode_i_64,
+        decodeErrorData: sse_decode_redlite_error,
       ),
-    );
+      constMeta: kCrateApiDbZaddConstMeta,
+      argValues: [that, key, members],
+      apiImpl: this,
+    ));
   }
 
   TaskConstMeta get kCrateApiDbZaddConstMeta => const TaskConstMeta(
-    debugName: "Db_zadd",
-    argNames: ["that", "key", "members"],
-  );
+        debugName: "Db_zadd",
+        argNames: ["that", "key", "members"],
+      );
 
   @override
-  Future<PlatformInt64> crateApiDbZcard({
-    required Db that,
-    required String key,
-  }) {
-    return handler.executeNormal(
-      NormalTask(
-        callFfi: (port_) {
-          final serializer = SseSerializer(generalizedFrbRustBinding);
-          sse_encode_Auto_Ref_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerDb(
-            that,
-            serializer,
-          );
-          sse_encode_String(key, serializer);
-          pdeCallFfi(
-            generalizedFrbRustBinding,
-            serializer,
-            funcId: 69,
-            port: port_,
-          );
-        },
-        codec: SseCodec(
-          decodeSuccessData: sse_decode_i_64,
-          decodeErrorData: sse_decode_redlite_error,
-        ),
-        constMeta: kCrateApiDbZcardConstMeta,
-        argValues: [that, key],
-        apiImpl: this,
+  Future<PlatformInt64> crateApiDbZcard(
+      {required Db that, required String key}) {
+    return handler.executeNormal(NormalTask(
+      callFfi: (port_) {
+        final serializer = SseSerializer(generalizedFrbRustBinding);
+        sse_encode_Auto_Ref_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerDb(
+            that, serializer);
+        sse_encode_String(key, serializer);
+        pdeCallFfi(generalizedFrbRustBinding, serializer,
+            funcId: 97, port: port_);
+      },
+      codec: SseCodec(
+        decodeSuccessData: sse_decode_i_64,
+        decodeErrorData: sse_decode_redlite_error,
       ),
-    );
+      constMeta: kCrateApiDbZcardConstMeta,
+      argValues: [that, key],
+      apiImpl: this,
+    ));
   }
 
-  TaskConstMeta get kCrateApiDbZcardConstMeta =>
-      const TaskConstMeta(debugName: "Db_zcard", argNames: ["that", "key"]);
+  TaskConstMeta get kCrateApiDbZcardConstMeta => const TaskConstMeta(
+        debugName: "Db_zcard",
+        argNames: ["that", "key"],
+      );
 
   @override
-  Future<PlatformInt64> crateApiDbZcount({
-    required Db that,
-    required String key,
-    required double minScore,
-    required double maxScore,
-  }) {
-    return handler.executeNormal(
-      NormalTask(
-        callFfi: (port_) {
-          final serializer = SseSerializer(generalizedFrbRustBinding);
-          sse_encode_Auto_Ref_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerDb(
-            that,
-            serializer,
-          );
-          sse_encode_String(key, serializer);
-          sse_encode_f_64(minScore, serializer);
-          sse_encode_f_64(maxScore, serializer);
-          pdeCallFfi(
-            generalizedFrbRustBinding,
-            serializer,
-            funcId: 70,
-            port: port_,
-          );
-        },
-        codec: SseCodec(
-          decodeSuccessData: sse_decode_i_64,
-          decodeErrorData: sse_decode_redlite_error,
-        ),
-        constMeta: kCrateApiDbZcountConstMeta,
-        argValues: [that, key, minScore, maxScore],
-        apiImpl: this,
+  Future<PlatformInt64> crateApiDbZcount(
+      {required Db that,
+      required String key,
+      required double minScore,
+      required double maxScore}) {
+    return handler.executeNormal(NormalTask(
+      callFfi: (port_) {
+        final serializer = SseSerializer(generalizedFrbRustBinding);
+        sse_encode_Auto_Ref_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerDb(
+            that, serializer);
+        sse_encode_String(key, serializer);
+        sse_encode_f_64(minScore, serializer);
+        sse_encode_f_64(maxScore, serializer);
+        pdeCallFfi(generalizedFrbRustBinding, serializer,
+            funcId: 98, port: port_);
+      },
+      codec: SseCodec(
+        decodeSuccessData: sse_decode_i_64,
+        decodeErrorData: sse_decode_redlite_error,
       ),
-    );
+      constMeta: kCrateApiDbZcountConstMeta,
+      argValues: [that, key, minScore, maxScore],
+      apiImpl: this,
+    ));
   }
 
   TaskConstMeta get kCrateApiDbZcountConstMeta => const TaskConstMeta(
-    debugName: "Db_zcount",
-    argNames: ["that", "key", "minScore", "maxScore"],
-  );
+        debugName: "Db_zcount",
+        argNames: ["that", "key", "minScore", "maxScore"],
+      );
 
   @override
-  Future<double> crateApiDbZincrby({
-    required Db that,
-    required String key,
-    required double increment,
-    required List<int> member,
-  }) {
-    return handler.executeNormal(
-      NormalTask(
-        callFfi: (port_) {
-          final serializer = SseSerializer(generalizedFrbRustBinding);
-          sse_encode_Auto_Ref_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerDb(
-            that,
-            serializer,
-          );
-          sse_encode_String(key, serializer);
-          sse_encode_f_64(increment, serializer);
-          sse_encode_list_prim_u_8_loose(member, serializer);
-          pdeCallFfi(
-            generalizedFrbRustBinding,
-            serializer,
-            funcId: 71,
-            port: port_,
-          );
-        },
-        codec: SseCodec(
-          decodeSuccessData: sse_decode_f_64,
-          decodeErrorData: sse_decode_redlite_error,
-        ),
-        constMeta: kCrateApiDbZincrbyConstMeta,
-        argValues: [that, key, increment, member],
-        apiImpl: this,
+  Future<double> crateApiDbZincrby(
+      {required Db that,
+      required String key,
+      required double increment,
+      required List<int> member}) {
+    return handler.executeNormal(NormalTask(
+      callFfi: (port_) {
+        final serializer = SseSerializer(generalizedFrbRustBinding);
+        sse_encode_Auto_Ref_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerDb(
+            that, serializer);
+        sse_encode_String(key, serializer);
+        sse_encode_f_64(increment, serializer);
+        sse_encode_list_prim_u_8_loose(member, serializer);
+        pdeCallFfi(generalizedFrbRustBinding, serializer,
+            funcId: 99, port: port_);
+      },
+      codec: SseCodec(
+        decodeSuccessData: sse_decode_f_64,
+        decodeErrorData: sse_decode_redlite_error,
       ),
-    );
+      constMeta: kCrateApiDbZincrbyConstMeta,
+      argValues: [that, key, increment, member],
+      apiImpl: this,
+    ));
   }
 
   TaskConstMeta get kCrateApiDbZincrbyConstMeta => const TaskConstMeta(
-    debugName: "Db_zincrby",
-    argNames: ["that", "key", "increment", "member"],
-  );
+        debugName: "Db_zincrby",
+        argNames: ["that", "key", "increment", "member"],
+      );
 
   @override
-  Future<List<ZMember>> crateApiDbZrange({
-    required Db that,
-    required String key,
-    required PlatformInt64 start,
-    required PlatformInt64 stop,
-    required bool withScores,
-  }) {
-    return handler.executeNormal(
-      NormalTask(
-        callFfi: (port_) {
-          final serializer = SseSerializer(generalizedFrbRustBinding);
-          sse_encode_Auto_Ref_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerDb(
-            that,
-            serializer,
-          );
-          sse_encode_String(key, serializer);
-          sse_encode_i_64(start, serializer);
-          sse_encode_i_64(stop, serializer);
-          sse_encode_bool(withScores, serializer);
-          pdeCallFfi(
-            generalizedFrbRustBinding,
-            serializer,
-            funcId: 72,
-            port: port_,
-          );
-        },
-        codec: SseCodec(
-          decodeSuccessData: sse_decode_list_z_member,
-          decodeErrorData: sse_decode_redlite_error,
-        ),
-        constMeta: kCrateApiDbZrangeConstMeta,
-        argValues: [that, key, start, stop, withScores],
-        apiImpl: this,
+  Future<List<ZMember>> crateApiDbZrange(
+      {required Db that,
+      required String key,
+      required PlatformInt64 start,
+      required PlatformInt64 stop,
+      required bool withScores}) {
+    return handler.executeNormal(NormalTask(
+      callFfi: (port_) {
+        final serializer = SseSerializer(generalizedFrbRustBinding);
+        sse_encode_Auto_Ref_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerDb(
+            that, serializer);
+        sse_encode_String(key, serializer);
+        sse_encode_i_64(start, serializer);
+        sse_encode_i_64(stop, serializer);
+        sse_encode_bool(withScores, serializer);
+        pdeCallFfi(generalizedFrbRustBinding, serializer,
+            funcId: 100, port: port_);
+      },
+      codec: SseCodec(
+        decodeSuccessData: sse_decode_list_z_member,
+        decodeErrorData: sse_decode_redlite_error,
       ),
-    );
+      constMeta: kCrateApiDbZrangeConstMeta,
+      argValues: [that, key, start, stop, withScores],
+      apiImpl: this,
+    ));
   }
 
   TaskConstMeta get kCrateApiDbZrangeConstMeta => const TaskConstMeta(
-    debugName: "Db_zrange",
-    argNames: ["that", "key", "start", "stop", "withScores"],
-  );
+        debugName: "Db_zrange",
+        argNames: ["that", "key", "start", "stop", "withScores"],
+      );
 
   @override
-  Future<PlatformInt64?> crateApiDbZrank({
-    required Db that,
-    required String key,
-    required List<int> member,
-  }) {
-    return handler.executeNormal(
-      NormalTask(
-        callFfi: (port_) {
-          final serializer = SseSerializer(generalizedFrbRustBinding);
-          sse_encode_Auto_Ref_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerDb(
-            that,
-            serializer,
-          );
-          sse_encode_String(key, serializer);
-          sse_encode_list_prim_u_8_loose(member, serializer);
-          pdeCallFfi(
-            generalizedFrbRustBinding,
-            serializer,
-            funcId: 73,
-            port: port_,
-          );
-        },
-        codec: SseCodec(
-          decodeSuccessData: sse_decode_opt_box_autoadd_i_64,
-          decodeErrorData: sse_decode_redlite_error,
-        ),
-        constMeta: kCrateApiDbZrankConstMeta,
-        argValues: [that, key, member],
-        apiImpl: this,
+  Future<PlatformInt64?> crateApiDbZrank(
+      {required Db that, required String key, required List<int> member}) {
+    return handler.executeNormal(NormalTask(
+      callFfi: (port_) {
+        final serializer = SseSerializer(generalizedFrbRustBinding);
+        sse_encode_Auto_Ref_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerDb(
+            that, serializer);
+        sse_encode_String(key, serializer);
+        sse_encode_list_prim_u_8_loose(member, serializer);
+        pdeCallFfi(generalizedFrbRustBinding, serializer,
+            funcId: 101, port: port_);
+      },
+      codec: SseCodec(
+        decodeSuccessData: sse_decode_opt_box_autoadd_i_64,
+        decodeErrorData: sse_decode_redlite_error,
       ),
-    );
+      constMeta: kCrateApiDbZrankConstMeta,
+      argValues: [that, key, member],
+      apiImpl: this,
+    ));
   }
 
   TaskConstMeta get kCrateApiDbZrankConstMeta => const TaskConstMeta(
-    debugName: "Db_zrank",
-    argNames: ["that", "key", "member"],
-  );
+        debugName: "Db_zrank",
+        argNames: ["that", "key", "member"],
+      );
 
   @override
-  Future<PlatformInt64> crateApiDbZrem({
-    required Db that,
-    required String key,
-    required List<Uint8List> members,
-  }) {
-    return handler.executeNormal(
-      NormalTask(
-        callFfi: (port_) {
-          final serializer = SseSerializer(generalizedFrbRustBinding);
-          sse_encode_Auto_Ref_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerDb(
-            that,
-            serializer,
-          );
-          sse_encode_String(key, serializer);
-          sse_encode_list_list_prim_u_8_strict(members, serializer);
-          pdeCallFfi(
-            generalizedFrbRustBinding,
-            serializer,
-            funcId: 74,
-            port: port_,
-          );
-        },
-        codec: SseCodec(
-          decodeSuccessData: sse_decode_i_64,
-          decodeErrorData: sse_decode_redlite_error,
-        ),
-        constMeta: kCrateApiDbZremConstMeta,
-        argValues: [that, key, members],
-        apiImpl: this,
+  Future<PlatformInt64> crateApiDbZrem(
+      {required Db that,
+      required String key,
+      required List<Uint8List> members}) {
+    return handler.executeNormal(NormalTask(
+      callFfi: (port_) {
+        final serializer = SseSerializer(generalizedFrbRustBinding);
+        sse_encode_Auto_Ref_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerDb(
+            that, serializer);
+        sse_encode_String(key, serializer);
+        sse_encode_list_list_prim_u_8_strict(members, serializer);
+        pdeCallFfi(generalizedFrbRustBinding, serializer,
+            funcId: 102, port: port_);
+      },
+      codec: SseCodec(
+        decodeSuccessData: sse_decode_i_64,
+        decodeErrorData: sse_decode_redlite_error,
       ),
-    );
+      constMeta: kCrateApiDbZremConstMeta,
+      argValues: [that, key, members],
+      apiImpl: this,
+    ));
   }
 
   TaskConstMeta get kCrateApiDbZremConstMeta => const TaskConstMeta(
-    debugName: "Db_zrem",
-    argNames: ["that", "key", "members"],
-  );
+        debugName: "Db_zrem",
+        argNames: ["that", "key", "members"],
+      );
 
   @override
-  Future<List<ZMember>> crateApiDbZrevrange({
-    required Db that,
-    required String key,
-    required PlatformInt64 start,
-    required PlatformInt64 stop,
-    required bool withScores,
-  }) {
-    return handler.executeNormal(
-      NormalTask(
-        callFfi: (port_) {
-          final serializer = SseSerializer(generalizedFrbRustBinding);
-          sse_encode_Auto_Ref_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerDb(
-            that,
-            serializer,
-          );
-          sse_encode_String(key, serializer);
-          sse_encode_i_64(start, serializer);
-          sse_encode_i_64(stop, serializer);
-          sse_encode_bool(withScores, serializer);
-          pdeCallFfi(
-            generalizedFrbRustBinding,
-            serializer,
-            funcId: 75,
-            port: port_,
-          );
-        },
-        codec: SseCodec(
-          decodeSuccessData: sse_decode_list_z_member,
-          decodeErrorData: sse_decode_redlite_error,
-        ),
-        constMeta: kCrateApiDbZrevrangeConstMeta,
-        argValues: [that, key, start, stop, withScores],
-        apiImpl: this,
+  Future<List<ZMember>> crateApiDbZrevrange(
+      {required Db that,
+      required String key,
+      required PlatformInt64 start,
+      required PlatformInt64 stop,
+      required bool withScores}) {
+    return handler.executeNormal(NormalTask(
+      callFfi: (port_) {
+        final serializer = SseSerializer(generalizedFrbRustBinding);
+        sse_encode_Auto_Ref_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerDb(
+            that, serializer);
+        sse_encode_String(key, serializer);
+        sse_encode_i_64(start, serializer);
+        sse_encode_i_64(stop, serializer);
+        sse_encode_bool(withScores, serializer);
+        pdeCallFfi(generalizedFrbRustBinding, serializer,
+            funcId: 103, port: port_);
+      },
+      codec: SseCodec(
+        decodeSuccessData: sse_decode_list_z_member,
+        decodeErrorData: sse_decode_redlite_error,
       ),
-    );
+      constMeta: kCrateApiDbZrevrangeConstMeta,
+      argValues: [that, key, start, stop, withScores],
+      apiImpl: this,
+    ));
   }
 
   TaskConstMeta get kCrateApiDbZrevrangeConstMeta => const TaskConstMeta(
-    debugName: "Db_zrevrange",
-    argNames: ["that", "key", "start", "stop", "withScores"],
-  );
+        debugName: "Db_zrevrange",
+        argNames: ["that", "key", "start", "stop", "withScores"],
+      );
 
   @override
-  Future<PlatformInt64?> crateApiDbZrevrank({
-    required Db that,
-    required String key,
-    required List<int> member,
-  }) {
-    return handler.executeNormal(
-      NormalTask(
-        callFfi: (port_) {
-          final serializer = SseSerializer(generalizedFrbRustBinding);
-          sse_encode_Auto_Ref_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerDb(
-            that,
-            serializer,
-          );
-          sse_encode_String(key, serializer);
-          sse_encode_list_prim_u_8_loose(member, serializer);
-          pdeCallFfi(
-            generalizedFrbRustBinding,
-            serializer,
-            funcId: 76,
-            port: port_,
-          );
-        },
-        codec: SseCodec(
-          decodeSuccessData: sse_decode_opt_box_autoadd_i_64,
-          decodeErrorData: sse_decode_redlite_error,
-        ),
-        constMeta: kCrateApiDbZrevrankConstMeta,
-        argValues: [that, key, member],
-        apiImpl: this,
+  Future<PlatformInt64?> crateApiDbZrevrank(
+      {required Db that, required String key, required List<int> member}) {
+    return handler.executeNormal(NormalTask(
+      callFfi: (port_) {
+        final serializer = SseSerializer(generalizedFrbRustBinding);
+        sse_encode_Auto_Ref_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerDb(
+            that, serializer);
+        sse_encode_String(key, serializer);
+        sse_encode_list_prim_u_8_loose(member, serializer);
+        pdeCallFfi(generalizedFrbRustBinding, serializer,
+            funcId: 104, port: port_);
+      },
+      codec: SseCodec(
+        decodeSuccessData: sse_decode_opt_box_autoadd_i_64,
+        decodeErrorData: sse_decode_redlite_error,
       ),
-    );
+      constMeta: kCrateApiDbZrevrankConstMeta,
+      argValues: [that, key, member],
+      apiImpl: this,
+    ));
   }
 
   TaskConstMeta get kCrateApiDbZrevrankConstMeta => const TaskConstMeta(
-    debugName: "Db_zrevrank",
-    argNames: ["that", "key", "member"],
-  );
+        debugName: "Db_zrevrank",
+        argNames: ["that", "key", "member"],
+      );
 
   @override
-  Future<(String, List<(Uint8List, double)>)> crateApiDbZscan({
-    required Db that,
-    required String key,
-    required String cursor,
-    String? pattern,
-    required PlatformInt64 count,
-  }) {
-    return handler.executeNormal(
-      NormalTask(
-        callFfi: (port_) {
-          final serializer = SseSerializer(generalizedFrbRustBinding);
-          sse_encode_Auto_Ref_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerDb(
-            that,
-            serializer,
-          );
-          sse_encode_String(key, serializer);
-          sse_encode_String(cursor, serializer);
-          sse_encode_opt_String(pattern, serializer);
-          sse_encode_i_64(count, serializer);
-          pdeCallFfi(
-            generalizedFrbRustBinding,
-            serializer,
-            funcId: 77,
-            port: port_,
-          );
-        },
-        codec: SseCodec(
-          decodeSuccessData:
-              sse_decode_record_string_list_record_list_prim_u_8_strict_f_64,
-          decodeErrorData: sse_decode_redlite_error,
-        ),
-        constMeta: kCrateApiDbZscanConstMeta,
-        argValues: [that, key, cursor, pattern, count],
-        apiImpl: this,
+  Future<(String, List<(Uint8List, double)>)> crateApiDbZscan(
+      {required Db that,
+      required String key,
+      required String cursor,
+      String? pattern,
+      required PlatformInt64 count}) {
+    return handler.executeNormal(NormalTask(
+      callFfi: (port_) {
+        final serializer = SseSerializer(generalizedFrbRustBinding);
+        sse_encode_Auto_Ref_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerDb(
+            that, serializer);
+        sse_encode_String(key, serializer);
+        sse_encode_String(cursor, serializer);
+        sse_encode_opt_String(pattern, serializer);
+        sse_encode_i_64(count, serializer);
+        pdeCallFfi(generalizedFrbRustBinding, serializer,
+            funcId: 105, port: port_);
+      },
+      codec: SseCodec(
+        decodeSuccessData:
+            sse_decode_record_string_list_record_list_prim_u_8_strict_f_64,
+        decodeErrorData: sse_decode_redlite_error,
       ),
-    );
+      constMeta: kCrateApiDbZscanConstMeta,
+      argValues: [that, key, cursor, pattern, count],
+      apiImpl: this,
+    ));
   }
 
   TaskConstMeta get kCrateApiDbZscanConstMeta => const TaskConstMeta(
-    debugName: "Db_zscan",
-    argNames: ["that", "key", "cursor", "pattern", "count"],
-  );
+        debugName: "Db_zscan",
+        argNames: ["that", "key", "cursor", "pattern", "count"],
+      );
 
   @override
-  Future<double?> crateApiDbZscore({
-    required Db that,
-    required String key,
-    required List<int> member,
-  }) {
-    return handler.executeNormal(
-      NormalTask(
-        callFfi: (port_) {
-          final serializer = SseSerializer(generalizedFrbRustBinding);
-          sse_encode_Auto_Ref_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerDb(
-            that,
-            serializer,
-          );
-          sse_encode_String(key, serializer);
-          sse_encode_list_prim_u_8_loose(member, serializer);
-          pdeCallFfi(
-            generalizedFrbRustBinding,
-            serializer,
-            funcId: 78,
-            port: port_,
-          );
-        },
-        codec: SseCodec(
-          decodeSuccessData: sse_decode_opt_box_autoadd_f_64,
-          decodeErrorData: sse_decode_redlite_error,
-        ),
-        constMeta: kCrateApiDbZscoreConstMeta,
-        argValues: [that, key, member],
-        apiImpl: this,
+  Future<double?> crateApiDbZscore(
+      {required Db that, required String key, required List<int> member}) {
+    return handler.executeNormal(NormalTask(
+      callFfi: (port_) {
+        final serializer = SseSerializer(generalizedFrbRustBinding);
+        sse_encode_Auto_Ref_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerDb(
+            that, serializer);
+        sse_encode_String(key, serializer);
+        sse_encode_list_prim_u_8_loose(member, serializer);
+        pdeCallFfi(generalizedFrbRustBinding, serializer,
+            funcId: 106, port: port_);
+      },
+      codec: SseCodec(
+        decodeSuccessData: sse_decode_opt_box_autoadd_f_64,
+        decodeErrorData: sse_decode_redlite_error,
       ),
-    );
+      constMeta: kCrateApiDbZscoreConstMeta,
+      argValues: [that, key, member],
+      apiImpl: this,
+    ));
   }
 
   TaskConstMeta get kCrateApiDbZscoreConstMeta => const TaskConstMeta(
-    debugName: "Db_zscore",
-    argNames: ["that", "key", "member"],
-  );
+        debugName: "Db_zscore",
+        argNames: ["that", "key", "member"],
+      );
 
   @override
   Future<SetOptions> crateApiSetOptionsDefault() {
-    return handler.executeNormal(
-      NormalTask(
-        callFfi: (port_) {
-          final serializer = SseSerializer(generalizedFrbRustBinding);
-          pdeCallFfi(
-            generalizedFrbRustBinding,
-            serializer,
-            funcId: 79,
-            port: port_,
-          );
-        },
-        codec: SseCodec(
-          decodeSuccessData: sse_decode_set_options,
-          decodeErrorData: null,
-        ),
-        constMeta: kCrateApiSetOptionsDefaultConstMeta,
-        argValues: [],
-        apiImpl: this,
+    return handler.executeNormal(NormalTask(
+      callFfi: (port_) {
+        final serializer = SseSerializer(generalizedFrbRustBinding);
+        pdeCallFfi(generalizedFrbRustBinding, serializer,
+            funcId: 107, port: port_);
+      },
+      codec: SseCodec(
+        decodeSuccessData: sse_decode_set_options,
+        decodeErrorData: null,
       ),
-    );
+      constMeta: kCrateApiSetOptionsDefaultConstMeta,
+      argValues: [],
+      apiImpl: this,
+    ));
   }
 
-  TaskConstMeta get kCrateApiSetOptionsDefaultConstMeta =>
-      const TaskConstMeta(debugName: "set_options_default", argNames: []);
+  TaskConstMeta get kCrateApiSetOptionsDefaultConstMeta => const TaskConstMeta(
+        debugName: "set_options_default",
+        argNames: [],
+      );
 
-  RustArcIncrementStrongCountFnType
-  get rust_arc_increment_strong_count_Db => wire
+  RustArcIncrementStrongCountFnType get rust_arc_increment_strong_count_Db => wire
       .rust_arc_increment_strong_count_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerDb;
 
-  RustArcDecrementStrongCountFnType
-  get rust_arc_decrement_strong_count_Db => wire
+  RustArcDecrementStrongCountFnType get rust_arc_decrement_strong_count_Db => wire
       .rust_arc_decrement_strong_count_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerDb;
 
   @protected
-  Db
-  dco_decode_Auto_Owned_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerDb(
-    dynamic raw,
-  ) {
+  Db dco_decode_Auto_Owned_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerDb(
+      dynamic raw) {
     // Codec=Dco (DartCObject based), see doc to use other codecs
     return DbImpl.frbInternalDcoDecode(raw as List<dynamic>);
   }
 
   @protected
-  Db
-  dco_decode_Auto_Ref_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerDb(
-    dynamic raw,
-  ) {
+  Db dco_decode_Auto_Ref_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerDb(
+      dynamic raw) {
     // Codec=Dco (DartCObject based), see doc to use other codecs
     return DbImpl.frbInternalDcoDecode(raw as List<dynamic>);
   }
 
   @protected
-  Db
-  dco_decode_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerDb(
-    dynamic raw,
-  ) {
+  Db dco_decode_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerDb(
+      dynamic raw) {
     // Codec=Dco (DartCObject based), see doc to use other codecs
     return DbImpl.frbInternalDcoDecode(raw as List<dynamic>);
   }
@@ -3508,6 +3616,12 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   }
 
   @protected
+  KeyInfo dco_decode_box_autoadd_key_info(dynamic raw) {
+    // Codec=Dco (DartCObject based), see doc to use other codecs
+    return dco_decode_key_info(raw);
+  }
+
+  @protected
   SetOptions dco_decode_box_autoadd_set_options(dynamic raw) {
     // Codec=Dco (DartCObject based), see doc to use other codecs
     return dco_decode_set_options(raw);
@@ -3529,6 +3643,20 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   PlatformInt64 dco_decode_i_64(dynamic raw) {
     // Codec=Dco (DartCObject based), see doc to use other codecs
     return dcoDecodeI64(raw);
+  }
+
+  @protected
+  KeyInfo dco_decode_key_info(dynamic raw) {
+    // Codec=Dco (DartCObject based), see doc to use other codecs
+    final arr = raw as List<dynamic>;
+    if (arr.length != 4)
+      throw Exception('unexpected arr length: expect 4 but see ${arr.length}');
+    return KeyInfo(
+      keyType: dco_decode_key_type(arr[0]),
+      ttl: dco_decode_i_64(arr[1]),
+      createdAt: dco_decode_i_64(arr[2]),
+      updatedAt: dco_decode_i_64(arr[3]),
+    );
   }
 
   @protected
@@ -3571,8 +3699,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
 
   @protected
   List<(Uint8List, double)> dco_decode_list_record_list_prim_u_8_strict_f_64(
-    dynamic raw,
-  ) {
+      dynamic raw) {
     // Codec=Dco (DartCObject based), see doc to use other codecs
     return (raw as List<dynamic>)
         .map(dco_decode_record_list_prim_u_8_strict_f_64)
@@ -3581,8 +3708,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
 
   @protected
   List<(String, Uint8List)> dco_decode_list_record_string_list_prim_u_8_strict(
-    dynamic raw,
-  ) {
+      dynamic raw) {
     // Codec=Dco (DartCObject based), see doc to use other codecs
     return (raw as List<dynamic>)
         .map(dco_decode_record_string_list_prim_u_8_strict)
@@ -3614,6 +3740,12 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   }
 
   @protected
+  KeyInfo? dco_decode_opt_box_autoadd_key_info(dynamic raw) {
+    // Codec=Dco (DartCObject based), see doc to use other codecs
+    return raw == null ? null : dco_decode_box_autoadd_key_info(raw);
+  }
+
+  @protected
   Uint8List? dco_decode_opt_list_prim_u_8_strict(dynamic raw) {
     // Codec=Dco (DartCObject based), see doc to use other codecs
     return raw == null ? null : dco_decode_list_prim_u_8_strict(raw);
@@ -3626,13 +3758,15 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
     if (arr.length != 2) {
       throw Exception('Expected 2 elements, got ${arr.length}');
     }
-    return (dco_decode_list_prim_u_8_strict(arr[0]), dco_decode_f_64(arr[1]));
+    return (
+      dco_decode_list_prim_u_8_strict(arr[0]),
+      dco_decode_f_64(arr[1]),
+    );
   }
 
   @protected
   (String, List<Uint8List>) dco_decode_record_string_list_list_prim_u_8_strict(
-    dynamic raw,
-  ) {
+      dynamic raw) {
     // Codec=Dco (DartCObject based), see doc to use other codecs
     final arr = raw as List<dynamic>;
     if (arr.length != 2) {
@@ -3646,19 +3780,22 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
 
   @protected
   (String, Uint8List) dco_decode_record_string_list_prim_u_8_strict(
-    dynamic raw,
-  ) {
+      dynamic raw) {
     // Codec=Dco (DartCObject based), see doc to use other codecs
     final arr = raw as List<dynamic>;
     if (arr.length != 2) {
       throw Exception('Expected 2 elements, got ${arr.length}');
     }
-    return (dco_decode_String(arr[0]), dco_decode_list_prim_u_8_strict(arr[1]));
+    return (
+      dco_decode_String(arr[0]),
+      dco_decode_list_prim_u_8_strict(arr[1]),
+    );
   }
 
   @protected
   (String, List<(Uint8List, double)>)
-  dco_decode_record_string_list_record_list_prim_u_8_strict_f_64(dynamic raw) {
+      dco_decode_record_string_list_record_list_prim_u_8_strict_f_64(
+          dynamic raw) {
     // Codec=Dco (DartCObject based), see doc to use other codecs
     final arr = raw as List<dynamic>;
     if (arr.length != 2) {
@@ -3672,9 +3809,8 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
 
   @protected
   (String, List<(String, Uint8List)>)
-  dco_decode_record_string_list_record_string_list_prim_u_8_strict(
-    dynamic raw,
-  ) {
+      dco_decode_record_string_list_record_string_list_prim_u_8_strict(
+          dynamic raw) {
     // Codec=Dco (DartCObject based), see doc to use other codecs
     final arr = raw as List<dynamic>;
     if (arr.length != 2) {
@@ -3693,7 +3829,10 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
     if (arr.length != 2) {
       throw Exception('Expected 2 elements, got ${arr.length}');
     }
-    return (dco_decode_String(arr[0]), dco_decode_list_String(arr[1]));
+    return (
+      dco_decode_String(arr[0]),
+      dco_decode_list_String(arr[1]),
+    );
   }
 
   @protected
@@ -3702,7 +3841,9 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
     final arr = raw as List<dynamic>;
     if (arr.length != 1)
       throw Exception('unexpected arr length: expect 1 but see ${arr.length}');
-    return RedliteError(message: dco_decode_String(arr[0]));
+    return RedliteError(
+      message: dco_decode_String(arr[0]),
+    );
   }
 
   @protected
@@ -3750,39 +3891,27 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   }
 
   @protected
-  Db
-  sse_decode_Auto_Owned_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerDb(
-    SseDeserializer deserializer,
-  ) {
+  Db sse_decode_Auto_Owned_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerDb(
+      SseDeserializer deserializer) {
     // Codec=Sse (Serialization based), see doc to use other codecs
     return DbImpl.frbInternalSseDecode(
-      sse_decode_usize(deserializer),
-      sse_decode_i_32(deserializer),
-    );
+        sse_decode_usize(deserializer), sse_decode_i_32(deserializer));
   }
 
   @protected
-  Db
-  sse_decode_Auto_Ref_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerDb(
-    SseDeserializer deserializer,
-  ) {
+  Db sse_decode_Auto_Ref_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerDb(
+      SseDeserializer deserializer) {
     // Codec=Sse (Serialization based), see doc to use other codecs
     return DbImpl.frbInternalSseDecode(
-      sse_decode_usize(deserializer),
-      sse_decode_i_32(deserializer),
-    );
+        sse_decode_usize(deserializer), sse_decode_i_32(deserializer));
   }
 
   @protected
-  Db
-  sse_decode_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerDb(
-    SseDeserializer deserializer,
-  ) {
+  Db sse_decode_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerDb(
+      SseDeserializer deserializer) {
     // Codec=Sse (Serialization based), see doc to use other codecs
     return DbImpl.frbInternalSseDecode(
-      sse_decode_usize(deserializer),
-      sse_decode_i_32(deserializer),
-    );
+        sse_decode_usize(deserializer), sse_decode_i_32(deserializer));
   }
 
   @protected
@@ -3811,6 +3940,12 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   }
 
   @protected
+  KeyInfo sse_decode_box_autoadd_key_info(SseDeserializer deserializer) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    return (sse_decode_key_info(deserializer));
+  }
+
+  @protected
   SetOptions sse_decode_box_autoadd_set_options(SseDeserializer deserializer) {
     // Codec=Sse (Serialization based), see doc to use other codecs
     return (sse_decode_set_options(deserializer));
@@ -3835,6 +3970,20 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   }
 
   @protected
+  KeyInfo sse_decode_key_info(SseDeserializer deserializer) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    var var_keyType = sse_decode_key_type(deserializer);
+    var var_ttl = sse_decode_i_64(deserializer);
+    var var_createdAt = sse_decode_i_64(deserializer);
+    var var_updatedAt = sse_decode_i_64(deserializer);
+    return KeyInfo(
+        keyType: var_keyType,
+        ttl: var_ttl,
+        createdAt: var_createdAt,
+        updatedAt: var_updatedAt);
+  }
+
+  @protected
   KeyType sse_decode_key_type(SseDeserializer deserializer) {
     // Codec=Sse (Serialization based), see doc to use other codecs
     var inner = sse_decode_i_32(deserializer);
@@ -3855,8 +4004,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
 
   @protected
   List<Uint8List> sse_decode_list_list_prim_u_8_strict(
-    SseDeserializer deserializer,
-  ) {
+      SseDeserializer deserializer) {
     // Codec=Sse (Serialization based), see doc to use other codecs
 
     var len_ = sse_decode_i_32(deserializer);
@@ -3869,8 +4017,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
 
   @protected
   List<Uint8List?> sse_decode_list_opt_list_prim_u_8_strict(
-    SseDeserializer deserializer,
-  ) {
+      SseDeserializer deserializer) {
     // Codec=Sse (Serialization based), see doc to use other codecs
 
     var len_ = sse_decode_i_32(deserializer);
@@ -3897,8 +4044,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
 
   @protected
   List<(Uint8List, double)> sse_decode_list_record_list_prim_u_8_strict_f_64(
-    SseDeserializer deserializer,
-  ) {
+      SseDeserializer deserializer) {
     // Codec=Sse (Serialization based), see doc to use other codecs
 
     var len_ = sse_decode_i_32(deserializer);
@@ -3911,8 +4057,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
 
   @protected
   List<(String, Uint8List)> sse_decode_list_record_string_list_prim_u_8_strict(
-    SseDeserializer deserializer,
-  ) {
+      SseDeserializer deserializer) {
     // Codec=Sse (Serialization based), see doc to use other codecs
 
     var len_ = sse_decode_i_32(deserializer);
@@ -3969,6 +4114,17 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   }
 
   @protected
+  KeyInfo? sse_decode_opt_box_autoadd_key_info(SseDeserializer deserializer) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+
+    if (sse_decode_bool(deserializer)) {
+      return (sse_decode_box_autoadd_key_info(deserializer));
+    } else {
+      return null;
+    }
+  }
+
+  @protected
   Uint8List? sse_decode_opt_list_prim_u_8_strict(SseDeserializer deserializer) {
     // Codec=Sse (Serialization based), see doc to use other codecs
 
@@ -3981,8 +4137,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
 
   @protected
   (Uint8List, double) sse_decode_record_list_prim_u_8_strict_f_64(
-    SseDeserializer deserializer,
-  ) {
+      SseDeserializer deserializer) {
     // Codec=Sse (Serialization based), see doc to use other codecs
     var var_field0 = sse_decode_list_prim_u_8_strict(deserializer);
     var var_field1 = sse_decode_f_64(deserializer);
@@ -3991,8 +4146,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
 
   @protected
   (String, List<Uint8List>) sse_decode_record_string_list_list_prim_u_8_strict(
-    SseDeserializer deserializer,
-  ) {
+      SseDeserializer deserializer) {
     // Codec=Sse (Serialization based), see doc to use other codecs
     var var_field0 = sse_decode_String(deserializer);
     var var_field1 = sse_decode_list_list_prim_u_8_strict(deserializer);
@@ -4001,8 +4155,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
 
   @protected
   (String, Uint8List) sse_decode_record_string_list_prim_u_8_strict(
-    SseDeserializer deserializer,
-  ) {
+      SseDeserializer deserializer) {
     // Codec=Sse (Serialization based), see doc to use other codecs
     var var_field0 = sse_decode_String(deserializer);
     var var_field1 = sse_decode_list_prim_u_8_strict(deserializer);
@@ -4011,34 +4164,29 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
 
   @protected
   (String, List<(Uint8List, double)>)
-  sse_decode_record_string_list_record_list_prim_u_8_strict_f_64(
-    SseDeserializer deserializer,
-  ) {
+      sse_decode_record_string_list_record_list_prim_u_8_strict_f_64(
+          SseDeserializer deserializer) {
     // Codec=Sse (Serialization based), see doc to use other codecs
     var var_field0 = sse_decode_String(deserializer);
-    var var_field1 = sse_decode_list_record_list_prim_u_8_strict_f_64(
-      deserializer,
-    );
+    var var_field1 =
+        sse_decode_list_record_list_prim_u_8_strict_f_64(deserializer);
     return (var_field0, var_field1);
   }
 
   @protected
   (String, List<(String, Uint8List)>)
-  sse_decode_record_string_list_record_string_list_prim_u_8_strict(
-    SseDeserializer deserializer,
-  ) {
+      sse_decode_record_string_list_record_string_list_prim_u_8_strict(
+          SseDeserializer deserializer) {
     // Codec=Sse (Serialization based), see doc to use other codecs
     var var_field0 = sse_decode_String(deserializer);
-    var var_field1 = sse_decode_list_record_string_list_prim_u_8_strict(
-      deserializer,
-    );
+    var var_field1 =
+        sse_decode_list_record_string_list_prim_u_8_strict(deserializer);
     return (var_field0, var_field1);
   }
 
   @protected
   (String, List<String>) sse_decode_record_string_list_string(
-    SseDeserializer deserializer,
-  ) {
+      SseDeserializer deserializer) {
     // Codec=Sse (Serialization based), see doc to use other codecs
     var var_field0 = sse_decode_String(deserializer);
     var var_field1 = sse_decode_list_String(deserializer);
@@ -4089,41 +4237,29 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
 
   @protected
   void
-  sse_encode_Auto_Owned_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerDb(
-    Db self,
-    SseSerializer serializer,
-  ) {
+      sse_encode_Auto_Owned_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerDb(
+          Db self, SseSerializer serializer) {
     // Codec=Sse (Serialization based), see doc to use other codecs
     sse_encode_usize(
-      (self as DbImpl).frbInternalSseEncode(move: true),
-      serializer,
-    );
+        (self as DbImpl).frbInternalSseEncode(move: true), serializer);
   }
 
   @protected
   void
-  sse_encode_Auto_Ref_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerDb(
-    Db self,
-    SseSerializer serializer,
-  ) {
+      sse_encode_Auto_Ref_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerDb(
+          Db self, SseSerializer serializer) {
     // Codec=Sse (Serialization based), see doc to use other codecs
     sse_encode_usize(
-      (self as DbImpl).frbInternalSseEncode(move: false),
-      serializer,
-    );
+        (self as DbImpl).frbInternalSseEncode(move: false), serializer);
   }
 
   @protected
   void
-  sse_encode_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerDb(
-    Db self,
-    SseSerializer serializer,
-  ) {
+      sse_encode_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerDb(
+          Db self, SseSerializer serializer) {
     // Codec=Sse (Serialization based), see doc to use other codecs
     sse_encode_usize(
-      (self as DbImpl).frbInternalSseEncode(move: null),
-      serializer,
-    );
+        (self as DbImpl).frbInternalSseEncode(move: null), serializer);
   }
 
   @protected
@@ -4146,18 +4282,20 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
 
   @protected
   void sse_encode_box_autoadd_i_64(
-    PlatformInt64 self,
-    SseSerializer serializer,
-  ) {
+      PlatformInt64 self, SseSerializer serializer) {
     // Codec=Sse (Serialization based), see doc to use other codecs
     sse_encode_i_64(self, serializer);
   }
 
   @protected
+  void sse_encode_box_autoadd_key_info(KeyInfo self, SseSerializer serializer) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    sse_encode_key_info(self, serializer);
+  }
+
+  @protected
   void sse_encode_box_autoadd_set_options(
-    SetOptions self,
-    SseSerializer serializer,
-  ) {
+      SetOptions self, SseSerializer serializer) {
     // Codec=Sse (Serialization based), see doc to use other codecs
     sse_encode_set_options(self, serializer);
   }
@@ -4181,6 +4319,15 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   }
 
   @protected
+  void sse_encode_key_info(KeyInfo self, SseSerializer serializer) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    sse_encode_key_type(self.keyType, serializer);
+    sse_encode_i_64(self.ttl, serializer);
+    sse_encode_i_64(self.createdAt, serializer);
+    sse_encode_i_64(self.updatedAt, serializer);
+  }
+
+  @protected
   void sse_encode_key_type(KeyType self, SseSerializer serializer) {
     // Codec=Sse (Serialization based), see doc to use other codecs
     sse_encode_i_32(self.index, serializer);
@@ -4197,9 +4344,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
 
   @protected
   void sse_encode_list_list_prim_u_8_strict(
-    List<Uint8List> self,
-    SseSerializer serializer,
-  ) {
+      List<Uint8List> self, SseSerializer serializer) {
     // Codec=Sse (Serialization based), see doc to use other codecs
     sse_encode_i_32(self.length, serializer);
     for (final item in self) {
@@ -4209,9 +4354,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
 
   @protected
   void sse_encode_list_opt_list_prim_u_8_strict(
-    List<Uint8List?> self,
-    SseSerializer serializer,
-  ) {
+      List<Uint8List?> self, SseSerializer serializer) {
     // Codec=Sse (Serialization based), see doc to use other codecs
     sse_encode_i_32(self.length, serializer);
     for (final item in self) {
@@ -4221,21 +4364,16 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
 
   @protected
   void sse_encode_list_prim_u_8_loose(
-    List<int> self,
-    SseSerializer serializer,
-  ) {
+      List<int> self, SseSerializer serializer) {
     // Codec=Sse (Serialization based), see doc to use other codecs
     sse_encode_i_32(self.length, serializer);
-    serializer.buffer.putUint8List(
-      self is Uint8List ? self : Uint8List.fromList(self),
-    );
+    serializer.buffer
+        .putUint8List(self is Uint8List ? self : Uint8List.fromList(self));
   }
 
   @protected
   void sse_encode_list_prim_u_8_strict(
-    Uint8List self,
-    SseSerializer serializer,
-  ) {
+      Uint8List self, SseSerializer serializer) {
     // Codec=Sse (Serialization based), see doc to use other codecs
     sse_encode_i_32(self.length, serializer);
     serializer.buffer.putUint8List(self);
@@ -4243,9 +4381,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
 
   @protected
   void sse_encode_list_record_list_prim_u_8_strict_f_64(
-    List<(Uint8List, double)> self,
-    SseSerializer serializer,
-  ) {
+      List<(Uint8List, double)> self, SseSerializer serializer) {
     // Codec=Sse (Serialization based), see doc to use other codecs
     sse_encode_i_32(self.length, serializer);
     for (final item in self) {
@@ -4255,9 +4391,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
 
   @protected
   void sse_encode_list_record_string_list_prim_u_8_strict(
-    List<(String, Uint8List)> self,
-    SseSerializer serializer,
-  ) {
+      List<(String, Uint8List)> self, SseSerializer serializer) {
     // Codec=Sse (Serialization based), see doc to use other codecs
     sse_encode_i_32(self.length, serializer);
     for (final item in self) {
@@ -4296,9 +4430,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
 
   @protected
   void sse_encode_opt_box_autoadd_i_64(
-    PlatformInt64? self,
-    SseSerializer serializer,
-  ) {
+      PlatformInt64? self, SseSerializer serializer) {
     // Codec=Sse (Serialization based), see doc to use other codecs
 
     sse_encode_bool(self != null, serializer);
@@ -4308,10 +4440,19 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   }
 
   @protected
+  void sse_encode_opt_box_autoadd_key_info(
+      KeyInfo? self, SseSerializer serializer) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+
+    sse_encode_bool(self != null, serializer);
+    if (self != null) {
+      sse_encode_box_autoadd_key_info(self, serializer);
+    }
+  }
+
+  @protected
   void sse_encode_opt_list_prim_u_8_strict(
-    Uint8List? self,
-    SseSerializer serializer,
-  ) {
+      Uint8List? self, SseSerializer serializer) {
     // Codec=Sse (Serialization based), see doc to use other codecs
 
     sse_encode_bool(self != null, serializer);
@@ -4322,9 +4463,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
 
   @protected
   void sse_encode_record_list_prim_u_8_strict_f_64(
-    (Uint8List, double) self,
-    SseSerializer serializer,
-  ) {
+      (Uint8List, double) self, SseSerializer serializer) {
     // Codec=Sse (Serialization based), see doc to use other codecs
     sse_encode_list_prim_u_8_strict(self.$1, serializer);
     sse_encode_f_64(self.$2, serializer);
@@ -4332,9 +4471,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
 
   @protected
   void sse_encode_record_string_list_list_prim_u_8_strict(
-    (String, List<Uint8List>) self,
-    SseSerializer serializer,
-  ) {
+      (String, List<Uint8List>) self, SseSerializer serializer) {
     // Codec=Sse (Serialization based), see doc to use other codecs
     sse_encode_String(self.$1, serializer);
     sse_encode_list_list_prim_u_8_strict(self.$2, serializer);
@@ -4342,9 +4479,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
 
   @protected
   void sse_encode_record_string_list_prim_u_8_strict(
-    (String, Uint8List) self,
-    SseSerializer serializer,
-  ) {
+      (String, Uint8List) self, SseSerializer serializer) {
     // Codec=Sse (Serialization based), see doc to use other codecs
     sse_encode_String(self.$1, serializer);
     sse_encode_list_prim_u_8_strict(self.$2, serializer);
@@ -4352,9 +4487,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
 
   @protected
   void sse_encode_record_string_list_record_list_prim_u_8_strict_f_64(
-    (String, List<(Uint8List, double)>) self,
-    SseSerializer serializer,
-  ) {
+      (String, List<(Uint8List, double)>) self, SseSerializer serializer) {
     // Codec=Sse (Serialization based), see doc to use other codecs
     sse_encode_String(self.$1, serializer);
     sse_encode_list_record_list_prim_u_8_strict_f_64(self.$2, serializer);
@@ -4362,9 +4495,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
 
   @protected
   void sse_encode_record_string_list_record_string_list_prim_u_8_strict(
-    (String, List<(String, Uint8List)>) self,
-    SseSerializer serializer,
-  ) {
+      (String, List<(String, Uint8List)>) self, SseSerializer serializer) {
     // Codec=Sse (Serialization based), see doc to use other codecs
     sse_encode_String(self.$1, serializer);
     sse_encode_list_record_string_list_prim_u_8_strict(self.$2, serializer);
@@ -4372,9 +4503,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
 
   @protected
   void sse_encode_record_string_list_string(
-    (String, List<String>) self,
-    SseSerializer serializer,
-  ) {
+      (String, List<String>) self, SseSerializer serializer) {
     // Codec=Sse (Serialization based), see doc to use other codecs
     sse_encode_String(self.$1, serializer);
     sse_encode_list_String(self.$2, serializer);
@@ -4424,11 +4553,11 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
 class DbImpl extends RustOpaque implements Db {
   // Not to be used by end users
   DbImpl.frbInternalDcoDecode(List<dynamic> wire)
-    : super.frbInternalDcoDecode(wire, _kStaticData);
+      : super.frbInternalDcoDecode(wire, _kStaticData);
 
   // Not to be used by end users
   DbImpl.frbInternalSseDecode(BigInt ptr, int externalSizeOnNative)
-    : super.frbInternalSseDecode(ptr, externalSizeOnNative, _kStaticData);
+      : super.frbInternalSseDecode(ptr, externalSizeOnNative, _kStaticData);
 
   static final _kStaticData = RustArcStaticData(
     rustArcIncrementStrongCount:
@@ -4440,29 +4569,24 @@ class DbImpl extends RustOpaque implements Db {
   );
 
   /// Append value to a key, return new length.
-  Future<PlatformInt64> append({
-    required String key,
-    required List<int> value,
-  }) =>
+  Future<PlatformInt64> append(
+          {required String key, required List<int> value}) =>
       RustLib.instance.api.crateApiDbAppend(that: this, key: key, value: value);
 
   /// Get the number of keys in the database.
-  Future<PlatformInt64> dbsize() =>
-      RustLib.instance.api.crateApiDbDbsize(that: this);
+  Future<PlatformInt64> dbsize() => RustLib.instance.api.crateApiDbDbsize(
+        that: this,
+      );
 
   /// Decrement the integer value of a key by one.
   Future<PlatformInt64> decr({required String key}) =>
       RustLib.instance.api.crateApiDbDecr(that: this, key: key);
 
   /// Decrement the integer value of a key by amount.
-  Future<PlatformInt64> decrby({
-    required String key,
-    required PlatformInt64 decrement,
-  }) => RustLib.instance.api.crateApiDbDecrby(
-    that: this,
-    key: key,
-    decrement: decrement,
-  );
+  Future<PlatformInt64> decrby(
+          {required String key, required PlatformInt64 decrement}) =>
+      RustLib.instance.api
+          .crateApiDbDecrby(that: this, key: key, decrement: decrement);
 
   /// Delete one or more keys, return count deleted.
   Future<PlatformInt64> del({required List<String> keys}) =>
@@ -4474,24 +4598,59 @@ class DbImpl extends RustOpaque implements Db {
 
   /// Set expiration in seconds.
   Future<bool> expire({required String key, required PlatformInt64 seconds}) =>
-      RustLib.instance.api.crateApiDbExpire(
-        that: this,
-        key: key,
-        seconds: seconds,
-      );
+      RustLib.instance.api
+          .crateApiDbExpire(that: this, key: key, seconds: seconds);
 
   /// Set expiration at Unix timestamp (seconds).
-  Future<bool> expireat({
-    required String key,
-    required PlatformInt64 unixTime,
-  }) => RustLib.instance.api.crateApiDbExpireat(
-    that: this,
-    key: key,
-    unixTime: unixTime,
-  );
+  Future<bool> expireat(
+          {required String key, required PlatformInt64 unixTime}) =>
+      RustLib.instance.api
+          .crateApiDbExpireat(that: this, key: key, unixTime: unixTime);
 
   /// Delete all keys in the current database.
-  Future<void> flushdb() => RustLib.instance.api.crateApiDbFlushdb(that: this);
+  Future<void> flushdb() => RustLib.instance.api.crateApiDbFlushdb(
+        that: this,
+      );
+
+  /// Disable FTS indexing for a specific database.
+  Future<void> ftsDisableDatabase({required PlatformInt64 dbNum}) =>
+      RustLib.instance.api
+          .crateApiDbFtsDisableDatabase(that: this, dbNum: dbNum);
+
+  /// Disable FTS indexing globally.
+  Future<void> ftsDisableGlobal() =>
+      RustLib.instance.api.crateApiDbFtsDisableGlobal(
+        that: this,
+      );
+
+  /// Disable FTS indexing for a specific key.
+  Future<void> ftsDisableKey({required String key}) =>
+      RustLib.instance.api.crateApiDbFtsDisableKey(that: this, key: key);
+
+  /// Disable FTS indexing for keys matching a pattern.
+  Future<void> ftsDisablePattern({required String pattern}) =>
+      RustLib.instance.api
+          .crateApiDbFtsDisablePattern(that: this, pattern: pattern);
+
+  /// Enable FTS indexing for a specific database.
+  Future<void> ftsEnableDatabase({required PlatformInt64 dbNum}) =>
+      RustLib.instance.api
+          .crateApiDbFtsEnableDatabase(that: this, dbNum: dbNum);
+
+  /// Enable FTS indexing globally.
+  Future<void> ftsEnableGlobal() =>
+      RustLib.instance.api.crateApiDbFtsEnableGlobal(
+        that: this,
+      );
+
+  /// Enable FTS indexing for a specific key.
+  Future<void> ftsEnableKey({required String key}) =>
+      RustLib.instance.api.crateApiDbFtsEnableKey(that: this, key: key);
+
+  /// Enable FTS indexing for keys matching a pattern.
+  Future<void> ftsEnablePattern({required String pattern}) =>
+      RustLib.instance.api
+          .crateApiDbFtsEnablePattern(that: this, pattern: pattern);
 
   /// Get the value of a key.
   Future<Uint8List?> get_({required String key}) =>
@@ -4502,29 +4661,22 @@ class DbImpl extends RustOpaque implements Db {
       RustLib.instance.api.crateApiDbGetdel(that: this, key: key);
 
   /// Get a substring of the value stored at key.
-  Future<Uint8List> getrange({
-    required String key,
-    required PlatformInt64 start,
-    required PlatformInt64 end,
-  }) => RustLib.instance.api.crateApiDbGetrange(
-    that: this,
-    key: key,
-    start: start,
-    end: end,
-  );
+  Future<Uint8List> getrange(
+          {required String key,
+          required PlatformInt64 start,
+          required PlatformInt64 end}) =>
+      RustLib.instance.api
+          .crateApiDbGetrange(that: this, key: key, start: start, end: end);
 
   /// Delete hash fields.
-  Future<PlatformInt64> hdel({
-    required String key,
-    required List<String> fields,
-  }) =>
+  Future<PlatformInt64> hdel(
+          {required String key, required List<String> fields}) =>
       RustLib.instance.api.crateApiDbHdel(that: this, key: key, fields: fields);
 
   /// Check if hash field exists.
-  Future<bool> hexists({required String key, required String field}) => RustLib
-      .instance
-      .api
-      .crateApiDbHexists(that: this, key: key, field: field);
+  Future<bool> hexists({required String key, required String field}) =>
+      RustLib.instance.api
+          .crateApiDbHexists(that: this, key: key, field: field);
 
   /// Get a hash field value.
   Future<Uint8List?> hget({required String key, required String field}) =>
@@ -4535,16 +4687,59 @@ class DbImpl extends RustOpaque implements Db {
       RustLib.instance.api.crateApiDbHgetall(that: this, key: key);
 
   /// Increment hash field by integer.
-  Future<PlatformInt64> hincrby({
-    required String key,
-    required String field,
-    required PlatformInt64 increment,
-  }) => RustLib.instance.api.crateApiDbHincrby(
-    that: this,
-    key: key,
-    field: field,
-    increment: increment,
-  );
+  Future<PlatformInt64> hincrby(
+          {required String key,
+          required String field,
+          required PlatformInt64 increment}) =>
+      RustLib.instance.api.crateApiDbHincrby(
+          that: this, key: key, field: field, increment: increment);
+
+  /// Disable history tracking for a specific database.
+  Future<void> historyDisableDatabase({required PlatformInt64 dbNum}) =>
+      RustLib.instance.api
+          .crateApiDbHistoryDisableDatabase(that: this, dbNum: dbNum);
+
+  /// Disable history tracking globally.
+  Future<void> historyDisableGlobal() =>
+      RustLib.instance.api.crateApiDbHistoryDisableGlobal(
+        that: this,
+      );
+
+  /// Disable history tracking for a specific key.
+  Future<void> historyDisableKey({required String key}) =>
+      RustLib.instance.api.crateApiDbHistoryDisableKey(that: this, key: key);
+
+  /// Enable history tracking for a specific database.
+  Future<void> historyEnableDatabase(
+          {required PlatformInt64 dbNum,
+          required String retentionType,
+          required PlatformInt64 retentionValue}) =>
+      RustLib.instance.api.crateApiDbHistoryEnableDatabase(
+          that: this,
+          dbNum: dbNum,
+          retentionType: retentionType,
+          retentionValue: retentionValue);
+
+  /// Enable history tracking globally.
+  /// retention_type: "unlimited", "time", or "count"
+  Future<void> historyEnableGlobal(
+          {required String retentionType,
+          required PlatformInt64 retentionValue}) =>
+      RustLib.instance.api.crateApiDbHistoryEnableGlobal(
+          that: this,
+          retentionType: retentionType,
+          retentionValue: retentionValue);
+
+  /// Enable history tracking for a specific key.
+  Future<void> historyEnableKey(
+          {required String key,
+          required String retentionType,
+          required PlatformInt64 retentionValue}) =>
+      RustLib.instance.api.crateApiDbHistoryEnableKey(
+          that: this,
+          key: key,
+          retentionType: retentionType,
+          retentionValue: retentionValue);
 
   /// Get all field names in a hash.
   Future<List<String>> hkeys({required String key}) =>
@@ -4555,50 +4750,33 @@ class DbImpl extends RustOpaque implements Db {
       RustLib.instance.api.crateApiDbHlen(that: this, key: key);
 
   /// Get values of multiple hash fields.
-  Future<List<Uint8List?>> hmget({
-    required String key,
-    required List<String> fields,
-  }) => RustLib.instance.api.crateApiDbHmget(
-    that: this,
-    key: key,
-    fields: fields,
-  );
+  Future<List<Uint8List?>> hmget(
+          {required String key, required List<String> fields}) =>
+      RustLib.instance.api
+          .crateApiDbHmget(that: this, key: key, fields: fields);
 
   /// Set multiple hash fields.
-  Future<PlatformInt64> hmset({
-    required String key,
-    required List<(String, Uint8List)> mapping,
-  }) => RustLib.instance.api.crateApiDbHmset(
-    that: this,
-    key: key,
-    mapping: mapping,
-  );
+  Future<PlatformInt64> hmset(
+          {required String key, required List<(String, Uint8List)> mapping}) =>
+      RustLib.instance.api
+          .crateApiDbHmset(that: this, key: key, mapping: mapping);
 
   /// Incrementally iterate hash fields.
-  Future<(String, List<(String, Uint8List)>)> hscan({
-    required String key,
-    required String cursor,
-    String? pattern,
-    required PlatformInt64 count,
-  }) => RustLib.instance.api.crateApiDbHscan(
-    that: this,
-    key: key,
-    cursor: cursor,
-    pattern: pattern,
-    count: count,
-  );
+  Future<(String, List<(String, Uint8List)>)> hscan(
+          {required String key,
+          required String cursor,
+          String? pattern,
+          required PlatformInt64 count}) =>
+      RustLib.instance.api.crateApiDbHscan(
+          that: this, key: key, cursor: cursor, pattern: pattern, count: count);
 
   /// Set a single hash field.
-  Future<PlatformInt64> hset({
-    required String key,
-    required String field,
-    required List<int> value,
-  }) => RustLib.instance.api.crateApiDbHset(
-    that: this,
-    key: key,
-    field: field,
-    value: value,
-  );
+  Future<PlatformInt64> hset(
+          {required String key,
+          required String field,
+          required List<int> value}) =>
+      RustLib.instance.api
+          .crateApiDbHset(that: this, key: key, field: field, value: value);
 
   /// Get all values in a hash.
   Future<List<Uint8List>> hvals({required String key}) =>
@@ -4609,38 +4787,108 @@ class DbImpl extends RustOpaque implements Db {
       RustLib.instance.api.crateApiDbIncr(that: this, key: key);
 
   /// Increment the integer value of a key by amount.
-  Future<PlatformInt64> incrby({
-    required String key,
-    required PlatformInt64 increment,
-  }) => RustLib.instance.api.crateApiDbIncrby(
-    that: this,
-    key: key,
-    increment: increment,
-  );
+  Future<PlatformInt64> incrby(
+          {required String key, required PlatformInt64 increment}) =>
+      RustLib.instance.api
+          .crateApiDbIncrby(that: this, key: key, increment: increment);
 
   /// Increment the float value of a key by amount.
-  Future<double> incrbyfloat({
-    required String key,
-    required double increment,
-  }) => RustLib.instance.api.crateApiDbIncrbyfloat(
-    that: this,
-    key: key,
-    increment: increment,
-  );
+  Future<double> incrbyfloat(
+          {required String key, required double increment}) =>
+      RustLib.instance.api
+          .crateApiDbIncrbyfloat(that: this, key: key, increment: increment);
+
+  /// Check if FTS indexing is enabled for a key.
+  Future<bool> isFtsEnabled({required String key}) =>
+      RustLib.instance.api.crateApiDbIsFtsEnabled(that: this, key: key);
+
+  /// Check if history tracking is enabled for a key.
+  Future<bool> isHistoryEnabled({required String key}) =>
+      RustLib.instance.api.crateApiDbIsHistoryEnabled(that: this, key: key);
+
+  /// Append values to a JSON array.
+  Future<PlatformInt64> jsonArrappend(
+          {required String key,
+          required String path,
+          required List<String> values}) =>
+      RustLib.instance.api.crateApiDbJsonArrappend(
+          that: this, key: key, path: path, values: values);
+
+  /// Get length of a JSON array.
+  Future<PlatformInt64?> jsonArrlen({required String key, String? path}) =>
+      RustLib.instance.api
+          .crateApiDbJsonArrlen(that: this, key: key, path: path);
+
+  /// Pop an element from a JSON array.
+  Future<String?> jsonArrpop(
+          {required String key, String? path, PlatformInt64? index}) =>
+      RustLib.instance.api
+          .crateApiDbJsonArrpop(that: this, key: key, path: path, index: index);
+
+  /// Clear container JSON values (arrays/objects become empty).
+  Future<PlatformInt64> jsonClear({required String key, String? path}) =>
+      RustLib.instance.api
+          .crateApiDbJsonClear(that: this, key: key, path: path);
+
+  /// Delete JSON value at the given path.
+  Future<PlatformInt64> jsonDel({required String key, String? path}) =>
+      RustLib.instance.api.crateApiDbJsonDel(that: this, key: key, path: path);
+
+  /// Get JSON values at the given paths.
+  Future<String?> jsonGet({required String key, required List<String> paths}) =>
+      RustLib.instance.api
+          .crateApiDbJsonGet(that: this, key: key, paths: paths);
+
+  /// Increment a numeric JSON value.
+  Future<String> jsonNumincrby(
+          {required String key,
+          required String path,
+          required double increment}) =>
+      RustLib.instance.api.crateApiDbJsonNumincrby(
+          that: this, key: key, path: path, increment: increment);
+
+  /// Set a JSON value at the given path.
+  /// Use "$" for root path.
+  Future<bool> jsonSet(
+          {required String key,
+          required String path,
+          required String value,
+          required bool nx,
+          required bool xx}) =>
+      RustLib.instance.api.crateApiDbJsonSet(
+          that: this, key: key, path: path, value: value, nx: nx, xx: xx);
+
+  /// Append to a string JSON value.
+  Future<PlatformInt64> jsonStrappend(
+          {required String key, String? path, required String value}) =>
+      RustLib.instance.api.crateApiDbJsonStrappend(
+          that: this, key: key, path: path, value: value);
+
+  /// Get length of a string JSON value.
+  Future<PlatformInt64?> jsonStrlen({required String key, String? path}) =>
+      RustLib.instance.api
+          .crateApiDbJsonStrlen(that: this, key: key, path: path);
+
+  /// Get the type of JSON value at the given path.
+  Future<String?> jsonType({required String key, String? path}) =>
+      RustLib.instance.api.crateApiDbJsonType(that: this, key: key, path: path);
 
   /// Get the type of a key.
   Future<KeyType> keyType({required String key}) =>
       RustLib.instance.api.crateApiDbKeyType(that: this, key: key);
+
+  /// Get detailed information about a key.
+  /// Returns None if the key doesn't exist.
+  Future<KeyInfo?> keyinfo({required String key}) =>
+      RustLib.instance.api.crateApiDbKeyinfo(that: this, key: key);
 
   /// Find all keys matching a pattern.
   Future<List<String>> keys({required String pattern}) =>
       RustLib.instance.api.crateApiDbKeys(that: this, pattern: pattern);
 
   /// Get element at index in a list.
-  Future<Uint8List?> lindex({
-    required String key,
-    required PlatformInt64 index,
-  }) =>
+  Future<Uint8List?> lindex(
+          {required String key, required PlatformInt64 index}) =>
       RustLib.instance.api.crateApiDbLindex(that: this, key: key, index: index);
 
   /// Get list length.
@@ -4652,50 +4900,34 @@ class DbImpl extends RustOpaque implements Db {
       RustLib.instance.api.crateApiDbLpop(that: this, key: key, count: count);
 
   /// Push values to the left of a list.
-  Future<PlatformInt64> lpush({
-    required String key,
-    required List<Uint8List> values,
-  }) => RustLib.instance.api.crateApiDbLpush(
-    that: this,
-    key: key,
-    values: values,
-  );
+  Future<PlatformInt64> lpush(
+          {required String key, required List<Uint8List> values}) =>
+      RustLib.instance.api
+          .crateApiDbLpush(that: this, key: key, values: values);
 
   /// Get a range of elements from a list.
-  Future<List<Uint8List>> lrange({
-    required String key,
-    required PlatformInt64 start,
-    required PlatformInt64 stop,
-  }) => RustLib.instance.api.crateApiDbLrange(
-    that: this,
-    key: key,
-    start: start,
-    stop: stop,
-  );
+  Future<List<Uint8List>> lrange(
+          {required String key,
+          required PlatformInt64 start,
+          required PlatformInt64 stop}) =>
+      RustLib.instance.api
+          .crateApiDbLrange(that: this, key: key, start: start, stop: stop);
 
   /// Set element at index in a list.
-  Future<void> lset({
-    required String key,
-    required PlatformInt64 index,
-    required List<int> value,
-  }) => RustLib.instance.api.crateApiDbLset(
-    that: this,
-    key: key,
-    index: index,
-    value: value,
-  );
+  Future<void> lset(
+          {required String key,
+          required PlatformInt64 index,
+          required List<int> value}) =>
+      RustLib.instance.api
+          .crateApiDbLset(that: this, key: key, index: index, value: value);
 
   /// Trim list to specified range.
-  Future<void> ltrim({
-    required String key,
-    required PlatformInt64 start,
-    required PlatformInt64 stop,
-  }) => RustLib.instance.api.crateApiDbLtrim(
-    that: this,
-    key: key,
-    start: start,
-    stop: stop,
-  );
+  Future<void> ltrim(
+          {required String key,
+          required PlatformInt64 start,
+          required PlatformInt64 stop}) =>
+      RustLib.instance.api
+          .crateApiDbLtrim(that: this, key: key, start: start, stop: stop);
 
   /// Get values of multiple keys.
   Future<List<Uint8List?>> mget({required List<String> keys}) =>
@@ -4710,90 +4942,62 @@ class DbImpl extends RustOpaque implements Db {
       RustLib.instance.api.crateApiDbPersist(that: this, key: key);
 
   /// Set expiration in milliseconds.
-  Future<bool> pexpire({
-    required String key,
-    required PlatformInt64 milliseconds,
-  }) => RustLib.instance.api.crateApiDbPexpire(
-    that: this,
-    key: key,
-    milliseconds: milliseconds,
-  );
+  Future<bool> pexpire(
+          {required String key, required PlatformInt64 milliseconds}) =>
+      RustLib.instance.api
+          .crateApiDbPexpire(that: this, key: key, milliseconds: milliseconds);
 
   /// Set expiration at Unix timestamp (milliseconds).
-  Future<bool> pexpireat({
-    required String key,
-    required PlatformInt64 unixTimeMs,
-  }) => RustLib.instance.api.crateApiDbPexpireat(
-    that: this,
-    key: key,
-    unixTimeMs: unixTimeMs,
-  );
+  Future<bool> pexpireat(
+          {required String key, required PlatformInt64 unixTimeMs}) =>
+      RustLib.instance.api
+          .crateApiDbPexpireat(that: this, key: key, unixTimeMs: unixTimeMs);
 
   /// Set key with expiration in milliseconds.
-  Future<void> psetex({
-    required String key,
-    required PlatformInt64 milliseconds,
-    required List<int> value,
-  }) => RustLib.instance.api.crateApiDbPsetex(
-    that: this,
-    key: key,
-    milliseconds: milliseconds,
-    value: value,
-  );
+  Future<void> psetex(
+          {required String key,
+          required PlatformInt64 milliseconds,
+          required List<int> value}) =>
+      RustLib.instance.api.crateApiDbPsetex(
+          that: this, key: key, milliseconds: milliseconds, value: value);
 
   /// Get TTL in milliseconds.
   Future<PlatformInt64> pttl({required String key}) =>
       RustLib.instance.api.crateApiDbPttl(that: this, key: key);
 
   /// Rename a key.
-  Future<void> rename({required String key, required String newkey}) => RustLib
-      .instance
-      .api
-      .crateApiDbRename(that: this, key: key, newkey: newkey);
+  Future<void> rename({required String key, required String newkey}) =>
+      RustLib.instance.api
+          .crateApiDbRename(that: this, key: key, newkey: newkey);
 
   /// Rename a key only if newkey does not exist.
   Future<bool> renamenx({required String key, required String newkey}) =>
-      RustLib.instance.api.crateApiDbRenamenx(
-        that: this,
-        key: key,
-        newkey: newkey,
-      );
+      RustLib.instance.api
+          .crateApiDbRenamenx(that: this, key: key, newkey: newkey);
 
   /// Pop values from the right of a list.
   Future<List<Uint8List>> rpop({required String key, PlatformInt64? count}) =>
       RustLib.instance.api.crateApiDbRpop(that: this, key: key, count: count);
 
   /// Push values to the right of a list.
-  Future<PlatformInt64> rpush({
-    required String key,
-    required List<Uint8List> values,
-  }) => RustLib.instance.api.crateApiDbRpush(
-    that: this,
-    key: key,
-    values: values,
-  );
+  Future<PlatformInt64> rpush(
+          {required String key, required List<Uint8List> values}) =>
+      RustLib.instance.api
+          .crateApiDbRpush(that: this, key: key, values: values);
 
   /// Add members to a set.
-  Future<PlatformInt64> sadd({
-    required String key,
-    required List<Uint8List> members,
-  }) => RustLib.instance.api.crateApiDbSadd(
-    that: this,
-    key: key,
-    members: members,
-  );
+  Future<PlatformInt64> sadd(
+          {required String key, required List<Uint8List> members}) =>
+      RustLib.instance.api
+          .crateApiDbSadd(that: this, key: key, members: members);
 
   /// Incrementally iterate keys matching a pattern.
-  Future<(String, List<String>)> scan({
-    required String cursor,
-    String? pattern,
-    required PlatformInt64 count,
-  }) => RustLib.instance.api.crateApiDbScan(
-    that: this,
-    cursor: cursor,
-    pattern: pattern,
-    count: count,
-  );
+  Future<(String, List<String>)> scan(
+          {required String cursor,
+          String? pattern,
+          required PlatformInt64 count}) =>
+      RustLib.instance.api.crateApiDbScan(
+          that: this, cursor: cursor, pattern: pattern, count: count);
 
   /// Get number of members in a set.
   Future<PlatformInt64> scard({required String key}) =>
@@ -4804,52 +5008,36 @@ class DbImpl extends RustOpaque implements Db {
       RustLib.instance.api.crateApiDbSdiff(that: this, keys: keys);
 
   /// Set a key-value pair with optional TTL in seconds.
-  Future<void> set_({
-    required String key,
-    required List<int> value,
-    PlatformInt64? ttlSeconds,
-  }) => RustLib.instance.api.crateApiDbSet(
-    that: this,
-    key: key,
-    value: value,
-    ttlSeconds: ttlSeconds,
-  );
+  Future<void> set_(
+          {required String key,
+          required List<int> value,
+          PlatformInt64? ttlSeconds}) =>
+      RustLib.instance.api.crateApiDbSet(
+          that: this, key: key, value: value, ttlSeconds: ttlSeconds);
 
   /// Set a key-value pair with options (NX, XX, EX, PX).
-  Future<bool> setOpts({
-    required String key,
-    required List<int> value,
-    required SetOptions options,
-  }) => RustLib.instance.api.crateApiDbSetOpts(
-    that: this,
-    key: key,
-    value: value,
-    options: options,
-  );
+  Future<bool> setOpts(
+          {required String key,
+          required List<int> value,
+          required SetOptions options}) =>
+      RustLib.instance.api.crateApiDbSetOpts(
+          that: this, key: key, value: value, options: options);
 
   /// Set key with expiration in seconds.
-  Future<void> setex({
-    required String key,
-    required PlatformInt64 seconds,
-    required List<int> value,
-  }) => RustLib.instance.api.crateApiDbSetex(
-    that: this,
-    key: key,
-    seconds: seconds,
-    value: value,
-  );
+  Future<void> setex(
+          {required String key,
+          required PlatformInt64 seconds,
+          required List<int> value}) =>
+      RustLib.instance.api.crateApiDbSetex(
+          that: this, key: key, seconds: seconds, value: value);
 
   /// Overwrite part of a string at key starting at offset.
-  Future<PlatformInt64> setrange({
-    required String key,
-    required PlatformInt64 offset,
-    required List<int> value,
-  }) => RustLib.instance.api.crateApiDbSetrange(
-    that: this,
-    key: key,
-    offset: offset,
-    value: value,
-  );
+  Future<PlatformInt64> setrange(
+          {required String key,
+          required PlatformInt64 offset,
+          required List<int> value}) =>
+      RustLib.instance.api.crateApiDbSetrange(
+          that: this, key: key, offset: offset, value: value);
 
   /// Get intersection of sets.
   Future<List<Uint8List>> sinter({required List<String> keys}) =>
@@ -4857,39 +5045,27 @@ class DbImpl extends RustOpaque implements Db {
 
   /// Check if member is in a set.
   Future<bool> sismember({required String key, required List<int> member}) =>
-      RustLib.instance.api.crateApiDbSismember(
-        that: this,
-        key: key,
-        member: member,
-      );
+      RustLib.instance.api
+          .crateApiDbSismember(that: this, key: key, member: member);
 
   /// Get all members of a set.
   Future<List<Uint8List>> smembers({required String key}) =>
       RustLib.instance.api.crateApiDbSmembers(that: this, key: key);
 
   /// Remove members from a set.
-  Future<PlatformInt64> srem({
-    required String key,
-    required List<Uint8List> members,
-  }) => RustLib.instance.api.crateApiDbSrem(
-    that: this,
-    key: key,
-    members: members,
-  );
+  Future<PlatformInt64> srem(
+          {required String key, required List<Uint8List> members}) =>
+      RustLib.instance.api
+          .crateApiDbSrem(that: this, key: key, members: members);
 
   /// Incrementally iterate set members.
-  Future<(String, List<Uint8List>)> sscan({
-    required String key,
-    required String cursor,
-    String? pattern,
-    required PlatformInt64 count,
-  }) => RustLib.instance.api.crateApiDbSscan(
-    that: this,
-    key: key,
-    cursor: cursor,
-    pattern: pattern,
-    count: count,
-  );
+  Future<(String, List<Uint8List>)> sscan(
+          {required String key,
+          required String cursor,
+          String? pattern,
+          required PlatformInt64 count}) =>
+      RustLib.instance.api.crateApiDbSscan(
+          that: this, key: key, cursor: cursor, pattern: pattern, count: count);
 
   /// Get the length of the value stored at key.
   Future<PlatformInt64> strlen({required String key}) =>
@@ -4904,124 +5080,91 @@ class DbImpl extends RustOpaque implements Db {
       RustLib.instance.api.crateApiDbTtl(that: this, key: key);
 
   /// Run SQLite VACUUM to reclaim space.
-  Future<PlatformInt64> vacuum() =>
-      RustLib.instance.api.crateApiDbVacuum(that: this);
+  Future<PlatformInt64> vacuum() => RustLib.instance.api.crateApiDbVacuum(
+        that: this,
+      );
 
   /// Add members with scores to a sorted set.
-  Future<PlatformInt64> zadd({
-    required String key,
-    required List<ZMember> members,
-  }) => RustLib.instance.api.crateApiDbZadd(
-    that: this,
-    key: key,
-    members: members,
-  );
+  Future<PlatformInt64> zadd(
+          {required String key, required List<ZMember> members}) =>
+      RustLib.instance.api
+          .crateApiDbZadd(that: this, key: key, members: members);
 
   /// Get number of members in a sorted set.
   Future<PlatformInt64> zcard({required String key}) =>
       RustLib.instance.api.crateApiDbZcard(that: this, key: key);
 
   /// Count members in a sorted set within a score range.
-  Future<PlatformInt64> zcount({
-    required String key,
-    required double minScore,
-    required double maxScore,
-  }) => RustLib.instance.api.crateApiDbZcount(
-    that: this,
-    key: key,
-    minScore: minScore,
-    maxScore: maxScore,
-  );
+  Future<PlatformInt64> zcount(
+          {required String key,
+          required double minScore,
+          required double maxScore}) =>
+      RustLib.instance.api.crateApiDbZcount(
+          that: this, key: key, minScore: minScore, maxScore: maxScore);
 
   /// Increment score of a member in a sorted set.
-  Future<double> zincrby({
-    required String key,
-    required double increment,
-    required List<int> member,
-  }) => RustLib.instance.api.crateApiDbZincrby(
-    that: this,
-    key: key,
-    increment: increment,
-    member: member,
-  );
+  Future<double> zincrby(
+          {required String key,
+          required double increment,
+          required List<int> member}) =>
+      RustLib.instance.api.crateApiDbZincrby(
+          that: this, key: key, increment: increment, member: member);
 
   /// Get members by rank range (ascending order).
-  Future<List<ZMember>> zrange({
-    required String key,
-    required PlatformInt64 start,
-    required PlatformInt64 stop,
-    required bool withScores,
-  }) => RustLib.instance.api.crateApiDbZrange(
-    that: this,
-    key: key,
-    start: start,
-    stop: stop,
-    withScores: withScores,
-  );
+  Future<List<ZMember>> zrange(
+          {required String key,
+          required PlatformInt64 start,
+          required PlatformInt64 stop,
+          required bool withScores}) =>
+      RustLib.instance.api.crateApiDbZrange(
+          that: this,
+          key: key,
+          start: start,
+          stop: stop,
+          withScores: withScores);
 
   /// Get rank of a member in a sorted set (ascending order).
-  Future<PlatformInt64?> zrank({
-    required String key,
-    required List<int> member,
-  }) => RustLib.instance.api.crateApiDbZrank(
-    that: this,
-    key: key,
-    member: member,
-  );
+  Future<PlatformInt64?> zrank(
+          {required String key, required List<int> member}) =>
+      RustLib.instance.api
+          .crateApiDbZrank(that: this, key: key, member: member);
 
   /// Remove members from a sorted set.
-  Future<PlatformInt64> zrem({
-    required String key,
-    required List<Uint8List> members,
-  }) => RustLib.instance.api.crateApiDbZrem(
-    that: this,
-    key: key,
-    members: members,
-  );
+  Future<PlatformInt64> zrem(
+          {required String key, required List<Uint8List> members}) =>
+      RustLib.instance.api
+          .crateApiDbZrem(that: this, key: key, members: members);
 
   /// Get members by rank range (descending order).
-  Future<List<ZMember>> zrevrange({
-    required String key,
-    required PlatformInt64 start,
-    required PlatformInt64 stop,
-    required bool withScores,
-  }) => RustLib.instance.api.crateApiDbZrevrange(
-    that: this,
-    key: key,
-    start: start,
-    stop: stop,
-    withScores: withScores,
-  );
+  Future<List<ZMember>> zrevrange(
+          {required String key,
+          required PlatformInt64 start,
+          required PlatformInt64 stop,
+          required bool withScores}) =>
+      RustLib.instance.api.crateApiDbZrevrange(
+          that: this,
+          key: key,
+          start: start,
+          stop: stop,
+          withScores: withScores);
 
   /// Get rank of a member in a sorted set (descending order).
-  Future<PlatformInt64?> zrevrank({
-    required String key,
-    required List<int> member,
-  }) => RustLib.instance.api.crateApiDbZrevrank(
-    that: this,
-    key: key,
-    member: member,
-  );
+  Future<PlatformInt64?> zrevrank(
+          {required String key, required List<int> member}) =>
+      RustLib.instance.api
+          .crateApiDbZrevrank(that: this, key: key, member: member);
 
   /// Incrementally iterate sorted set members with scores.
-  Future<(String, List<(Uint8List, double)>)> zscan({
-    required String key,
-    required String cursor,
-    String? pattern,
-    required PlatformInt64 count,
-  }) => RustLib.instance.api.crateApiDbZscan(
-    that: this,
-    key: key,
-    cursor: cursor,
-    pattern: pattern,
-    count: count,
-  );
+  Future<(String, List<(Uint8List, double)>)> zscan(
+          {required String key,
+          required String cursor,
+          String? pattern,
+          required PlatformInt64 count}) =>
+      RustLib.instance.api.crateApiDbZscan(
+          that: this, key: key, cursor: cursor, pattern: pattern, count: count);
 
   /// Get score of a member in a sorted set.
   Future<double?> zscore({required String key, required List<int> member}) =>
-      RustLib.instance.api.crateApiDbZscore(
-        that: this,
-        key: key,
-        member: member,
-      );
+      RustLib.instance.api
+          .crateApiDbZscore(that: this, key: key, member: member);
 }

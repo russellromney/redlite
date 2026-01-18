@@ -22,22 +22,16 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
       ._rust_arc_decrement_strong_count_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerDbPtr;
 
   @protected
-  Db
-  dco_decode_Auto_Owned_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerDb(
-    dynamic raw,
-  );
+  Db dco_decode_Auto_Owned_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerDb(
+      dynamic raw);
 
   @protected
-  Db
-  dco_decode_Auto_Ref_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerDb(
-    dynamic raw,
-  );
+  Db dco_decode_Auto_Ref_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerDb(
+      dynamic raw);
 
   @protected
-  Db
-  dco_decode_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerDb(
-    dynamic raw,
-  );
+  Db dco_decode_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerDb(
+      dynamic raw);
 
   @protected
   String dco_decode_String(dynamic raw);
@@ -52,6 +46,9 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   PlatformInt64 dco_decode_box_autoadd_i_64(dynamic raw);
 
   @protected
+  KeyInfo dco_decode_box_autoadd_key_info(dynamic raw);
+
+  @protected
   SetOptions dco_decode_box_autoadd_set_options(dynamic raw);
 
   @protected
@@ -62,6 +59,9 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
 
   @protected
   PlatformInt64 dco_decode_i_64(dynamic raw);
+
+  @protected
+  KeyInfo dco_decode_key_info(dynamic raw);
 
   @protected
   KeyType dco_decode_key_type(dynamic raw);
@@ -83,13 +83,11 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
 
   @protected
   List<(Uint8List, double)> dco_decode_list_record_list_prim_u_8_strict_f_64(
-    dynamic raw,
-  );
+      dynamic raw);
 
   @protected
   List<(String, Uint8List)> dco_decode_list_record_string_list_prim_u_8_strict(
-    dynamic raw,
-  );
+      dynamic raw);
 
   @protected
   List<ZMember> dco_decode_list_z_member(dynamic raw);
@@ -104,6 +102,9 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   PlatformInt64? dco_decode_opt_box_autoadd_i_64(dynamic raw);
 
   @protected
+  KeyInfo? dco_decode_opt_box_autoadd_key_info(dynamic raw);
+
+  @protected
   Uint8List? dco_decode_opt_list_prim_u_8_strict(dynamic raw);
 
   @protected
@@ -111,21 +112,22 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
 
   @protected
   (String, List<Uint8List>) dco_decode_record_string_list_list_prim_u_8_strict(
-    dynamic raw,
-  );
+      dynamic raw);
 
   @protected
   (String, Uint8List) dco_decode_record_string_list_prim_u_8_strict(
-    dynamic raw,
-  );
+      dynamic raw);
 
   @protected
-  (String, List<(Uint8List, double)>)
-  dco_decode_record_string_list_record_list_prim_u_8_strict_f_64(dynamic raw);
+  (
+    String,
+    List<(Uint8List, double)>
+  ) dco_decode_record_string_list_record_list_prim_u_8_strict_f_64(dynamic raw);
 
   @protected
   (String, List<(String, Uint8List)>)
-  dco_decode_record_string_list_record_string_list_prim_u_8_strict(dynamic raw);
+      dco_decode_record_string_list_record_string_list_prim_u_8_strict(
+          dynamic raw);
 
   @protected
   (String, List<String>) dco_decode_record_string_list_string(dynamic raw);
@@ -149,22 +151,16 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   ZMember dco_decode_z_member(dynamic raw);
 
   @protected
-  Db
-  sse_decode_Auto_Owned_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerDb(
-    SseDeserializer deserializer,
-  );
+  Db sse_decode_Auto_Owned_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerDb(
+      SseDeserializer deserializer);
 
   @protected
-  Db
-  sse_decode_Auto_Ref_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerDb(
-    SseDeserializer deserializer,
-  );
+  Db sse_decode_Auto_Ref_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerDb(
+      SseDeserializer deserializer);
 
   @protected
-  Db
-  sse_decode_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerDb(
-    SseDeserializer deserializer,
-  );
+  Db sse_decode_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerDb(
+      SseDeserializer deserializer);
 
   @protected
   String sse_decode_String(SseDeserializer deserializer);
@@ -179,6 +175,9 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   PlatformInt64 sse_decode_box_autoadd_i_64(SseDeserializer deserializer);
 
   @protected
+  KeyInfo sse_decode_box_autoadd_key_info(SseDeserializer deserializer);
+
+  @protected
   SetOptions sse_decode_box_autoadd_set_options(SseDeserializer deserializer);
 
   @protected
@@ -191,6 +190,9 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   PlatformInt64 sse_decode_i_64(SseDeserializer deserializer);
 
   @protected
+  KeyInfo sse_decode_key_info(SseDeserializer deserializer);
+
+  @protected
   KeyType sse_decode_key_type(SseDeserializer deserializer);
 
   @protected
@@ -198,13 +200,11 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
 
   @protected
   List<Uint8List> sse_decode_list_list_prim_u_8_strict(
-    SseDeserializer deserializer,
-  );
+      SseDeserializer deserializer);
 
   @protected
   List<Uint8List?> sse_decode_list_opt_list_prim_u_8_strict(
-    SseDeserializer deserializer,
-  );
+      SseDeserializer deserializer);
 
   @protected
   List<int> sse_decode_list_prim_u_8_loose(SseDeserializer deserializer);
@@ -214,13 +214,11 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
 
   @protected
   List<(Uint8List, double)> sse_decode_list_record_list_prim_u_8_strict_f_64(
-    SseDeserializer deserializer,
-  );
+      SseDeserializer deserializer);
 
   @protected
   List<(String, Uint8List)> sse_decode_list_record_string_list_prim_u_8_strict(
-    SseDeserializer deserializer,
-  );
+      SseDeserializer deserializer);
 
   @protected
   List<ZMember> sse_decode_list_z_member(SseDeserializer deserializer);
@@ -235,39 +233,36 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   PlatformInt64? sse_decode_opt_box_autoadd_i_64(SseDeserializer deserializer);
 
   @protected
+  KeyInfo? sse_decode_opt_box_autoadd_key_info(SseDeserializer deserializer);
+
+  @protected
   Uint8List? sse_decode_opt_list_prim_u_8_strict(SseDeserializer deserializer);
 
   @protected
   (Uint8List, double) sse_decode_record_list_prim_u_8_strict_f_64(
-    SseDeserializer deserializer,
-  );
+      SseDeserializer deserializer);
 
   @protected
   (String, List<Uint8List>) sse_decode_record_string_list_list_prim_u_8_strict(
-    SseDeserializer deserializer,
-  );
+      SseDeserializer deserializer);
 
   @protected
   (String, Uint8List) sse_decode_record_string_list_prim_u_8_strict(
-    SseDeserializer deserializer,
-  );
+      SseDeserializer deserializer);
 
   @protected
   (String, List<(Uint8List, double)>)
-  sse_decode_record_string_list_record_list_prim_u_8_strict_f_64(
-    SseDeserializer deserializer,
-  );
+      sse_decode_record_string_list_record_list_prim_u_8_strict_f_64(
+          SseDeserializer deserializer);
 
   @protected
   (String, List<(String, Uint8List)>)
-  sse_decode_record_string_list_record_string_list_prim_u_8_strict(
-    SseDeserializer deserializer,
-  );
+      sse_decode_record_string_list_record_string_list_prim_u_8_strict(
+          SseDeserializer deserializer);
 
   @protected
   (String, List<String>) sse_decode_record_string_list_string(
-    SseDeserializer deserializer,
-  );
+      SseDeserializer deserializer);
 
   @protected
   RedliteError sse_decode_redlite_error(SseDeserializer deserializer);
@@ -289,24 +284,18 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
 
   @protected
   void
-  sse_encode_Auto_Owned_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerDb(
-    Db self,
-    SseSerializer serializer,
-  );
+      sse_encode_Auto_Owned_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerDb(
+          Db self, SseSerializer serializer);
 
   @protected
   void
-  sse_encode_Auto_Ref_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerDb(
-    Db self,
-    SseSerializer serializer,
-  );
+      sse_encode_Auto_Ref_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerDb(
+          Db self, SseSerializer serializer);
 
   @protected
   void
-  sse_encode_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerDb(
-    Db self,
-    SseSerializer serializer,
-  );
+      sse_encode_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerDb(
+          Db self, SseSerializer serializer);
 
   @protected
   void sse_encode_String(String self, SseSerializer serializer);
@@ -319,15 +308,14 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
 
   @protected
   void sse_encode_box_autoadd_i_64(
-    PlatformInt64 self,
-    SseSerializer serializer,
-  );
+      PlatformInt64 self, SseSerializer serializer);
+
+  @protected
+  void sse_encode_box_autoadd_key_info(KeyInfo self, SseSerializer serializer);
 
   @protected
   void sse_encode_box_autoadd_set_options(
-    SetOptions self,
-    SseSerializer serializer,
-  );
+      SetOptions self, SseSerializer serializer);
 
   @protected
   void sse_encode_f_64(double self, SseSerializer serializer);
@@ -339,6 +327,9 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   void sse_encode_i_64(PlatformInt64 self, SseSerializer serializer);
 
   @protected
+  void sse_encode_key_info(KeyInfo self, SseSerializer serializer);
+
+  @protected
   void sse_encode_key_type(KeyType self, SseSerializer serializer);
 
   @protected
@@ -346,36 +337,26 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
 
   @protected
   void sse_encode_list_list_prim_u_8_strict(
-    List<Uint8List> self,
-    SseSerializer serializer,
-  );
+      List<Uint8List> self, SseSerializer serializer);
 
   @protected
   void sse_encode_list_opt_list_prim_u_8_strict(
-    List<Uint8List?> self,
-    SseSerializer serializer,
-  );
+      List<Uint8List?> self, SseSerializer serializer);
 
   @protected
   void sse_encode_list_prim_u_8_loose(List<int> self, SseSerializer serializer);
 
   @protected
   void sse_encode_list_prim_u_8_strict(
-    Uint8List self,
-    SseSerializer serializer,
-  );
+      Uint8List self, SseSerializer serializer);
 
   @protected
   void sse_encode_list_record_list_prim_u_8_strict_f_64(
-    List<(Uint8List, double)> self,
-    SseSerializer serializer,
-  );
+      List<(Uint8List, double)> self, SseSerializer serializer);
 
   @protected
   void sse_encode_list_record_string_list_prim_u_8_strict(
-    List<(String, Uint8List)> self,
-    SseSerializer serializer,
-  );
+      List<(String, Uint8List)> self, SseSerializer serializer);
 
   @protected
   void sse_encode_list_z_member(List<ZMember> self, SseSerializer serializer);
@@ -388,51 +369,39 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
 
   @protected
   void sse_encode_opt_box_autoadd_i_64(
-    PlatformInt64? self,
-    SseSerializer serializer,
-  );
+      PlatformInt64? self, SseSerializer serializer);
+
+  @protected
+  void sse_encode_opt_box_autoadd_key_info(
+      KeyInfo? self, SseSerializer serializer);
 
   @protected
   void sse_encode_opt_list_prim_u_8_strict(
-    Uint8List? self,
-    SseSerializer serializer,
-  );
+      Uint8List? self, SseSerializer serializer);
 
   @protected
   void sse_encode_record_list_prim_u_8_strict_f_64(
-    (Uint8List, double) self,
-    SseSerializer serializer,
-  );
+      (Uint8List, double) self, SseSerializer serializer);
 
   @protected
   void sse_encode_record_string_list_list_prim_u_8_strict(
-    (String, List<Uint8List>) self,
-    SseSerializer serializer,
-  );
+      (String, List<Uint8List>) self, SseSerializer serializer);
 
   @protected
   void sse_encode_record_string_list_prim_u_8_strict(
-    (String, Uint8List) self,
-    SseSerializer serializer,
-  );
+      (String, Uint8List) self, SseSerializer serializer);
 
   @protected
   void sse_encode_record_string_list_record_list_prim_u_8_strict_f_64(
-    (String, List<(Uint8List, double)>) self,
-    SseSerializer serializer,
-  );
+      (String, List<(Uint8List, double)>) self, SseSerializer serializer);
 
   @protected
   void sse_encode_record_string_list_record_string_list_prim_u_8_strict(
-    (String, List<(String, Uint8List)>) self,
-    SseSerializer serializer,
-  );
+      (String, List<(String, Uint8List)>) self, SseSerializer serializer);
 
   @protected
   void sse_encode_record_string_list_string(
-    (String, List<String>) self,
-    SseSerializer serializer,
-  );
+      (String, List<String>) self, SseSerializer serializer);
 
   @protected
   void sse_encode_redlite_error(RedliteError self, SseSerializer serializer);
@@ -461,14 +430,14 @@ class RustLibWire implements BaseWire {
 
   /// Holds the symbol lookup function.
   final ffi.Pointer<T> Function<T extends ffi.NativeType>(String symbolName)
-  _lookup;
+      _lookup;
 
   /// The symbols are looked up in [dynamicLibrary].
   RustLibWire(ffi.DynamicLibrary dynamicLibrary)
-    : _lookup = dynamicLibrary.lookup;
+      : _lookup = dynamicLibrary.lookup;
 
   void
-  rust_arc_increment_strong_count_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerDb(
+      rust_arc_increment_strong_count_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerDb(
     ffi.Pointer<ffi.Void> ptr,
   ) {
     return _rust_arc_increment_strong_count_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerDb(
@@ -478,14 +447,13 @@ class RustLibWire implements BaseWire {
 
   late final _rust_arc_increment_strong_count_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerDbPtr =
       _lookup<ffi.NativeFunction<ffi.Void Function(ffi.Pointer<ffi.Void>)>>(
-        'frbgen_redlite_rust_arc_increment_strong_count_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerDb',
-      );
+          'frbgen_redlite_rust_arc_increment_strong_count_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerDb');
   late final _rust_arc_increment_strong_count_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerDb =
       _rust_arc_increment_strong_count_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerDbPtr
           .asFunction<void Function(ffi.Pointer<ffi.Void>)>();
 
   void
-  rust_arc_decrement_strong_count_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerDb(
+      rust_arc_decrement_strong_count_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerDb(
     ffi.Pointer<ffi.Void> ptr,
   ) {
     return _rust_arc_decrement_strong_count_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerDb(
@@ -495,8 +463,7 @@ class RustLibWire implements BaseWire {
 
   late final _rust_arc_decrement_strong_count_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerDbPtr =
       _lookup<ffi.NativeFunction<ffi.Void Function(ffi.Pointer<ffi.Void>)>>(
-        'frbgen_redlite_rust_arc_decrement_strong_count_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerDb',
-      );
+          'frbgen_redlite_rust_arc_decrement_strong_count_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerDb');
   late final _rust_arc_decrement_strong_count_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerDb =
       _rust_arc_decrement_strong_count_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerDbPtr
           .asFunction<void Function(ffi.Pointer<ffi.Void>)>();

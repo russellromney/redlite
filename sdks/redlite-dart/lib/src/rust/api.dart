@@ -22,10 +22,8 @@ abstract class Db implements RustOpaqueInterface {
   Future<PlatformInt64> decr({required String key});
 
   /// Decrement the integer value of a key by amount.
-  Future<PlatformInt64> decrby({
-    required String key,
-    required PlatformInt64 decrement,
-  });
+  Future<PlatformInt64> decrby(
+      {required String key, required PlatformInt64 decrement});
 
   /// Delete one or more keys, return count deleted.
   Future<PlatformInt64> del({required List<String> keys});
@@ -42,6 +40,30 @@ abstract class Db implements RustOpaqueInterface {
   /// Delete all keys in the current database.
   Future<void> flushdb();
 
+  /// Disable FTS indexing for a specific database.
+  Future<void> ftsDisableDatabase({required PlatformInt64 dbNum});
+
+  /// Disable FTS indexing globally.
+  Future<void> ftsDisableGlobal();
+
+  /// Disable FTS indexing for a specific key.
+  Future<void> ftsDisableKey({required String key});
+
+  /// Disable FTS indexing for keys matching a pattern.
+  Future<void> ftsDisablePattern({required String pattern});
+
+  /// Enable FTS indexing for a specific database.
+  Future<void> ftsEnableDatabase({required PlatformInt64 dbNum});
+
+  /// Enable FTS indexing globally.
+  Future<void> ftsEnableGlobal();
+
+  /// Enable FTS indexing for a specific key.
+  Future<void> ftsEnableKey({required String key});
+
+  /// Enable FTS indexing for keys matching a pattern.
+  Future<void> ftsEnablePattern({required String pattern});
+
   /// Get the value of a key.
   Future<Uint8List?> get_({required String key});
 
@@ -49,17 +71,14 @@ abstract class Db implements RustOpaqueInterface {
   Future<Uint8List?> getdel({required String key});
 
   /// Get a substring of the value stored at key.
-  Future<Uint8List> getrange({
-    required String key,
-    required PlatformInt64 start,
-    required PlatformInt64 end,
-  });
+  Future<Uint8List> getrange(
+      {required String key,
+      required PlatformInt64 start,
+      required PlatformInt64 end});
 
   /// Delete hash fields.
-  Future<PlatformInt64> hdel({
-    required String key,
-    required List<String> fields,
-  });
+  Future<PlatformInt64> hdel(
+      {required String key, required List<String> fields});
 
   /// Check if hash field exists.
   Future<bool> hexists({required String key, required String field});
@@ -71,11 +90,36 @@ abstract class Db implements RustOpaqueInterface {
   Future<List<(String, Uint8List)>> hgetall({required String key});
 
   /// Increment hash field by integer.
-  Future<PlatformInt64> hincrby({
-    required String key,
-    required String field,
-    required PlatformInt64 increment,
-  });
+  Future<PlatformInt64> hincrby(
+      {required String key,
+      required String field,
+      required PlatformInt64 increment});
+
+  /// Disable history tracking for a specific database.
+  Future<void> historyDisableDatabase({required PlatformInt64 dbNum});
+
+  /// Disable history tracking globally.
+  Future<void> historyDisableGlobal();
+
+  /// Disable history tracking for a specific key.
+  Future<void> historyDisableKey({required String key});
+
+  /// Enable history tracking for a specific database.
+  Future<void> historyEnableDatabase(
+      {required PlatformInt64 dbNum,
+      required String retentionType,
+      required PlatformInt64 retentionValue});
+
+  /// Enable history tracking globally.
+  /// retention_type: "unlimited", "time", or "count"
+  Future<void> historyEnableGlobal(
+      {required String retentionType, required PlatformInt64 retentionValue});
+
+  /// Enable history tracking for a specific key.
+  Future<void> historyEnableKey(
+      {required String key,
+      required String retentionType,
+      required PlatformInt64 retentionValue});
 
   /// Get all field names in a hash.
   Future<List<String>> hkeys({required String key});
@@ -84,31 +128,23 @@ abstract class Db implements RustOpaqueInterface {
   Future<PlatformInt64> hlen({required String key});
 
   /// Get values of multiple hash fields.
-  Future<List<Uint8List?>> hmget({
-    required String key,
-    required List<String> fields,
-  });
+  Future<List<Uint8List?>> hmget(
+      {required String key, required List<String> fields});
 
   /// Set multiple hash fields.
-  Future<PlatformInt64> hmset({
-    required String key,
-    required List<(String, Uint8List)> mapping,
-  });
+  Future<PlatformInt64> hmset(
+      {required String key, required List<(String, Uint8List)> mapping});
 
   /// Incrementally iterate hash fields.
-  Future<(String, List<(String, Uint8List)>)> hscan({
-    required String key,
-    required String cursor,
-    String? pattern,
-    required PlatformInt64 count,
-  });
+  Future<(String, List<(String, Uint8List)>)> hscan(
+      {required String key,
+      required String cursor,
+      String? pattern,
+      required PlatformInt64 count});
 
   /// Set a single hash field.
-  Future<PlatformInt64> hset({
-    required String key,
-    required String field,
-    required List<int> value,
-  });
+  Future<PlatformInt64> hset(
+      {required String key, required String field, required List<int> value});
 
   /// Get all values in a hash.
   Future<List<Uint8List>> hvals({required String key});
@@ -117,25 +153,76 @@ abstract class Db implements RustOpaqueInterface {
   Future<PlatformInt64> incr({required String key});
 
   /// Increment the integer value of a key by amount.
-  Future<PlatformInt64> incrby({
-    required String key,
-    required PlatformInt64 increment,
-  });
+  Future<PlatformInt64> incrby(
+      {required String key, required PlatformInt64 increment});
 
   /// Increment the float value of a key by amount.
   Future<double> incrbyfloat({required String key, required double increment});
 
+  /// Check if FTS indexing is enabled for a key.
+  Future<bool> isFtsEnabled({required String key});
+
+  /// Check if history tracking is enabled for a key.
+  Future<bool> isHistoryEnabled({required String key});
+
+  /// Append values to a JSON array.
+  Future<PlatformInt64> jsonArrappend(
+      {required String key,
+      required String path,
+      required List<String> values});
+
+  /// Get length of a JSON array.
+  Future<PlatformInt64?> jsonArrlen({required String key, String? path});
+
+  /// Pop an element from a JSON array.
+  Future<String?> jsonArrpop(
+      {required String key, String? path, PlatformInt64? index});
+
+  /// Clear container JSON values (arrays/objects become empty).
+  Future<PlatformInt64> jsonClear({required String key, String? path});
+
+  /// Delete JSON value at the given path.
+  Future<PlatformInt64> jsonDel({required String key, String? path});
+
+  /// Get JSON values at the given paths.
+  Future<String?> jsonGet({required String key, required List<String> paths});
+
+  /// Increment a numeric JSON value.
+  Future<String> jsonNumincrby(
+      {required String key, required String path, required double increment});
+
+  /// Set a JSON value at the given path.
+  /// Use "$" for root path.
+  Future<bool> jsonSet(
+      {required String key,
+      required String path,
+      required String value,
+      required bool nx,
+      required bool xx});
+
+  /// Append to a string JSON value.
+  Future<PlatformInt64> jsonStrappend(
+      {required String key, String? path, required String value});
+
+  /// Get length of a string JSON value.
+  Future<PlatformInt64?> jsonStrlen({required String key, String? path});
+
+  /// Get the type of JSON value at the given path.
+  Future<String?> jsonType({required String key, String? path});
+
   /// Get the type of a key.
   Future<KeyType> keyType({required String key});
+
+  /// Get detailed information about a key.
+  /// Returns None if the key doesn't exist.
+  Future<KeyInfo?> keyinfo({required String key});
 
   /// Find all keys matching a pattern.
   Future<List<String>> keys({required String pattern});
 
   /// Get element at index in a list.
-  Future<Uint8List?> lindex({
-    required String key,
-    required PlatformInt64 index,
-  });
+  Future<Uint8List?> lindex(
+      {required String key, required PlatformInt64 index});
 
   /// Get list length.
   Future<PlatformInt64> llen({required String key});
@@ -144,31 +231,26 @@ abstract class Db implements RustOpaqueInterface {
   Future<List<Uint8List>> lpop({required String key, PlatformInt64? count});
 
   /// Push values to the left of a list.
-  Future<PlatformInt64> lpush({
-    required String key,
-    required List<Uint8List> values,
-  });
+  Future<PlatformInt64> lpush(
+      {required String key, required List<Uint8List> values});
 
   /// Get a range of elements from a list.
-  Future<List<Uint8List>> lrange({
-    required String key,
-    required PlatformInt64 start,
-    required PlatformInt64 stop,
-  });
+  Future<List<Uint8List>> lrange(
+      {required String key,
+      required PlatformInt64 start,
+      required PlatformInt64 stop});
 
   /// Set element at index in a list.
-  Future<void> lset({
-    required String key,
-    required PlatformInt64 index,
-    required List<int> value,
-  });
+  Future<void> lset(
+      {required String key,
+      required PlatformInt64 index,
+      required List<int> value});
 
   /// Trim list to specified range.
-  Future<void> ltrim({
-    required String key,
-    required PlatformInt64 start,
-    required PlatformInt64 stop,
-  });
+  Future<void> ltrim(
+      {required String key,
+      required PlatformInt64 start,
+      required PlatformInt64 stop});
 
   /// Get values of multiple keys.
   Future<List<Uint8List?>> mget({required List<String> keys});
@@ -185,35 +267,27 @@ abstract class Db implements RustOpaqueInterface {
   static Db openMemory() => RustLib.instance.api.crateApiDbOpenMemory();
 
   /// Open a database with custom cache size in MB.
-  static Db openWithCache({
-    required String path,
-    required PlatformInt64 cacheMb,
-  }) => RustLib.instance.api.crateApiDbOpenWithCache(
-    path: path,
-    cacheMb: cacheMb,
-  );
+  static Db openWithCache(
+          {required String path, required PlatformInt64 cacheMb}) =>
+      RustLib.instance.api
+          .crateApiDbOpenWithCache(path: path, cacheMb: cacheMb);
 
   /// Remove expiration from a key.
   Future<bool> persist({required String key});
 
   /// Set expiration in milliseconds.
-  Future<bool> pexpire({
-    required String key,
-    required PlatformInt64 milliseconds,
-  });
+  Future<bool> pexpire(
+      {required String key, required PlatformInt64 milliseconds});
 
   /// Set expiration at Unix timestamp (milliseconds).
-  Future<bool> pexpireat({
-    required String key,
-    required PlatformInt64 unixTimeMs,
-  });
+  Future<bool> pexpireat(
+      {required String key, required PlatformInt64 unixTimeMs});
 
   /// Set key with expiration in milliseconds.
-  Future<void> psetex({
-    required String key,
-    required PlatformInt64 milliseconds,
-    required List<int> value,
-  });
+  Future<void> psetex(
+      {required String key,
+      required PlatformInt64 milliseconds,
+      required List<int> value});
 
   /// Get TTL in milliseconds.
   Future<PlatformInt64> pttl({required String key});
@@ -228,23 +302,16 @@ abstract class Db implements RustOpaqueInterface {
   Future<List<Uint8List>> rpop({required String key, PlatformInt64? count});
 
   /// Push values to the right of a list.
-  Future<PlatformInt64> rpush({
-    required String key,
-    required List<Uint8List> values,
-  });
+  Future<PlatformInt64> rpush(
+      {required String key, required List<Uint8List> values});
 
   /// Add members to a set.
-  Future<PlatformInt64> sadd({
-    required String key,
-    required List<Uint8List> members,
-  });
+  Future<PlatformInt64> sadd(
+      {required String key, required List<Uint8List> members});
 
   /// Incrementally iterate keys matching a pattern.
-  Future<(String, List<String>)> scan({
-    required String cursor,
-    String? pattern,
-    required PlatformInt64 count,
-  });
+  Future<(String, List<String>)> scan(
+      {required String cursor, String? pattern, required PlatformInt64 count});
 
   /// Get number of members in a set.
   Future<PlatformInt64> scard({required String key});
@@ -253,32 +320,28 @@ abstract class Db implements RustOpaqueInterface {
   Future<List<Uint8List>> sdiff({required List<String> keys});
 
   /// Set a key-value pair with optional TTL in seconds.
-  Future<void> set_({
-    required String key,
-    required List<int> value,
-    PlatformInt64? ttlSeconds,
-  });
+  Future<void> set_(
+      {required String key,
+      required List<int> value,
+      PlatformInt64? ttlSeconds});
 
   /// Set a key-value pair with options (NX, XX, EX, PX).
-  Future<bool> setOpts({
-    required String key,
-    required List<int> value,
-    required SetOptions options,
-  });
+  Future<bool> setOpts(
+      {required String key,
+      required List<int> value,
+      required SetOptions options});
 
   /// Set key with expiration in seconds.
-  Future<void> setex({
-    required String key,
-    required PlatformInt64 seconds,
-    required List<int> value,
-  });
+  Future<void> setex(
+      {required String key,
+      required PlatformInt64 seconds,
+      required List<int> value});
 
   /// Overwrite part of a string at key starting at offset.
-  Future<PlatformInt64> setrange({
-    required String key,
-    required PlatformInt64 offset,
-    required List<int> value,
-  });
+  Future<PlatformInt64> setrange(
+      {required String key,
+      required PlatformInt64 offset,
+      required List<int> value});
 
   /// Get intersection of sets.
   Future<List<Uint8List>> sinter({required List<String> keys});
@@ -290,18 +353,15 @@ abstract class Db implements RustOpaqueInterface {
   Future<List<Uint8List>> smembers({required String key});
 
   /// Remove members from a set.
-  Future<PlatformInt64> srem({
-    required String key,
-    required List<Uint8List> members,
-  });
+  Future<PlatformInt64> srem(
+      {required String key, required List<Uint8List> members});
 
   /// Incrementally iterate set members.
-  Future<(String, List<Uint8List>)> sscan({
-    required String key,
-    required String cursor,
-    String? pattern,
-    required PlatformInt64 count,
-  });
+  Future<(String, List<Uint8List>)> sscan(
+      {required String key,
+      required String cursor,
+      String? pattern,
+      required PlatformInt64 count});
 
   /// Get the length of the value stored at key.
   Future<PlatformInt64> strlen({required String key});
@@ -316,82 +376,92 @@ abstract class Db implements RustOpaqueInterface {
   Future<PlatformInt64> vacuum();
 
   /// Add members with scores to a sorted set.
-  Future<PlatformInt64> zadd({
-    required String key,
-    required List<ZMember> members,
-  });
+  Future<PlatformInt64> zadd(
+      {required String key, required List<ZMember> members});
 
   /// Get number of members in a sorted set.
   Future<PlatformInt64> zcard({required String key});
 
   /// Count members in a sorted set within a score range.
-  Future<PlatformInt64> zcount({
-    required String key,
-    required double minScore,
-    required double maxScore,
-  });
+  Future<PlatformInt64> zcount(
+      {required String key,
+      required double minScore,
+      required double maxScore});
 
   /// Increment score of a member in a sorted set.
-  Future<double> zincrby({
-    required String key,
-    required double increment,
-    required List<int> member,
-  });
+  Future<double> zincrby(
+      {required String key,
+      required double increment,
+      required List<int> member});
 
   /// Get members by rank range (ascending order).
-  Future<List<ZMember>> zrange({
-    required String key,
-    required PlatformInt64 start,
-    required PlatformInt64 stop,
-    required bool withScores,
-  });
+  Future<List<ZMember>> zrange(
+      {required String key,
+      required PlatformInt64 start,
+      required PlatformInt64 stop,
+      required bool withScores});
 
   /// Get rank of a member in a sorted set (ascending order).
-  Future<PlatformInt64?> zrank({
-    required String key,
-    required List<int> member,
-  });
+  Future<PlatformInt64?> zrank(
+      {required String key, required List<int> member});
 
   /// Remove members from a sorted set.
-  Future<PlatformInt64> zrem({
-    required String key,
-    required List<Uint8List> members,
-  });
+  Future<PlatformInt64> zrem(
+      {required String key, required List<Uint8List> members});
 
   /// Get members by rank range (descending order).
-  Future<List<ZMember>> zrevrange({
-    required String key,
-    required PlatformInt64 start,
-    required PlatformInt64 stop,
-    required bool withScores,
-  });
+  Future<List<ZMember>> zrevrange(
+      {required String key,
+      required PlatformInt64 start,
+      required PlatformInt64 stop,
+      required bool withScores});
 
   /// Get rank of a member in a sorted set (descending order).
-  Future<PlatformInt64?> zrevrank({
-    required String key,
-    required List<int> member,
-  });
+  Future<PlatformInt64?> zrevrank(
+      {required String key, required List<int> member});
 
   /// Incrementally iterate sorted set members with scores.
-  Future<(String, List<(Uint8List, double)>)> zscan({
-    required String key,
-    required String cursor,
-    String? pattern,
-    required PlatformInt64 count,
-  });
+  Future<(String, List<(Uint8List, double)>)> zscan(
+      {required String key,
+      required String cursor,
+      String? pattern,
+      required PlatformInt64 count});
 
   /// Get score of a member in a sorted set.
   Future<double?> zscore({required String key, required List<int> member});
 }
 
+/// Key information returned by keyinfo()
+@freezed
+sealed class KeyInfo with _$KeyInfo {
+  const factory KeyInfo({
+    required KeyType keyType,
+    required PlatformInt64 ttl,
+    required PlatformInt64 createdAt,
+    required PlatformInt64 updatedAt,
+  }) = _KeyInfo;
+}
+
 /// Key type enum
-enum KeyType { string, list, set_, hash, zSet, stream, none }
+enum KeyType {
+  string,
+  list,
+  set_,
+  hash,
+  zSet,
+  stream,
+  json,
+  none,
+  ;
+}
 
 /// Error type for Redlite operations
 class RedliteError implements FrbException {
   final String message;
 
-  const RedliteError({required this.message});
+  const RedliteError({
+    required this.message,
+  });
 
   @override
   int get hashCode => message.hashCode;
@@ -421,6 +491,8 @@ sealed class SetOptions with _$SetOptions {
 /// Sorted set member with score
 @freezed
 sealed class ZMember with _$ZMember {
-  const factory ZMember({required double score, required Uint8List member}) =
-      _ZMember;
+  const factory ZMember({
+    required double score,
+    required Uint8List member,
+  }) = _ZMember;
 }

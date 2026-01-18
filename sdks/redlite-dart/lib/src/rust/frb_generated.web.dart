@@ -3,6 +3,7 @@
 
 // ignore_for_file: unused_import, unused_element, unnecessary_import, duplicate_ignore, invalid_use_of_internal_member, annotate_overrides, non_constant_identifier_names, curly_braces_in_flow_control_structures, prefer_const_literals_to_create_immutables, unused_field
 
+
 // Static analysis wrongly picks the IO variant, thus ignore this
 // ignore_for_file: argument_type_not_assignable
 
@@ -12,484 +13,272 @@ import 'dart:convert';
 import 'frb_generated.dart';
 import 'package:flutter_rust_bridge/flutter_rust_bridge_for_generated_web.dart';
 
-abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
-  RustLibApiImplPlatform({
-    required super.handler,
-    required super.wire,
-    required super.generalizedFrbRustBinding,
-    required super.portManager,
-  });
 
-  CrossPlatformFinalizerArg get rust_arc_decrement_strong_count_DbPtr => wire
-      .rust_arc_decrement_strong_count_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerDb;
 
-  @protected
-  Db
-  dco_decode_Auto_Owned_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerDb(
-    dynamic raw,
-  );
 
-  @protected
-  Db
-  dco_decode_Auto_Ref_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerDb(
-    dynamic raw,
-  );
+                abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
+                  RustLibApiImplPlatform({
+                    required super.handler,
+                    required super.wire,
+                    required super.generalizedFrbRustBinding,
+                    required super.portManager,
+                  });
 
-  @protected
-  Db
-  dco_decode_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerDb(
-    dynamic raw,
-  );
+                  CrossPlatformFinalizerArg get rust_arc_decrement_strong_count_DbPtr => wire.rust_arc_decrement_strong_count_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerDb;
 
-  @protected
-  String dco_decode_String(dynamic raw);
 
-  @protected
-  bool dco_decode_bool(dynamic raw);
 
-  @protected
-  double dco_decode_box_autoadd_f_64(dynamic raw);
+                  @protected Db dco_decode_Auto_Owned_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerDb(dynamic raw);
 
-  @protected
-  PlatformInt64 dco_decode_box_autoadd_i_64(dynamic raw);
+@protected Db dco_decode_Auto_Ref_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerDb(dynamic raw);
 
-  @protected
-  SetOptions dco_decode_box_autoadd_set_options(dynamic raw);
+@protected Db dco_decode_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerDb(dynamic raw);
 
-  @protected
-  double dco_decode_f_64(dynamic raw);
+@protected String dco_decode_String(dynamic raw);
 
-  @protected
-  int dco_decode_i_32(dynamic raw);
+@protected bool dco_decode_bool(dynamic raw);
 
-  @protected
-  PlatformInt64 dco_decode_i_64(dynamic raw);
+@protected double dco_decode_box_autoadd_f_64(dynamic raw);
 
-  @protected
-  KeyType dco_decode_key_type(dynamic raw);
+@protected PlatformInt64 dco_decode_box_autoadd_i_64(dynamic raw);
 
-  @protected
-  List<String> dco_decode_list_String(dynamic raw);
+@protected KeyInfo dco_decode_box_autoadd_key_info(dynamic raw);
 
-  @protected
-  List<Uint8List> dco_decode_list_list_prim_u_8_strict(dynamic raw);
+@protected SetOptions dco_decode_box_autoadd_set_options(dynamic raw);
 
-  @protected
-  List<Uint8List?> dco_decode_list_opt_list_prim_u_8_strict(dynamic raw);
+@protected double dco_decode_f_64(dynamic raw);
 
-  @protected
-  List<int> dco_decode_list_prim_u_8_loose(dynamic raw);
+@protected int dco_decode_i_32(dynamic raw);
 
-  @protected
-  Uint8List dco_decode_list_prim_u_8_strict(dynamic raw);
+@protected PlatformInt64 dco_decode_i_64(dynamic raw);
 
-  @protected
-  List<(Uint8List, double)> dco_decode_list_record_list_prim_u_8_strict_f_64(
-    dynamic raw,
-  );
+@protected KeyInfo dco_decode_key_info(dynamic raw);
 
-  @protected
-  List<(String, Uint8List)> dco_decode_list_record_string_list_prim_u_8_strict(
-    dynamic raw,
-  );
+@protected KeyType dco_decode_key_type(dynamic raw);
 
-  @protected
-  List<ZMember> dco_decode_list_z_member(dynamic raw);
+@protected List<String> dco_decode_list_String(dynamic raw);
 
-  @protected
-  String? dco_decode_opt_String(dynamic raw);
+@protected List<Uint8List> dco_decode_list_list_prim_u_8_strict(dynamic raw);
 
-  @protected
-  double? dco_decode_opt_box_autoadd_f_64(dynamic raw);
+@protected List<Uint8List?> dco_decode_list_opt_list_prim_u_8_strict(dynamic raw);
 
-  @protected
-  PlatformInt64? dco_decode_opt_box_autoadd_i_64(dynamic raw);
+@protected List<int> dco_decode_list_prim_u_8_loose(dynamic raw);
 
-  @protected
-  Uint8List? dco_decode_opt_list_prim_u_8_strict(dynamic raw);
+@protected Uint8List dco_decode_list_prim_u_8_strict(dynamic raw);
 
-  @protected
-  (Uint8List, double) dco_decode_record_list_prim_u_8_strict_f_64(dynamic raw);
+@protected List<(Uint8List,double)> dco_decode_list_record_list_prim_u_8_strict_f_64(dynamic raw);
 
-  @protected
-  (String, List<Uint8List>) dco_decode_record_string_list_list_prim_u_8_strict(
-    dynamic raw,
-  );
+@protected List<(String,Uint8List)> dco_decode_list_record_string_list_prim_u_8_strict(dynamic raw);
 
-  @protected
-  (String, Uint8List) dco_decode_record_string_list_prim_u_8_strict(
-    dynamic raw,
-  );
+@protected List<ZMember> dco_decode_list_z_member(dynamic raw);
 
-  @protected
-  (String, List<(Uint8List, double)>)
-  dco_decode_record_string_list_record_list_prim_u_8_strict_f_64(dynamic raw);
+@protected String? dco_decode_opt_String(dynamic raw);
 
-  @protected
-  (String, List<(String, Uint8List)>)
-  dco_decode_record_string_list_record_string_list_prim_u_8_strict(dynamic raw);
+@protected double? dco_decode_opt_box_autoadd_f_64(dynamic raw);
 
-  @protected
-  (String, List<String>) dco_decode_record_string_list_string(dynamic raw);
+@protected PlatformInt64? dco_decode_opt_box_autoadd_i_64(dynamic raw);
 
-  @protected
-  RedliteError dco_decode_redlite_error(dynamic raw);
+@protected KeyInfo? dco_decode_opt_box_autoadd_key_info(dynamic raw);
 
-  @protected
-  SetOptions dco_decode_set_options(dynamic raw);
+@protected Uint8List? dco_decode_opt_list_prim_u_8_strict(dynamic raw);
 
-  @protected
-  int dco_decode_u_8(dynamic raw);
+@protected (Uint8List,double) dco_decode_record_list_prim_u_8_strict_f_64(dynamic raw);
 
-  @protected
-  void dco_decode_unit(dynamic raw);
+@protected (String,List<Uint8List>) dco_decode_record_string_list_list_prim_u_8_strict(dynamic raw);
 
-  @protected
-  BigInt dco_decode_usize(dynamic raw);
+@protected (String,Uint8List) dco_decode_record_string_list_prim_u_8_strict(dynamic raw);
 
-  @protected
-  ZMember dco_decode_z_member(dynamic raw);
+@protected (String,List<(Uint8List,double)>) dco_decode_record_string_list_record_list_prim_u_8_strict_f_64(dynamic raw);
 
-  @protected
-  Db
-  sse_decode_Auto_Owned_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerDb(
-    SseDeserializer deserializer,
-  );
+@protected (String,List<(String,Uint8List)>) dco_decode_record_string_list_record_string_list_prim_u_8_strict(dynamic raw);
 
-  @protected
-  Db
-  sse_decode_Auto_Ref_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerDb(
-    SseDeserializer deserializer,
-  );
+@protected (String,List<String>) dco_decode_record_string_list_string(dynamic raw);
 
-  @protected
-  Db
-  sse_decode_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerDb(
-    SseDeserializer deserializer,
-  );
+@protected RedliteError dco_decode_redlite_error(dynamic raw);
 
-  @protected
-  String sse_decode_String(SseDeserializer deserializer);
+@protected SetOptions dco_decode_set_options(dynamic raw);
 
-  @protected
-  bool sse_decode_bool(SseDeserializer deserializer);
+@protected int dco_decode_u_8(dynamic raw);
 
-  @protected
-  double sse_decode_box_autoadd_f_64(SseDeserializer deserializer);
+@protected void dco_decode_unit(dynamic raw);
 
-  @protected
-  PlatformInt64 sse_decode_box_autoadd_i_64(SseDeserializer deserializer);
+@protected BigInt dco_decode_usize(dynamic raw);
 
-  @protected
-  SetOptions sse_decode_box_autoadd_set_options(SseDeserializer deserializer);
+@protected ZMember dco_decode_z_member(dynamic raw);
 
-  @protected
-  double sse_decode_f_64(SseDeserializer deserializer);
+@protected Db sse_decode_Auto_Owned_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerDb(SseDeserializer deserializer);
 
-  @protected
-  int sse_decode_i_32(SseDeserializer deserializer);
+@protected Db sse_decode_Auto_Ref_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerDb(SseDeserializer deserializer);
 
-  @protected
-  PlatformInt64 sse_decode_i_64(SseDeserializer deserializer);
+@protected Db sse_decode_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerDb(SseDeserializer deserializer);
 
-  @protected
-  KeyType sse_decode_key_type(SseDeserializer deserializer);
+@protected String sse_decode_String(SseDeserializer deserializer);
 
-  @protected
-  List<String> sse_decode_list_String(SseDeserializer deserializer);
+@protected bool sse_decode_bool(SseDeserializer deserializer);
 
-  @protected
-  List<Uint8List> sse_decode_list_list_prim_u_8_strict(
-    SseDeserializer deserializer,
-  );
+@protected double sse_decode_box_autoadd_f_64(SseDeserializer deserializer);
 
-  @protected
-  List<Uint8List?> sse_decode_list_opt_list_prim_u_8_strict(
-    SseDeserializer deserializer,
-  );
+@protected PlatformInt64 sse_decode_box_autoadd_i_64(SseDeserializer deserializer);
 
-  @protected
-  List<int> sse_decode_list_prim_u_8_loose(SseDeserializer deserializer);
+@protected KeyInfo sse_decode_box_autoadd_key_info(SseDeserializer deserializer);
 
-  @protected
-  Uint8List sse_decode_list_prim_u_8_strict(SseDeserializer deserializer);
+@protected SetOptions sse_decode_box_autoadd_set_options(SseDeserializer deserializer);
 
-  @protected
-  List<(Uint8List, double)> sse_decode_list_record_list_prim_u_8_strict_f_64(
-    SseDeserializer deserializer,
-  );
+@protected double sse_decode_f_64(SseDeserializer deserializer);
 
-  @protected
-  List<(String, Uint8List)> sse_decode_list_record_string_list_prim_u_8_strict(
-    SseDeserializer deserializer,
-  );
+@protected int sse_decode_i_32(SseDeserializer deserializer);
 
-  @protected
-  List<ZMember> sse_decode_list_z_member(SseDeserializer deserializer);
+@protected PlatformInt64 sse_decode_i_64(SseDeserializer deserializer);
 
-  @protected
-  String? sse_decode_opt_String(SseDeserializer deserializer);
-
-  @protected
-  double? sse_decode_opt_box_autoadd_f_64(SseDeserializer deserializer);
+@protected KeyInfo sse_decode_key_info(SseDeserializer deserializer);
 
-  @protected
-  PlatformInt64? sse_decode_opt_box_autoadd_i_64(SseDeserializer deserializer);
+@protected KeyType sse_decode_key_type(SseDeserializer deserializer);
 
-  @protected
-  Uint8List? sse_decode_opt_list_prim_u_8_strict(SseDeserializer deserializer);
+@protected List<String> sse_decode_list_String(SseDeserializer deserializer);
 
-  @protected
-  (Uint8List, double) sse_decode_record_list_prim_u_8_strict_f_64(
-    SseDeserializer deserializer,
-  );
+@protected List<Uint8List> sse_decode_list_list_prim_u_8_strict(SseDeserializer deserializer);
 
-  @protected
-  (String, List<Uint8List>) sse_decode_record_string_list_list_prim_u_8_strict(
-    SseDeserializer deserializer,
-  );
+@protected List<Uint8List?> sse_decode_list_opt_list_prim_u_8_strict(SseDeserializer deserializer);
 
-  @protected
-  (String, Uint8List) sse_decode_record_string_list_prim_u_8_strict(
-    SseDeserializer deserializer,
-  );
+@protected List<int> sse_decode_list_prim_u_8_loose(SseDeserializer deserializer);
 
-  @protected
-  (String, List<(Uint8List, double)>)
-  sse_decode_record_string_list_record_list_prim_u_8_strict_f_64(
-    SseDeserializer deserializer,
-  );
+@protected Uint8List sse_decode_list_prim_u_8_strict(SseDeserializer deserializer);
 
-  @protected
-  (String, List<(String, Uint8List)>)
-  sse_decode_record_string_list_record_string_list_prim_u_8_strict(
-    SseDeserializer deserializer,
-  );
-
-  @protected
-  (String, List<String>) sse_decode_record_string_list_string(
-    SseDeserializer deserializer,
-  );
-
-  @protected
-  RedliteError sse_decode_redlite_error(SseDeserializer deserializer);
-
-  @protected
-  SetOptions sse_decode_set_options(SseDeserializer deserializer);
-
-  @protected
-  int sse_decode_u_8(SseDeserializer deserializer);
-
-  @protected
-  void sse_decode_unit(SseDeserializer deserializer);
-
-  @protected
-  BigInt sse_decode_usize(SseDeserializer deserializer);
-
-  @protected
-  ZMember sse_decode_z_member(SseDeserializer deserializer);
+@protected List<(Uint8List,double)> sse_decode_list_record_list_prim_u_8_strict_f_64(SseDeserializer deserializer);
 
-  @protected
-  void
-  sse_encode_Auto_Owned_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerDb(
-    Db self,
-    SseSerializer serializer,
-  );
-
-  @protected
-  void
-  sse_encode_Auto_Ref_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerDb(
-    Db self,
-    SseSerializer serializer,
-  );
-
-  @protected
-  void
-  sse_encode_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerDb(
-    Db self,
-    SseSerializer serializer,
-  );
-
-  @protected
-  void sse_encode_String(String self, SseSerializer serializer);
-
-  @protected
-  void sse_encode_bool(bool self, SseSerializer serializer);
-
-  @protected
-  void sse_encode_box_autoadd_f_64(double self, SseSerializer serializer);
-
-  @protected
-  void sse_encode_box_autoadd_i_64(
-    PlatformInt64 self,
-    SseSerializer serializer,
-  );
-
-  @protected
-  void sse_encode_box_autoadd_set_options(
-    SetOptions self,
-    SseSerializer serializer,
-  );
-
-  @protected
-  void sse_encode_f_64(double self, SseSerializer serializer);
-
-  @protected
-  void sse_encode_i_32(int self, SseSerializer serializer);
-
-  @protected
-  void sse_encode_i_64(PlatformInt64 self, SseSerializer serializer);
-
-  @protected
-  void sse_encode_key_type(KeyType self, SseSerializer serializer);
-
-  @protected
-  void sse_encode_list_String(List<String> self, SseSerializer serializer);
-
-  @protected
-  void sse_encode_list_list_prim_u_8_strict(
-    List<Uint8List> self,
-    SseSerializer serializer,
-  );
-
-  @protected
-  void sse_encode_list_opt_list_prim_u_8_strict(
-    List<Uint8List?> self,
-    SseSerializer serializer,
-  );
-
-  @protected
-  void sse_encode_list_prim_u_8_loose(List<int> self, SseSerializer serializer);
-
-  @protected
-  void sse_encode_list_prim_u_8_strict(
-    Uint8List self,
-    SseSerializer serializer,
-  );
-
-  @protected
-  void sse_encode_list_record_list_prim_u_8_strict_f_64(
-    List<(Uint8List, double)> self,
-    SseSerializer serializer,
-  );
-
-  @protected
-  void sse_encode_list_record_string_list_prim_u_8_strict(
-    List<(String, Uint8List)> self,
-    SseSerializer serializer,
-  );
-
-  @protected
-  void sse_encode_list_z_member(List<ZMember> self, SseSerializer serializer);
-
-  @protected
-  void sse_encode_opt_String(String? self, SseSerializer serializer);
-
-  @protected
-  void sse_encode_opt_box_autoadd_f_64(double? self, SseSerializer serializer);
-
-  @protected
-  void sse_encode_opt_box_autoadd_i_64(
-    PlatformInt64? self,
-    SseSerializer serializer,
-  );
-
-  @protected
-  void sse_encode_opt_list_prim_u_8_strict(
-    Uint8List? self,
-    SseSerializer serializer,
-  );
-
-  @protected
-  void sse_encode_record_list_prim_u_8_strict_f_64(
-    (Uint8List, double) self,
-    SseSerializer serializer,
-  );
-
-  @protected
-  void sse_encode_record_string_list_list_prim_u_8_strict(
-    (String, List<Uint8List>) self,
-    SseSerializer serializer,
-  );
-
-  @protected
-  void sse_encode_record_string_list_prim_u_8_strict(
-    (String, Uint8List) self,
-    SseSerializer serializer,
-  );
-
-  @protected
-  void sse_encode_record_string_list_record_list_prim_u_8_strict_f_64(
-    (String, List<(Uint8List, double)>) self,
-    SseSerializer serializer,
-  );
-
-  @protected
-  void sse_encode_record_string_list_record_string_list_prim_u_8_strict(
-    (String, List<(String, Uint8List)>) self,
-    SseSerializer serializer,
-  );
-
-  @protected
-  void sse_encode_record_string_list_string(
-    (String, List<String>) self,
-    SseSerializer serializer,
-  );
-
-  @protected
-  void sse_encode_redlite_error(RedliteError self, SseSerializer serializer);
-
-  @protected
-  void sse_encode_set_options(SetOptions self, SseSerializer serializer);
-
-  @protected
-  void sse_encode_u_8(int self, SseSerializer serializer);
-
-  @protected
-  void sse_encode_unit(void self, SseSerializer serializer);
-
-  @protected
-  void sse_encode_usize(BigInt self, SseSerializer serializer);
-
-  @protected
-  void sse_encode_z_member(ZMember self, SseSerializer serializer);
-}
+@protected List<(String,Uint8List)> sse_decode_list_record_string_list_prim_u_8_strict(SseDeserializer deserializer);
+
+@protected List<ZMember> sse_decode_list_z_member(SseDeserializer deserializer);
+
+@protected String? sse_decode_opt_String(SseDeserializer deserializer);
+
+@protected double? sse_decode_opt_box_autoadd_f_64(SseDeserializer deserializer);
+
+@protected PlatformInt64? sse_decode_opt_box_autoadd_i_64(SseDeserializer deserializer);
+
+@protected KeyInfo? sse_decode_opt_box_autoadd_key_info(SseDeserializer deserializer);
+
+@protected Uint8List? sse_decode_opt_list_prim_u_8_strict(SseDeserializer deserializer);
+
+@protected (Uint8List,double) sse_decode_record_list_prim_u_8_strict_f_64(SseDeserializer deserializer);
+
+@protected (String,List<Uint8List>) sse_decode_record_string_list_list_prim_u_8_strict(SseDeserializer deserializer);
+
+@protected (String,Uint8List) sse_decode_record_string_list_prim_u_8_strict(SseDeserializer deserializer);
+
+@protected (String,List<(Uint8List,double)>) sse_decode_record_string_list_record_list_prim_u_8_strict_f_64(SseDeserializer deserializer);
+
+@protected (String,List<(String,Uint8List)>) sse_decode_record_string_list_record_string_list_prim_u_8_strict(SseDeserializer deserializer);
+
+@protected (String,List<String>) sse_decode_record_string_list_string(SseDeserializer deserializer);
+
+@protected RedliteError sse_decode_redlite_error(SseDeserializer deserializer);
+
+@protected SetOptions sse_decode_set_options(SseDeserializer deserializer);
+
+@protected int sse_decode_u_8(SseDeserializer deserializer);
+
+@protected void sse_decode_unit(SseDeserializer deserializer);
+
+@protected BigInt sse_decode_usize(SseDeserializer deserializer);
+
+@protected ZMember sse_decode_z_member(SseDeserializer deserializer);
+
+@protected void sse_encode_Auto_Owned_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerDb(Db self, SseSerializer serializer);
+
+@protected void sse_encode_Auto_Ref_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerDb(Db self, SseSerializer serializer);
+
+@protected void sse_encode_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerDb(Db self, SseSerializer serializer);
+
+@protected void sse_encode_String(String self, SseSerializer serializer);
+
+@protected void sse_encode_bool(bool self, SseSerializer serializer);
+
+@protected void sse_encode_box_autoadd_f_64(double self, SseSerializer serializer);
+
+@protected void sse_encode_box_autoadd_i_64(PlatformInt64 self, SseSerializer serializer);
+
+@protected void sse_encode_box_autoadd_key_info(KeyInfo self, SseSerializer serializer);
+
+@protected void sse_encode_box_autoadd_set_options(SetOptions self, SseSerializer serializer);
+
+@protected void sse_encode_f_64(double self, SseSerializer serializer);
+
+@protected void sse_encode_i_32(int self, SseSerializer serializer);
+
+@protected void sse_encode_i_64(PlatformInt64 self, SseSerializer serializer);
+
+@protected void sse_encode_key_info(KeyInfo self, SseSerializer serializer);
+
+@protected void sse_encode_key_type(KeyType self, SseSerializer serializer);
+
+@protected void sse_encode_list_String(List<String> self, SseSerializer serializer);
+
+@protected void sse_encode_list_list_prim_u_8_strict(List<Uint8List> self, SseSerializer serializer);
+
+@protected void sse_encode_list_opt_list_prim_u_8_strict(List<Uint8List?> self, SseSerializer serializer);
+
+@protected void sse_encode_list_prim_u_8_loose(List<int> self, SseSerializer serializer);
+
+@protected void sse_encode_list_prim_u_8_strict(Uint8List self, SseSerializer serializer);
+
+@protected void sse_encode_list_record_list_prim_u_8_strict_f_64(List<(Uint8List,double)> self, SseSerializer serializer);
+
+@protected void sse_encode_list_record_string_list_prim_u_8_strict(List<(String,Uint8List)> self, SseSerializer serializer);
+
+@protected void sse_encode_list_z_member(List<ZMember> self, SseSerializer serializer);
+
+@protected void sse_encode_opt_String(String? self, SseSerializer serializer);
+
+@protected void sse_encode_opt_box_autoadd_f_64(double? self, SseSerializer serializer);
+
+@protected void sse_encode_opt_box_autoadd_i_64(PlatformInt64? self, SseSerializer serializer);
+
+@protected void sse_encode_opt_box_autoadd_key_info(KeyInfo? self, SseSerializer serializer);
+
+@protected void sse_encode_opt_list_prim_u_8_strict(Uint8List? self, SseSerializer serializer);
+
+@protected void sse_encode_record_list_prim_u_8_strict_f_64((Uint8List,double) self, SseSerializer serializer);
+
+@protected void sse_encode_record_string_list_list_prim_u_8_strict((String,List<Uint8List>) self, SseSerializer serializer);
+
+@protected void sse_encode_record_string_list_prim_u_8_strict((String,Uint8List) self, SseSerializer serializer);
+
+@protected void sse_encode_record_string_list_record_list_prim_u_8_strict_f_64((String,List<(Uint8List,double)>) self, SseSerializer serializer);
+
+@protected void sse_encode_record_string_list_record_string_list_prim_u_8_strict((String,List<(String,Uint8List)>) self, SseSerializer serializer);
+
+@protected void sse_encode_record_string_list_string((String,List<String>) self, SseSerializer serializer);
+
+@protected void sse_encode_redlite_error(RedliteError self, SseSerializer serializer);
+
+@protected void sse_encode_set_options(SetOptions self, SseSerializer serializer);
+
+@protected void sse_encode_u_8(int self, SseSerializer serializer);
+
+@protected void sse_encode_unit(void self, SseSerializer serializer);
+
+@protected void sse_encode_usize(BigInt self, SseSerializer serializer);
+
+@protected void sse_encode_z_member(ZMember self, SseSerializer serializer);
+                }
+                
+
 
 // Section: wire_class
 
 class RustLibWire implements BaseWire {
-  RustLibWire.fromExternalLibrary(ExternalLibrary lib);
+            RustLibWire.fromExternalLibrary(ExternalLibrary lib);
 
-  void
-  rust_arc_increment_strong_count_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerDb(
-    int ptr,
-  ) => wasmModule
-      .rust_arc_increment_strong_count_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerDb(
-        ptr,
-      );
+            void rust_arc_increment_strong_count_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerDb(int ptr) => wasmModule.rust_arc_increment_strong_count_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerDb(ptr);
 
-  void
-  rust_arc_decrement_strong_count_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerDb(
-    int ptr,
-  ) => wasmModule
-      .rust_arc_decrement_strong_count_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerDb(
-        ptr,
-      );
-}
+void rust_arc_decrement_strong_count_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerDb(int ptr) => wasmModule.rust_arc_decrement_strong_count_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerDb(ptr);
+        }
+        @JS('wasm_bindgen') external RustLibWasmModule get wasmModule;
 
-@JS('wasm_bindgen')
-external RustLibWasmModule get wasmModule;
+        @JS() @anonymous extension type RustLibWasmModule._(JSObject _) implements JSObject {
+            external void rust_arc_increment_strong_count_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerDb(int ptr);
 
-@JS()
-@anonymous
-extension type RustLibWasmModule._(JSObject _) implements JSObject {
-  external void
-  rust_arc_increment_strong_count_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerDb(
-    int ptr,
-  );
-
-  external void
-  rust_arc_decrement_strong_count_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerDb(
-    int ptr,
-  );
-}
+external void rust_arc_decrement_strong_count_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerDb(int ptr);
+        }
+        

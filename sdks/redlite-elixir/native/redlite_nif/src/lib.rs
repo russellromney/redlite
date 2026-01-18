@@ -21,6 +21,7 @@ mod atoms {
         zset,
         hash,
         stream,
+        json,
         none,
         // Errors
         not_found,
@@ -531,6 +532,7 @@ fn key_type<'a>(env: Env<'a>, db: ResourceArc<DbResource>, key: &str) -> NifResu
                 redlite::KeyType::ZSet => atoms::zset(),
                 redlite::KeyType::Hash => atoms::hash(),
                 redlite::KeyType::Stream => atoms::stream(),
+                redlite::KeyType::Json => atoms::json(),
             };
             Ok(ok(env, type_atom))
         }
