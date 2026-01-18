@@ -1,0 +1,122 @@
+---
+title: Introduction
+description: SQLite-backed Redis-compatible key-value store
+---
+
+import { Tabs, TabItem } from '@astrojs/starlight/components';
+
+Redis-compatible key-value store on SQLite in Rust.
+
+## Quick Example
+
+<Tabs>
+  <TabItem label="Python">
+```python
+from redlite import Redlite
+
+db = Redlite("app.db")
+
+db.set("user:1", "Alice")
+print(db.get("user:1"))  # "Alice"
+
+db.hset("profile:1", {"name": "Alice", "score": "100"})
+print(db.hgetall("profile:1"))
+```
+  </TabItem>
+  <TabItem label="TypeScript">
+```typescript
+import { Redlite } from 'redlite';
+
+const db = new Redlite('app.db');
+
+await db.set('user:1', 'Alice');
+console.log(await db.get('user:1'));  // "Alice"
+
+await db.hset('profile:1', { name: 'Alice', score: '100' });
+console.log(await db.hgetall('profile:1'));
+```
+  </TabItem>
+  <TabItem label="Rust">
+```rust
+use redlite::Db;
+
+let db = Db::open("app.db")?;
+
+db.set("user:1", b"Alice", None)?;
+println!("{:?}", db.get("user:1")?);  // Some(b"Alice")
+
+db.hset("profile:1", &[("name", b"Alice"), ("score", b"100")])?;
+println!("{:?}", db.hgetall("profile:1")?);
+```
+  </TabItem>
+  <TabItem label="Go">
+```go
+import "github.com/patte/redlite-go"
+
+db, _ := redlite.Open("app.db")
+
+db.Set("user:1", []byte("Alice"), 0)
+fmt.Println(string(db.Get("user:1")))  // "Alice"
+
+db.HSet("profile:1", map[string][]byte{"name": []byte("Alice"), "score": []byte("100")})
+fmt.Println(db.HGetAll("profile:1"))
+```
+  </TabItem>
+</Tabs>
+
+## Why Redlite?
+
+Redis has operational overhead—separate process, memory constraints, replication complexity. For embedded systems, mobile apps, or simple services, you just need a fast key-value store that persists. Redlite gives you that: Redis semantics on SQLite, durable by default, single-file backup, compatible with existing clients.
+
+## Modes
+
+| Mode | Storage | Use Case |
+|------|---------|----------|
+| Embedded | Memory | Testing, ephemeral caches |
+| Embedded | File | Single-process apps, mobile |
+| Server | Memory | Ephemeral shared cache |
+| Server | File | Multi-client persistent cache |
+
+- **Embedded** — Native bindings (Python, TypeScript, Elixir) or FFI. No network overhead.
+- **Server** — TCP server speaking Redis protocol. Use `redis-cli` or any Redis client.
+
+## How It Works
+
+- Redis types → SQLite tables (hashes → rows, sorted sets → scores, lists → gap-based positioning)
+- Writes persist immediately (WAL mode)
+- Extras: HISTORY (time-travel), VACUUM, full-text search, vectors, geo
+
+## Performance
+
+| Mode | GET | SET | Mixed |
+|------|-----|-----|-------|
+| Embedded (file) | 200k+ ops/sec | 45k+ ops/sec | 90k ops/sec |
+
+*Benchmarks: macOS M1, 64MB cache. See [redlite-bench](https://github.com/redlite/redlite-bench) for details.*
+
+**Durability:** All writes persisted immediately (SQLite WAL mode).
+**Memory:** Configurable page cache (default 64MB).
+
+**Performance notes:**
+- History tracking adds write overhead (extra row per mutation)
+- FTS/vector indexing adds write latency
+- Geo features require computation per query
+
+## What's Implemented
+
+| Feature | |
+|---------|--|
+| Strings, Hashes, Lists, Sets, Sorted Sets, Streams | ✅ |
+| Transactions (MULTI/EXEC/WATCH) | ✅ |
+| Pub/Sub (server), Blocking Reads (polling/async) | ✅ |
+| Full-Text Search, JSON, Vectors, Geospatial | ✅ |
+| History Tracking, Memory/Disk Eviction | ✅ |
+
+## Not Supported
+
+- Clustering/replication (use Litestream for backups)
+- Lua scripting
+
+## Next Steps
+
+[Installation](/getting-started/installation) · [Quick Start](/getting-started/quickstart)

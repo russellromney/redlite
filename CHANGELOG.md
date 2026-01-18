@@ -1,5 +1,53 @@
 # Changelog
 
+## Session 52: LMPOP & MEMORY DOCTOR Commands (2026-01-18)
+
+**Achievement**: Added LMPOP command for popping from multiple lists and MEMORY DOCTOR for cache health diagnostics. Fixed outdated documentation.
+
+**New Commands**:
+
+| Command | Description |
+|---------|-------------|
+| `LMPOP numkeys key [key ...] <LEFT\|RIGHT> [COUNT count]` | Pop from first non-empty list among multiple keys |
+| `MEMORY DOCTOR` | Analyze cache health and return diagnostic report |
+
+**LMPOP Details** (`crates/redlite/src/db.rs:lmpop`, `crates/redlite/src/server/mod.rs:cmd_lmpop`):
+- Iterates keys in order, pops from first non-empty list
+- Supports LEFT/RIGHT direction for pop side
+- Optional COUNT for popping multiple elements
+- Returns `[key_name, [elements...]]` or null if all lists empty
+- Cleans up empty lists after pop (key deleted when list becomes empty)
+
+**MEMORY DOCTOR Details** (`crates/redlite/src/db.rs:memory_doctor`, `crates/redlite/src/server/mod.rs`):
+- Reports memory usage vs configured limit (with percentage)
+- Shows eviction policy and warns about problematic configurations
+- Reports disk usage if maxdisk is configured
+- Counts total keys, keys with TTL, and expired keys awaiting cleanup
+- Shows key type distribution (string, hash, list, set, zset, stream, json)
+- Provides actionable warnings (e.g., "run VACUUM" if stale expired keys exist)
+- Outputs human-readable diagnostic report
+
+**Documentation Updates** (`COMMANDS.md`):
+- Moved 8 "Planned" commands to implemented sections (RENAME, RENAMENX, LMOVE, HSCAN, SSCAN, ZSCAN, ZINTERSTORE, ZUNIONSTORE)
+- Added new "Memory Commands" section with MEMORY STATS, MEMORY USAGE, MEMORY DOCTOR
+- Added LMPOP to Additional List & Set Operations
+
+**Tests Added** (779 total tests passing):
+- `test_lmpop_first_nonempty` - Pops from first non-empty list
+- `test_lmpop_left_right` - Tests LEFT and RIGHT directions
+- `test_lmpop_all_empty` - Returns None when all lists empty
+- `test_lmpop_deletes_empty_list` - Verifies key deletion when list becomes empty
+- `test_memory_doctor_basic` - Verifies diagnostic report structure
+- `test_memory_doctor_with_expired_keys` - Detects stale expired keys
+
+**Files Modified**:
+- `crates/redlite/src/db.rs` - Added `lmpop()` and `memory_doctor()` functions + 6 tests
+- `crates/redlite/src/server/mod.rs` - Added `cmd_lmpop()`, `DOCTOR` subcommand dispatch
+- `COMMANDS.md` - Fixed outdated planned section, added Memory Commands section
+- `ROADMAP.md` - Added Session 52 entry
+
+---
+
 ## Session 51: JSON Commands - RedisJSON-Compatible (2026-01-18)
 
 **Achievement**: Implemented complete JSON command support with 20 commands and FTS ON JSON integration with JSONPath extraction.
