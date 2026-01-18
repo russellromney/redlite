@@ -34,6 +34,28 @@ fn init_sqlite_vec() {
 #[cfg(not(feature = "vectors"))]
 fn init_sqlite_vec() {}
 
+/// Load sqlite-zstd extension for transparent compression (per-connection)
+/// When compression feature is enabled, this is a no-op by default.
+/// Use Db::open_with_compression() to specify the extension path.
+#[cfg(not(feature = "compression"))]
+fn load_compression(_conn: &Connection, _extension_path: Option<&str>) -> Result<()> {
+    Ok(())
+}
+
+#[cfg(feature = "compression")]
+fn load_compression(conn: &Connection, extension_path: Option<&str>) -> Result<()> {
+    if let Some(path) = extension_path {
+        // Enable extension loading
+        unsafe {
+            conn.load_extension_enable()?;
+            conn.load_extension(path, None)
+                .map_err(|e| KvError::Other(format!("Failed to load sqlite-zstd extension from {}: {}", path, e)))?;
+            conn.load_extension_disable()?;
+        }
+    }
+    Ok(())
+}
+
 /// Default autovacuum interval in milliseconds (60 seconds)
 const DEFAULT_AUTOVACUUM_INTERVAL_MS: i64 = 60_000;
 
@@ -238,6 +260,9 @@ impl Db {
 
         let conn = Connection::open(path)?;
 
+        // Load sqlite-zstd extension if compression feature enabled
+        load_compression(&conn, None)?;
+
         // Enable WAL mode and optimize pragmas for performance
         conn.execute_batch(
             "PRAGMA journal_mode = WAL;
@@ -314,6 +339,9 @@ impl Db {
 
         let conn = Connection::open(path)?;
 
+        // Load sqlite-zstd extension if compression feature enabled
+        load_compression(&conn, None)?;
+
         // Base pragmas (WAL mode, etc.)
         conn.execute_batch(
             "PRAGMA journal_mode = WAL;
@@ -341,6 +369,144 @@ impl Db {
         };
 
         // sqlite-vec is registered globally via auto_extension in lib.rs init
+
+        let core = Arc::new(DbCore {
+            conn: Mutex::new(conn),
+            autovacuum_enabled: AtomicBool::new(true),
+            last_cleanup: AtomicI64::new(0),
+            autovacuum_interval_ms: AtomicI64::new(DEFAULT_AUTOVACUUM_INTERVAL_MS),
+            notifier: RwLock::new(None),
+            poll_config: RwLock::new(PollConfig::default()),
+            max_disk_bytes: AtomicU64::new(0),
+            last_eviction_check: AtomicI64::new(0),
+            max_memory_bytes: AtomicU64::new(0),
+            last_memory_eviction_check: AtomicI64::new(0),
+            eviction_policy: Mutex::new(EvictionPolicy::NoEviction),
+            access_tracking: RwLock::new(HashMap::new()),
+            persist_access_tracking: AtomicBool::new(persist_access_tracking),
+            access_flush_interval_ms: AtomicI64::new(access_flush_interval_ms),
+            last_access_flush: AtomicI64::new(0),
+            is_memory_db,
+        });
+
+        let db = Self {
+            core,
+            selected_db: 0,
+        };
+
+        db.migrate()?;
+        Ok(db)
+    }
+
+    /// Open a database with transparent compression via sqlite-zstd extension.
+    ///
+    /// Requires the `compression` feature and a path to the sqlite-zstd extension file.
+    /// You can build the extension from <https://github.com/phiresky/sqlite-zstd>:
+    /// ```bash
+    /// cargo build --release --features build_extension
+    /// # produces target/release/libsqlite_zstd.so (or .dylib on macOS)
+    /// ```
+    ///
+    /// # Example
+    /// ```ignore
+    /// use redlite::Db;
+    ///
+    /// let db = Db::open_with_compression(
+    ///     "mydata.db",
+    ///     "/path/to/libsqlite_zstd.so"
+    /// ).unwrap();
+    /// ```
+    #[cfg(feature = "compression")]
+    pub fn open_with_compression(path: &str, extension_path: &str) -> Result<Self> {
+        init_sqlite_vec();
+
+        let conn = Connection::open(path)?;
+
+        // Load sqlite-zstd extension
+        load_compression(&conn, Some(extension_path))?;
+
+        // Enable WAL mode and optimize pragmas for performance
+        conn.execute_batch(
+            "PRAGMA journal_mode = WAL;
+             PRAGMA synchronous = NORMAL;
+             PRAGMA foreign_keys = ON;
+             PRAGMA busy_timeout = 5000;
+             PRAGMA cache_size = -64000;
+             PRAGMA mmap_size = 268435456;
+             PRAGMA temp_store = MEMORY;",
+        )?;
+
+        let is_memory_db = path == ":memory:";
+        let persist_access_tracking = is_memory_db;
+        let access_flush_interval_ms = if is_memory_db { 5_000 } else { 300_000 };
+
+        let core = Arc::new(DbCore {
+            conn: Mutex::new(conn),
+            autovacuum_enabled: AtomicBool::new(true),
+            last_cleanup: AtomicI64::new(0),
+            autovacuum_interval_ms: AtomicI64::new(DEFAULT_AUTOVACUUM_INTERVAL_MS),
+            notifier: RwLock::new(None),
+            poll_config: RwLock::new(PollConfig::default()),
+            max_disk_bytes: AtomicU64::new(0),
+            last_eviction_check: AtomicI64::new(0),
+            max_memory_bytes: AtomicU64::new(0),
+            last_memory_eviction_check: AtomicI64::new(0),
+            eviction_policy: Mutex::new(EvictionPolicy::NoEviction),
+            access_tracking: RwLock::new(HashMap::new()),
+            persist_access_tracking: AtomicBool::new(persist_access_tracking),
+            access_flush_interval_ms: AtomicI64::new(access_flush_interval_ms),
+            last_access_flush: AtomicI64::new(0),
+            is_memory_db,
+        });
+
+        let db = Self {
+            core,
+            selected_db: 0,
+        };
+
+        db.migrate()?;
+        Ok(db)
+    }
+
+    /// Open an encrypted database using SQLCipher.
+    ///
+    /// Requires the `encryption` feature (build with `--no-default-features --features encryption,geo`).
+    /// The key can be a passphrase or raw key in hex format.
+    ///
+    /// # Example
+    /// ```ignore
+    /// use redlite::Db;
+    ///
+    /// // Using a passphrase
+    /// let db = Db::open_encrypted("secure.db", "my-secret-passphrase").unwrap();
+    ///
+    /// // Using a raw 256-bit key (64 hex chars)
+    /// let db = Db::open_encrypted("secure.db", "x'0102030405...'").unwrap();
+    /// ```
+    #[cfg(feature = "encryption")]
+    pub fn open_encrypted(path: &str, key: &str) -> Result<Self> {
+        init_sqlite_vec();
+
+        let conn = Connection::open(path)?;
+
+        // Set the encryption key (SQLCipher PRAGMA)
+        conn.execute_batch(&format!("PRAGMA key = '{}';", key.replace('\'', "''")))
+            .map_err(|e| KvError::Other(format!("Failed to set encryption key: {}", e)))?;
+
+        // Enable WAL mode and optimize pragmas for performance
+        conn.execute_batch(
+            "PRAGMA journal_mode = WAL;
+             PRAGMA synchronous = NORMAL;
+             PRAGMA foreign_keys = ON;
+             PRAGMA busy_timeout = 5000;
+             PRAGMA cache_size = -64000;
+             PRAGMA mmap_size = 268435456;
+             PRAGMA temp_store = MEMORY;",
+        )?;
+
+        let is_memory_db = path == ":memory:";
+        let persist_access_tracking = is_memory_db;
+        let access_flush_interval_ms = if is_memory_db { 5_000 } else { 300_000 };
 
         let core = Arc::new(DbCore {
             conn: Mutex::new(conn),
@@ -3074,6 +3240,10 @@ impl Db {
                 params![now, key_id],
             )?;
 
+            // Release connection and auto-index for FTS
+            drop(conn);
+            let _ = self.ft_index_document(key, key_id);
+
             return Ok(true);
         }
 
@@ -3126,6 +3296,10 @@ impl Db {
             "UPDATE keys SET updated_at = ?1, version = version + 1 WHERE id = ?2",
             params![now, key_id],
         )?;
+
+        // Release connection and auto-index for FTS
+        drop(conn);
+        let _ = self.ft_index_document(key, key_id);
 
         Ok(true)
     }
@@ -3615,6 +3789,10 @@ impl Db {
             params![now, key_id],
         )?;
 
+        // Release connection and auto-index for FTS
+        drop(conn);
+        let _ = self.ft_index_document(key, key_id);
+
         Ok(true)
     }
 
@@ -3679,6 +3857,10 @@ impl Db {
                 "UPDATE keys SET updated_at = ?1, version = version + 1 WHERE id = ?2",
                 params![now, key_id],
             )?;
+
+            // Release connection and auto-index for FTS
+            drop(conn);
+            let _ = self.ft_index_document(key, key_id);
         }
 
         Ok(cleared)
@@ -3784,6 +3966,10 @@ impl Db {
                 "UPDATE keys SET updated_at = ?1, version = version + 1 WHERE id = ?2",
                 params![now, key_id],
             )?;
+
+            // Release connection and auto-index for FTS
+            drop(conn);
+            let _ = self.ft_index_document(key, key_id);
         }
 
         Ok(toggled)
@@ -3884,6 +4070,10 @@ impl Db {
             "UPDATE keys SET updated_at = ?1, version = version + 1 WHERE id = ?2",
             params![now, key_id],
         )?;
+
+        // Release connection and auto-index for FTS
+        drop(conn);
+        let _ = self.ft_index_document(key, key_id);
 
         Ok(new_value)
     }
@@ -3989,6 +4179,10 @@ impl Db {
             "UPDATE keys SET updated_at = ?1, version = version + 1 WHERE id = ?2",
             params![now, key_id],
         )?;
+
+        // Release connection and auto-index for FTS
+        drop(conn);
+        let _ = self.ft_index_document(key, key_id);
 
         Ok(new_len)
     }
@@ -4141,6 +4335,10 @@ impl Db {
             "UPDATE keys SET updated_at = ?1, version = version + 1 WHERE id = ?2",
             params![now, key_id],
         )?;
+
+        // Release connection and auto-index for FTS
+        drop(conn);
+        let _ = self.ft_index_document(key, key_id);
 
         Ok(new_len)
     }
@@ -4337,6 +4535,10 @@ impl Db {
             params![now, key_id],
         )?;
 
+        // Release connection and auto-index for FTS
+        drop(conn);
+        let _ = self.ft_index_document(key, key_id);
+
         Ok(new_len)
     }
 
@@ -4491,6 +4693,10 @@ impl Db {
                 "UPDATE keys SET updated_at = ?1, version = version + 1 WHERE id = ?2",
                 params![now, key_id],
             )?;
+
+            // Release connection and auto-index for FTS
+            drop(conn);
+            let _ = self.ft_index_document(key, key_id);
         }
 
         Ok(popped)
@@ -4598,6 +4804,10 @@ impl Db {
             "UPDATE keys SET updated_at = ?1, version = version + 1 WHERE id = ?2",
             params![now, key_id],
         )?;
+
+        // Release connection and auto-index for FTS
+        drop(conn);
+        let _ = self.ft_index_document(key, key_id);
 
         Ok(new_len)
     }
@@ -11082,12 +11292,40 @@ impl Db {
         Ok(())
     }
 
-    /// Index a hash document into all matching FTS5 indexes
-    /// Called automatically after HSET updates a hash
+    /// Index a document into all matching FTS5 indexes
+    /// Supports both HASH and JSON document types
+    /// Called automatically after HSET/JSON.SET updates a document
     pub fn ft_index_document(&self, key: &str, key_id: i64) -> Result<()> {
         let conn = self.core.conn.lock().unwrap_or_else(|e| e.into_inner());
 
-        // Find all indexes that match this key's prefix
+        // Get the key type to determine how to extract fields
+        let key_type: Option<i32> = conn
+            .query_row(
+                "SELECT type FROM keys WHERE id = ?1",
+                params![key_id],
+                |row| row.get(0),
+            )
+            .optional()?;
+
+        let key_type = match key_type {
+            Some(t) => t,
+            None => return Ok(()), // Key doesn't exist
+        };
+
+        // Branch based on key type
+        if key_type == KeyType::Hash as i32 {
+            self.ft_index_hash_document(&conn, key, key_id)
+        } else if key_type == KeyType::Json as i32 {
+            self.ft_index_json_document(&conn, key, key_id)
+        } else {
+            // Other types don't support FTS indexing
+            Ok(())
+        }
+    }
+
+    /// Index a HASH document into matching FTS5 indexes
+    fn ft_index_hash_document(&self, conn: &Connection, key: &str, key_id: i64) -> Result<()> {
+        // Find all HASH indexes that match this key's prefix
         let mut stmt = conn.prepare(
             "SELECT id, prefixes, schema FROM ft_indexes WHERE on_type = 'HASH'"
         )?;
@@ -11127,70 +11365,182 @@ impl Db {
 
         // Index into each matching FTS5 table
         for (index_id, _prefixes, schema_values) in matching_indexes {
-            // Parse schema to get TEXT field names
-            let text_fields: Vec<String> = schema_values
-                .iter()
-                .filter_map(|v| {
-                    let name = v.get("name")?.as_str()?;
-                    let type_str = v.get("type")?.as_str()?;
-                    if type_str == "TEXT" {
-                        Some(name.to_string())
-                    } else {
-                        None
-                    }
-                })
-                .collect();
-
-            if text_fields.is_empty() {
-                continue;
-            }
-
-            // Build column values for FTS5 insert
-            let mut values: Vec<String> = Vec::new();
-            for field_name in &text_fields {
-                let value = fields
+            self.ft_index_into_fts5(conn, index_id, key_id, &schema_values, |field_name| {
+                fields
                     .get(field_name)
                     .and_then(|v| std::str::from_utf8(v).ok())
-                    .unwrap_or("");
-                values.push(value.to_string());
-            }
-
-            // Use key_id as rowid for deterministic updates
-            // First try to delete existing entry, then insert
-            let delete_sql = format!("DELETE FROM fts_idx_{} WHERE rowid = ?", index_id);
-            let _ = conn.execute(&delete_sql, params![key_id]);
-
-            let columns: Vec<String> = text_fields.iter().map(|f| format!("\"{}\"", f)).collect();
-            let placeholders: Vec<&str> = text_fields.iter().map(|_| "?").collect();
-            let insert_sql = format!(
-                "INSERT INTO fts_idx_{}(rowid, {}) VALUES (?, {})",
-                index_id,
-                columns.join(", "),
-                placeholders.join(", ")
-            );
-
-            // Build params: rowid, then field values
-            let mut params_vec: Vec<Box<dyn rusqlite::ToSql>> = Vec::new();
-            params_vec.push(Box::new(key_id));
-            for v in &values {
-                params_vec.push(Box::new(v.clone()));
-            }
-
-            let params_refs: Vec<&dyn rusqlite::ToSql> = params_vec.iter().map(|b| b.as_ref()).collect();
-            conn.execute(&insert_sql, params_refs.as_slice())?;
+                    .unwrap_or("")
+                    .to_string()
+            })?;
         }
 
         Ok(())
     }
 
+    /// Index a JSON document into matching FTS5 indexes
+    fn ft_index_json_document(&self, conn: &Connection, key: &str, key_id: i64) -> Result<()> {
+        // Find all JSON indexes that match this key's prefix
+        let mut stmt = conn.prepare(
+            "SELECT id, prefixes, schema FROM ft_indexes WHERE on_type = 'JSON'"
+        )?;
+
+        let matching_indexes: Vec<(i64, Vec<String>, Vec<serde_json::Value>)> = stmt
+            .query_map([], |row| {
+                let id: i64 = row.get(0)?;
+                let prefixes_json: String = row.get(1)?;
+                let schema_json: String = row.get(2)?;
+                Ok((id, prefixes_json, schema_json))
+            })?
+            .filter_map(|r| r.ok())
+            .filter_map(|(id, prefixes_json, schema_json)| {
+                let prefixes: Vec<String> = serde_json::from_str(&prefixes_json).ok()?;
+                let schema: Vec<serde_json::Value> = serde_json::from_str(&schema_json).ok()?;
+                // Check if key matches any prefix
+                if prefixes.iter().any(|p| key.starts_with(p)) {
+                    Some((id, prefixes, schema))
+                } else {
+                    None
+                }
+            })
+            .collect();
+
+        if matching_indexes.is_empty() {
+            return Ok(());
+        }
+
+        // Get the JSON document
+        let doc_bytes: Vec<u8> = match conn
+            .query_row(
+                "SELECT value FROM json_docs WHERE key_id = ?1",
+                params![key_id],
+                |row| row.get(0),
+            )
+            .optional()?
+        {
+            Some(bytes) => bytes,
+            None => return Ok(()), // No document to index
+        };
+
+        let doc: JsonValue = match serde_json::from_slice(&doc_bytes) {
+            Ok(v) => v,
+            Err(_) => return Ok(()), // Invalid JSON, skip indexing
+        };
+
+        // Index into each matching FTS5 table
+        for (index_id, _prefixes, schema_values) in matching_indexes {
+            self.ft_index_into_fts5(conn, index_id, key_id, &schema_values, |field_name| {
+                // Field name is a JSONPath (e.g., "$.name" or "$.address.city")
+                // For JSON indexes, extract value using JSONPath
+                Self::extract_json_field_value(&doc, field_name)
+            })?;
+        }
+
+        Ok(())
+    }
+
+    /// Extract a text value from a JSON document using a JSONPath field name
+    fn extract_json_field_value(doc: &JsonValue, field_name: &str) -> String {
+        // Normalize the path (field_name might be "$.name" or just "name")
+        let normalized = Self::normalize_json_path(field_name);
+
+        // Parse and query the path
+        let json_path = match JsonPath::parse(&normalized) {
+            Ok(p) => p,
+            Err(_) => return String::new(),
+        };
+
+        let results = json_path.query(doc);
+
+        if results.is_empty() {
+            return String::new();
+        }
+
+        // Get the first result and convert to string
+        if let Some(first) = results.iter().next() {
+            match first {
+                JsonValue::String(s) => s.clone(),
+                JsonValue::Number(n) => n.to_string(),
+                JsonValue::Bool(b) => b.to_string(),
+                JsonValue::Null => String::new(),
+                // For arrays/objects, serialize to JSON string
+                other => serde_json::to_string(other).unwrap_or_default(),
+            }
+        } else {
+            String::new()
+        }
+    }
+
+    /// Common helper to index into an FTS5 table
+    fn ft_index_into_fts5<F>(
+        &self,
+        conn: &Connection,
+        index_id: i64,
+        key_id: i64,
+        schema_values: &[serde_json::Value],
+        get_field_value: F,
+    ) -> Result<()>
+    where
+        F: Fn(&str) -> String,
+    {
+        // Parse schema to get TEXT field names
+        let text_fields: Vec<String> = schema_values
+            .iter()
+            .filter_map(|v| {
+                let name = v.get("name")?.as_str()?;
+                let type_str = v.get("type")?.as_str()?;
+                if type_str == "TEXT" {
+                    Some(name.to_string())
+                } else {
+                    None
+                }
+            })
+            .collect();
+
+        if text_fields.is_empty() {
+            return Ok(());
+        }
+
+        // Build column values for FTS5 insert
+        let mut values: Vec<String> = Vec::new();
+        for field_name in &text_fields {
+            values.push(get_field_value(field_name));
+        }
+
+        // Use key_id as rowid for deterministic updates
+        // First try to delete existing entry, then insert
+        let delete_sql = format!("DELETE FROM fts_idx_{} WHERE rowid = ?", index_id);
+        let _ = conn.execute(&delete_sql, params![key_id]);
+
+        let columns: Vec<String> = text_fields.iter().map(|f| format!("\"{}\"", f)).collect();
+        let placeholders: Vec<&str> = text_fields.iter().map(|_| "?").collect();
+        let insert_sql = format!(
+            "INSERT INTO fts_idx_{}(rowid, {}) VALUES (?, {})",
+            index_id,
+            columns.join(", "),
+            placeholders.join(", ")
+        );
+
+        // Build params: rowid, then field values
+        let mut params_vec: Vec<Box<dyn rusqlite::ToSql>> = Vec::new();
+        params_vec.push(Box::new(key_id));
+        for v in &values {
+            params_vec.push(Box::new(v.clone()));
+        }
+
+        let params_refs: Vec<&dyn rusqlite::ToSql> = params_vec.iter().map(|b| b.as_ref()).collect();
+        conn.execute(&insert_sql, params_refs.as_slice())?;
+
+        Ok(())
+    }
+
     /// Remove a document from all matching FTS5 indexes
-    /// Called when a hash key is deleted
+    /// Called when a hash or JSON key is deleted
     pub fn ft_unindex_document(&self, key: &str, key_id: i64) -> Result<()> {
         let conn = self.core.conn.lock().unwrap_or_else(|e| e.into_inner());
 
-        // Find all indexes that match this key's prefix
+        // Find all indexes (HASH or JSON) that match this key's prefix
         let mut stmt = conn.prepare(
-            "SELECT id, prefixes FROM ft_indexes WHERE on_type = 'HASH'"
+            "SELECT id, prefixes FROM ft_indexes WHERE on_type IN ('HASH', 'JSON')"
         )?;
 
         let matching_index_ids: Vec<i64> = stmt
@@ -11709,7 +12059,7 @@ impl Db {
             |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
         )?;
 
-        let _on_type = FtOnType::from_str(&on_type_str).unwrap_or(FtOnType::Hash);
+        let on_type = FtOnType::from_str(&on_type_str).unwrap_or(FtOnType::Hash);
         let prefixes: Vec<String> = serde_json::from_str(&prefixes_json).unwrap_or_default();
         let schema_values: Vec<serde_json::Value> =
             serde_json::from_str(&schema_json).unwrap_or_default();
@@ -11789,18 +12139,24 @@ impl Db {
         };
 
         // Find matching keys with the index prefixes
-        // For now, scan all hashes matching the prefixes
+        // Scan keys matching the prefixes with the appropriate type (HASH or JSON)
         let mut all_matching_keys: Vec<(i64, String)> = Vec::new();
         let db = self.selected_db;
         let now = Self::now_ms();
 
+        // Determine the key type to search for based on the index type
+        let key_type_code = match on_type {
+            FtOnType::Hash => KeyType::Hash as i32,
+            FtOnType::Json => KeyType::Json as i32,
+        };
+
         for prefix in &prefixes {
             let like_pattern = format!("{}%", prefix.replace('%', "\\%").replace('_', "\\_"));
             let mut stmt = conn.prepare(
-                "SELECT id, key FROM keys WHERE db = ? AND key LIKE ? ESCAPE '\\' AND type = 2
+                "SELECT id, key FROM keys WHERE db = ? AND key LIKE ? ESCAPE '\\' AND type = ?
                  AND (expire_at IS NULL OR expire_at > ?)",
             )?;
-            let rows = stmt.query_map(params![db, like_pattern, now], |row| {
+            let rows = stmt.query_map(params![db, like_pattern, key_type_code, now], |row| {
                 Ok((row.get::<_, i64>(0)?, row.get::<_, String>(1)?))
             })?;
             for row in rows {
@@ -11819,18 +12175,51 @@ impl Db {
         let mut results: Vec<FtSearchResult> = Vec::new();
 
         for (key_id, key_name) in &all_matching_keys {
-            // Get all fields for this hash
-            let mut stmt = conn.prepare("SELECT field, value FROM hashes WHERE key_id = ?")?;
-            let field_rows = stmt.query_map(params![key_id], |row| {
-                Ok((row.get::<_, String>(0)?, row.get::<_, Vec<u8>>(1)?))
-            })?;
+            // Get all fields for this document (hash or JSON)
+            let fields: HashMap<String, Vec<u8>> = match on_type {
+                FtOnType::Hash => {
+                    let mut stmt = conn.prepare("SELECT field, value FROM hashes WHERE key_id = ?")?;
+                    let field_rows = stmt.query_map(params![key_id], |row| {
+                        Ok((row.get::<_, String>(0)?, row.get::<_, Vec<u8>>(1)?))
+                    })?;
 
-            let mut fields: HashMap<String, Vec<u8>> = HashMap::new();
-            for row in field_rows {
-                if let Ok((field, value)) = row {
-                    fields.insert(field, value);
+                    let mut fields_map: HashMap<String, Vec<u8>> = HashMap::new();
+                    for row in field_rows {
+                        if let Ok((field, value)) = row {
+                            fields_map.insert(field, value);
+                        }
+                    }
+                    fields_map
                 }
-            }
+                FtOnType::Json => {
+                    // For JSON documents, read the document and extract field values using JSONPath
+                    let doc_bytes: Option<Vec<u8>> = conn
+                        .query_row(
+                            "SELECT value FROM json_docs WHERE key_id = ?",
+                            params![key_id],
+                            |row| row.get(0),
+                        )
+                        .optional()?;
+
+                    if let Some(doc_bytes) = doc_bytes {
+                        if let Ok(doc) = serde_json::from_slice::<JsonValue>(&doc_bytes) {
+                            // Extract all schema fields from JSON using JSONPath
+                            let mut fields_map: HashMap<String, Vec<u8>> = HashMap::new();
+                            for field in &schema {
+                                let value = Self::extract_json_field_value(&doc, &field.name);
+                                if !value.is_empty() {
+                                    fields_map.insert(field.name.clone(), value.into_bytes());
+                                }
+                            }
+                            fields_map
+                        } else {
+                            HashMap::new()
+                        }
+                    } else {
+                        HashMap::new()
+                    }
+                }
+            };
 
             // Check numeric filters
             let mut passes_numeric = true;
@@ -18339,6 +18728,215 @@ mod tests {
 
         let info = db.ft_info("jsonidx").unwrap().unwrap();
         assert_eq!(info.on_type, FtOnType::Json);
+    }
+
+    #[test]
+    fn test_ft_json_indexing_debug() {
+        use crate::types::{FtField, FtOnType};
+
+        let db = Db::open_memory().unwrap();
+
+        // Create JSON index
+        let schema = vec![FtField::text("$.title")];
+        db.ft_create("test_idx", FtOnType::Json, &["item:"], &schema)
+            .unwrap();
+
+        // Get index ID
+        let conn = db.core.conn.lock().unwrap();
+        let index_id: i64 = conn
+            .query_row(
+                "SELECT id FROM ft_indexes WHERE name = 'test_idx'",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+
+        // Check FTS5 table exists
+        let table_exists: i64 = conn
+            .query_row(
+                &format!(
+                    "SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name='fts_idx_{}'",
+                    index_id
+                ),
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(table_exists, 1, "FTS5 table should exist");
+        drop(conn);
+
+        // Create JSON document (this should trigger indexing)
+        let result = db.json_set(
+            "item:1",
+            "$",
+            r#"{"title": "Test Document"}"#,
+            false,
+            false,
+        );
+        assert!(result.is_ok(), "json_set should succeed");
+
+        // Check key was created
+        let conn = db.core.conn.lock().unwrap();
+        let key_id: i64 = conn
+            .query_row(
+                "SELECT id FROM keys WHERE key = 'item:1'",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+
+        // Check FTS5 table has data
+        let fts_count: i64 = conn
+            .query_row(
+                &format!("SELECT COUNT(*) FROM fts_idx_{}", index_id),
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(fts_count, 1, "FTS5 table should have 1 row, key_id={}", key_id);
+    }
+
+    #[test]
+    fn test_ft_search_json_documents() {
+        use crate::types::{FtField, FtOnType, FtSearchOptions};
+
+        let db = Db::open_memory().unwrap();
+
+        // Create JSON index with JSONPath fields
+        let schema = vec![
+            FtField::text("$.title"),
+            FtField::text("$.description"),
+            FtField::numeric("$.price"),
+        ];
+        db.ft_create("products", FtOnType::Json, &["product:"], &schema)
+            .unwrap();
+
+        // Create JSON documents
+        db.json_set(
+            "product:1",
+            "$",
+            r#"{"title": "Redis Handbook", "description": "Learn caching and data structures", "price": 29.99}"#,
+            false,
+            false,
+        )
+        .unwrap();
+
+        db.json_set(
+            "product:2",
+            "$",
+            r#"{"title": "SQLite Guide", "description": "Master embedded databases", "price": 19.99}"#,
+            false,
+            false,
+        )
+        .unwrap();
+
+        db.json_set(
+            "product:3",
+            "$",
+            r#"{"title": "Python Cookbook", "description": "Practical programming recipes", "price": 39.99}"#,
+            false,
+            false,
+        )
+        .unwrap();
+
+        // Search for documents containing "database"
+        let opts = FtSearchOptions::new();
+        let (total, results) = db.ft_search("products", "databases", &opts).unwrap();
+        assert_eq!(total, 1);
+        assert_eq!(results[0].key, "product:2");
+
+        // Search for documents containing "redis" or "sqlite"
+        let (total, _results) = db.ft_search("products", "Redis | SQLite", &opts).unwrap();
+        assert_eq!(total, 2);
+
+        // Search with phrase
+        let (total, results) = db.ft_search("products", "\"data structures\"", &opts).unwrap();
+        assert_eq!(total, 1);
+        assert_eq!(results[0].key, "product:1");
+    }
+
+    #[test]
+    fn test_ft_search_json_auto_reindex_on_update() {
+        use crate::types::{FtField, FtOnType, FtSearchOptions};
+
+        let db = Db::open_memory().unwrap();
+
+        // Create JSON index
+        let schema = vec![FtField::text("$.name"), FtField::text("$.bio")];
+        db.ft_create("users", FtOnType::Json, &["user:"], &schema)
+            .unwrap();
+
+        // Create initial document
+        db.json_set(
+            "user:1",
+            "$",
+            r#"{"name": "Alice Smith", "bio": "Software engineer"}"#,
+            false,
+            false,
+        )
+        .unwrap();
+
+        // Search for Alice
+        let opts = FtSearchOptions::new();
+        let (total, _results) = db.ft_search("users", "Alice", &opts).unwrap();
+        assert_eq!(total, 1);
+
+        // Update the document using JSON.SET
+        db.json_set(
+            "user:1",
+            "$.name",
+            "\"Bob Jones\"",
+            false,
+            false,
+        )
+        .unwrap();
+
+        // Search for Alice should now return 0
+        let (total, _results) = db.ft_search("users", "Alice", &opts).unwrap();
+        assert_eq!(total, 0);
+
+        // Search for Bob should now return 1
+        let (total, _results) = db.ft_search("users", "Bob", &opts).unwrap();
+        assert_eq!(total, 1);
+    }
+
+    #[test]
+    fn test_ft_search_json_merge_reindex() {
+        use crate::types::{FtField, FtOnType, FtSearchOptions};
+
+        let db = Db::open_memory().unwrap();
+
+        // Create JSON index
+        let schema = vec![FtField::text("$.title")];
+        db.ft_create("articles", FtOnType::Json, &["article:"], &schema)
+            .unwrap();
+
+        // Create initial document
+        db.json_set(
+            "article:1",
+            "$",
+            r#"{"title": "Introduction to Rust"}"#,
+            false,
+            false,
+        )
+        .unwrap();
+
+        // Search for Rust
+        let opts = FtSearchOptions::new();
+        let (total, _results) = db.ft_search("articles", "Rust", &opts).unwrap();
+        assert_eq!(total, 1);
+
+        // Merge to update title
+        db.json_merge("article:1", "$", r#"{"title": "Advanced Python Programming"}"#)
+            .unwrap();
+
+        // Search for Rust should return 0
+        let (total, _results) = db.ft_search("articles", "Rust", &opts).unwrap();
+        assert_eq!(total, 0);
+
+        // Search for Python should return 1
+        let (total, _results) = db.ft_search("articles", "Python", &opts).unwrap();
+        assert_eq!(total, 1);
     }
 
     #[test]
@@ -26645,4 +27243,86 @@ mod tests {
         assert!(len.is_none());
     }
 
+    // Encryption tests (only run when encryption feature is enabled)
+    #[cfg(feature = "encryption")]
+    mod encryption_tests {
+        use super::*;
+        use tempfile::NamedTempFile;
+
+        #[test]
+        fn test_encrypted_db_basic_operations() {
+            let tmp = NamedTempFile::new().unwrap();
+            let path = tmp.path().to_str().unwrap();
+
+            // Create encrypted database
+            let db = Db::open_encrypted(path, "test-password-123").unwrap();
+
+            // Basic operations should work
+            db.set("key1", b"value1", None).unwrap();
+            db.set("key2", b"value2", None).unwrap();
+
+            assert_eq!(db.get("key1").unwrap(), Some(b"value1".to_vec()));
+            assert_eq!(db.get("key2").unwrap(), Some(b"value2".to_vec()));
+
+            drop(db);
+
+            // Reopen with same password should work
+            let db2 = Db::open_encrypted(path, "test-password-123").unwrap();
+            assert_eq!(db2.get("key1").unwrap(), Some(b"value1".to_vec()));
+        }
+
+        #[test]
+        fn test_encrypted_db_wrong_password() {
+            let tmp = NamedTempFile::new().unwrap();
+            let path = tmp.path().to_str().unwrap();
+
+            // Create encrypted database
+            let db = Db::open_encrypted(path, "correct-password").unwrap();
+            db.set("secret", b"data", None).unwrap();
+            drop(db);
+
+            // Try to open with wrong password - should fail during open
+            // because the first PRAGMA after key setting tries to read encrypted data
+            let result = Db::open_encrypted(path, "wrong-password");
+            assert!(result.is_err(), "Opening with wrong password should fail");
+        }
+
+        #[test]
+        fn test_encrypted_db_data_types() {
+            let tmp = NamedTempFile::new().unwrap();
+            let path = tmp.path().to_str().unwrap();
+
+            let db = Db::open_encrypted(path, "secure-key").unwrap();
+
+            // Test strings
+            db.set("str", b"hello", None).unwrap();
+
+            // Test hashes
+            db.hset("hash", &[("field1", b"value1" as &[u8]), ("field2", b"value2" as &[u8])]).unwrap();
+
+            // Test lists
+            db.rpush("list", &[b"a" as &[u8], b"b" as &[u8], b"c" as &[u8]]).unwrap();
+
+            // Verify data
+            assert_eq!(db.get("str").unwrap(), Some(b"hello".to_vec()));
+            assert_eq!(db.hget("hash", "field1").unwrap(), Some(b"value1".to_vec()));
+            assert_eq!(db.llen("list").unwrap(), 3);
+        }
+    }
+
+    // Compression tests (API verification - actual compression requires extension file)
+    #[cfg(feature = "compression")]
+    mod compression_tests {
+        use super::*;
+
+        #[test]
+        fn test_compression_api_exists() {
+            // Verify the API exists and compiles
+            // We can't test actual compression without the extension file
+            fn _assert_api_exists() {
+                // This function just verifies the signature exists
+                let _: fn(&str, &str) -> Result<Db> = Db::open_with_compression;
+            }
+        }
+    }
 }
