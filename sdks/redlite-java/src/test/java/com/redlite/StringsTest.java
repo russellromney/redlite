@@ -20,7 +20,7 @@ class StringsTest {
 
     @BeforeEach
     void setUp() {
-        client = Redlite.open(":memory:");
+        client = new Redlite(":memory:");
     }
 
     @AfterEach
@@ -130,8 +130,8 @@ class StringsTest {
     void testIncrByDecrBy() {
         client.set("counter", "100".getBytes(StandardCharsets.UTF_8));
 
-        assertEquals(110, client.incrBy("counter", 10));
-        assertEquals(85, client.decrBy("counter", 25));
+        assertEquals(110, client.incrby("counter", 10));
+        assertEquals(85, client.decrby("counter", 25));
     }
 
     @Test
@@ -139,7 +139,7 @@ class StringsTest {
     void testIncrByFloat() {
         client.set("floatkey", "10.5".getBytes(StandardCharsets.UTF_8));
 
-        double result = client.incrByFloat("floatkey", 2.5);
+        double result = client.incrbyfloat("floatkey", 2.5);
         assertEquals(13.0, result, 0.001);
     }
 
@@ -176,9 +176,9 @@ class StringsTest {
     void testGetRange() {
         client.set("rangekey", "Hello World".getBytes(StandardCharsets.UTF_8));
 
-        assertEquals("Hello", new String(client.getRange("rangekey", 0, 4), StandardCharsets.UTF_8));
-        assertEquals("World", new String(client.getRange("rangekey", 6, 10), StandardCharsets.UTF_8));
-        assertEquals("World", new String(client.getRange("rangekey", -5, -1), StandardCharsets.UTF_8));
+        assertEquals("Hello", new String(client.getrange("rangekey", 0, 4), StandardCharsets.UTF_8));
+        assertEquals("World", new String(client.getrange("rangekey", 6, 10), StandardCharsets.UTF_8));
+        assertEquals("World", new String(client.getrange("rangekey", -5, -1), StandardCharsets.UTF_8));
     }
 
     @Test
@@ -186,34 +186,34 @@ class StringsTest {
     void testSetRange() {
         client.set("setrangekey", "Hello World".getBytes(StandardCharsets.UTF_8));
 
-        long newLen = client.setRange("setrangekey", 6, "Redis".getBytes(StandardCharsets.UTF_8));
+        long newLen = client.setrange("setrangekey", 6, "Redis".getBytes(StandardCharsets.UTF_8));
         assertEquals(11, newLen);
         assertEquals("Hello Redis", new String(client.get("setrangekey"), StandardCharsets.UTF_8));
     }
 
     @Test
-    @DisplayName("SETNX sets only if not exists")
+    @DisplayName("SETNX sets only if not exists - using SetOptions NX")
     void testSetNxCommand() {
-        assertTrue(client.setNx("setnxkey", "first".getBytes(StandardCharsets.UTF_8)));
-        assertFalse(client.setNx("setnxkey", "second".getBytes(StandardCharsets.UTF_8)));
+        SetOptions opts = new SetOptions.Builder().nx().build();
+        assertTrue(client.set("setnxkey", "first".getBytes(StandardCharsets.UTF_8), opts));
+        assertFalse(client.set("setnxkey", "second".getBytes(StandardCharsets.UTF_8), opts));
         assertEquals("first", new String(client.get("setnxkey"), StandardCharsets.UTF_8));
     }
 
     @Test
-    @DisplayName("GETSET returns old value and sets new")
-    void testGetSet() {
-        client.set("getsetkey", "old".getBytes(StandardCharsets.UTF_8));
+    @DisplayName("GETDEL returns value and deletes key")
+    void testGetDel() {
+        client.set("getdelkey", "value".getBytes(StandardCharsets.UTF_8));
 
-        byte[] oldValue = client.getSet("getsetkey", "new".getBytes(StandardCharsets.UTF_8));
-        assertEquals("old", new String(oldValue, StandardCharsets.UTF_8));
-        assertEquals("new", new String(client.get("getsetkey"), StandardCharsets.UTF_8));
+        byte[] value = client.getdel("getdelkey");
+        assertEquals("value", new String(value, StandardCharsets.UTF_8));
+        assertNull(client.get("getdelkey"));
     }
 
     @Test
-    @DisplayName("GETSET on non-existent key returns null")
-    void testGetSetNonExistent() {
-        byte[] oldValue = client.getSet("newgetset", "value".getBytes(StandardCharsets.UTF_8));
-        assertNull(oldValue);
-        assertEquals("value", new String(client.get("newgetset"), StandardCharsets.UTF_8));
+    @DisplayName("GETDEL on non-existent key returns null")
+    void testGetDelNonExistent() {
+        byte[] value = client.getdel("nonexistent");
+        assertNull(value);
     }
 }

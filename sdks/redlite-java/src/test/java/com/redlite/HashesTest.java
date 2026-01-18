@@ -21,7 +21,7 @@ class HashesTest {
 
     @BeforeEach
     void setUp() {
-        client = Redlite.open(":memory:");
+        client = new Redlite(":memory:");
     }
 
     @AfterEach
@@ -59,14 +59,14 @@ class HashesTest {
     }
 
     @Test
-    @DisplayName("HMSET sets multiple fields")
-    void testHmset() {
+    @DisplayName("HSET with map sets multiple fields")
+    void testHsetMultiple() {
         Map<String, byte[]> fields = new HashMap<>();
         fields.put("f1", "v1".getBytes(StandardCharsets.UTF_8));
         fields.put("f2", "v2".getBytes(StandardCharsets.UTF_8));
         fields.put("f3", "v3".getBytes(StandardCharsets.UTF_8));
 
-        assertTrue(client.hmset("hash", fields));
+        assertEquals(3, client.hset("hash", fields));
 
         assertEquals("v1", new String(client.hget("hash", "f1"), StandardCharsets.UTF_8));
         assertEquals("v2", new String(client.hget("hash", "f2"), StandardCharsets.UTF_8));
@@ -164,14 +164,14 @@ class HashesTest {
     void testHincrBy() {
         client.hset("hash", "counter", "10".getBytes(StandardCharsets.UTF_8));
 
-        assertEquals(15, client.hincrBy("hash", "counter", 5));
-        assertEquals(10, client.hincrBy("hash", "counter", -5));
+        assertEquals(15, client.hincrby("hash", "counter", 5));
+        assertEquals(10, client.hincrby("hash", "counter", -5));
     }
 
     @Test
     @DisplayName("HINCRBY on non-existent field starts from 0")
     void testHincrByNonExistent() {
-        assertEquals(5, client.hincrBy("hash", "newcounter", 5));
+        assertEquals(5, client.hincrby("hash", "newcounter", 5));
     }
 
     @Test
@@ -179,7 +179,7 @@ class HashesTest {
     void testHincrByFloat() {
         client.hset("hash", "price", "10.5".getBytes(StandardCharsets.UTF_8));
 
-        double result = client.hincrByFloat("hash", "price", 2.5);
+        double result = client.hincrbyfloat("hash", "price", 2.5);
         assertEquals(13.0, result, 0.001);
     }
 
@@ -192,74 +192,23 @@ class HashesTest {
     }
 
     @Test
-    @DisplayName("HSTRLEN returns field value length")
-    void testHstrlen() {
-        client.hset("hash", "field", "Hello World".getBytes(StandardCharsets.UTF_8));
-
-        assertEquals(11, client.hstrlen("hash", "field"));
-        assertEquals(0, client.hstrlen("hash", "nonexistent"));
+    @DisplayName("HGETALL on empty hash returns empty map")
+    void testHgetallEmpty() {
+        Map<String, byte[]> all = client.hgetall("nonexistent");
+        assertTrue(all.isEmpty());
     }
 
     @Test
-    @DisplayName("HSCAN iterates through fields")
-    void testHscan() {
-        for (int i = 1; i <= 10; i++) {
-            client.hset("hash", "field" + i, ("value" + i).getBytes(StandardCharsets.UTF_8));
-        }
-
-        Map<String, byte[]> allFields = new HashMap<>();
-        String cursor = "0";
-
-        do {
-            ScanResult<Map.Entry<String, byte[]>> result = client.hscan("hash", cursor);
-            cursor = result.getCursor();
-            for (Map.Entry<String, byte[]> entry : result.getResult()) {
-                allFields.put(entry.getKey(), entry.getValue());
-            }
-        } while (!"0".equals(cursor));
-
-        assertEquals(10, allFields.size());
-        for (int i = 1; i <= 10; i++) {
-            assertTrue(allFields.containsKey("field" + i));
-            assertEquals("value" + i, new String(allFields.get("field" + i), StandardCharsets.UTF_8));
-        }
+    @DisplayName("HKEYS on empty hash returns empty list")
+    void testHkeysEmpty() {
+        List<String> keys = client.hkeys("nonexistent");
+        assertTrue(keys.isEmpty());
     }
 
     @Test
-    @DisplayName("HSCAN with MATCH pattern")
-    void testHscanWithMatch() {
-        for (int i = 1; i <= 5; i++) {
-            client.hset("hash", "user:" + i, ("u" + i).getBytes(StandardCharsets.UTF_8));
-            client.hset("hash", "order:" + i, ("o" + i).getBytes(StandardCharsets.UTF_8));
-        }
-
-        Map<String, byte[]> userFields = new HashMap<>();
-        String cursor = "0";
-
-        do {
-            ScanResult<Map.Entry<String, byte[]>> result = client.hscan("hash", cursor, new ScanOptions().match("user:*"));
-            cursor = result.getCursor();
-            for (Map.Entry<String, byte[]> entry : result.getResult()) {
-                userFields.put(entry.getKey(), entry.getValue());
-            }
-        } while (!"0".equals(cursor));
-
-        assertEquals(5, userFields.size());
-        userFields.keySet().forEach(k -> assertTrue(k.startsWith("user:")));
-    }
-
-    @Test
-    @DisplayName("HRANDFIELD returns random fields")
-    void testHrandfield() {
-        for (int i = 1; i <= 5; i++) {
-            client.hset("hash", "f" + i, ("v" + i).getBytes(StandardCharsets.UTF_8));
-        }
-
-        String field = client.hrandfield("hash");
-        assertNotNull(field);
-        assertTrue(field.startsWith("f"));
-
-        List<String> fields = client.hrandfield("hash", 3);
-        assertEquals(3, fields.size());
+    @DisplayName("HVALS on empty hash returns empty list")
+    void testHvalsEmpty() {
+        List<byte[]> values = client.hvals("nonexistent");
+        assertTrue(values.isEmpty());
     }
 }

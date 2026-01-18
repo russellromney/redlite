@@ -372,9 +372,21 @@ pub const Database = struct {
     }
 
     /// MGET key [key ...]
+    /// Returns an array of values (or null for missing keys).
     pub fn mget(self: Self, key_list: []const [:0]const u8) OwnedBytesArray {
-        const ptrs = @as([*]const [*c]const u8, @ptrCast(key_list.ptr));
-        const result = c.mget(self.handle, ptrs, key_list.len);
+        // Convert slice of sentinel-terminated slices to array of C pointers
+        var arena = std.heap.ArenaAllocator.init(std.heap.page_allocator);
+        defer arena.deinit();
+        const alloc = arena.allocator();
+
+        const ptrs = alloc.alloc([*c]const u8, key_list.len) catch {
+            return OwnedBytesArray{ .arr = .{ .data = null, .len = 0 } };
+        };
+        for (key_list, 0..) |key, i| {
+            ptrs[i] = key.ptr;
+        }
+
+        const result = c.mget(self.handle, ptrs.ptr, key_list.len);
         return OwnedBytesArray{ .arr = result };
     }
 
@@ -405,15 +417,33 @@ pub const Database = struct {
     /// DEL key [key ...]
     /// Returns the number of keys deleted.
     pub fn del(self: Self, key_list: []const [:0]const u8) i64 {
-        const ptrs = @as([*]const [*c]const u8, @ptrCast(key_list.ptr));
-        return c.del(self.handle, ptrs, key_list.len);
+        // Convert slice of sentinel-terminated slices to array of C pointers
+        var arena = std.heap.ArenaAllocator.init(std.heap.page_allocator);
+        defer arena.deinit();
+        const alloc = arena.allocator();
+
+        const ptrs = alloc.alloc([*c]const u8, key_list.len) catch return 0;
+        for (key_list, 0..) |key, i| {
+            ptrs[i] = key.ptr;
+        }
+
+        return c.del(self.handle, ptrs.ptr, key_list.len);
     }
 
     /// EXISTS key [key ...]
     /// Returns the number of keys that exist.
     pub fn exists(self: Self, key_list: []const [:0]const u8) i64 {
-        const ptrs = @as([*]const [*c]const u8, @ptrCast(key_list.ptr));
-        return c.exists(self.handle, ptrs, key_list.len);
+        // Convert slice of sentinel-terminated slices to array of C pointers
+        var arena = std.heap.ArenaAllocator.init(std.heap.page_allocator);
+        defer arena.deinit();
+        const alloc = arena.allocator();
+
+        const ptrs = alloc.alloc([*c]const u8, key_list.len) catch return 0;
+        for (key_list, 0..) |key, i| {
+            ptrs[i] = key.ptr;
+        }
+
+        return c.exists(self.handle, ptrs.ptr, key_list.len);
     }
 
     /// TYPE key

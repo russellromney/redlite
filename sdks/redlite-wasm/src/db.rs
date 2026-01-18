@@ -233,7 +233,7 @@ impl Drop for DbCore {
     fn drop(&mut self) {
         if !self.db.is_null() {
             unsafe {
-                ffi::sqlite3_close_v2(self.db);
+                ffi::sqlite3_close(self.db);
             }
         }
     }

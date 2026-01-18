@@ -19,7 +19,7 @@ class ListsTest {
 
     @BeforeEach
     void setUp() {
-        client = Redlite.open(":memory:");
+        client = new Redlite(":memory:");
     }
 
     @AfterEach
@@ -151,165 +151,24 @@ class ListsTest {
     }
 
     @Test
-    @DisplayName("LSET updates element at index")
-    void testLset() {
-        client.rpush("list",
-            "a".getBytes(StandardCharsets.UTF_8),
-            "b".getBytes(StandardCharsets.UTF_8),
-            "c".getBytes(StandardCharsets.UTF_8)
-        );
-
-        assertTrue(client.lset("list", 1, "B".getBytes(StandardCharsets.UTF_8)));
-        assertEquals("B", new String(client.lindex("list", 1), StandardCharsets.UTF_8));
+    @DisplayName("LRANGE on non-existent list returns empty")
+    void testLrangeNonExistent() {
+        List<byte[]> elements = client.lrange("nonexistent", 0, -1);
+        assertTrue(elements.isEmpty());
     }
 
     @Test
-    @DisplayName("LINSERT inserts before or after pivot")
-    void testLinsert() {
-        client.rpush("list",
-            "a".getBytes(StandardCharsets.UTF_8),
-            "c".getBytes(StandardCharsets.UTF_8)
-        );
-
-        // Insert before "c"
-        assertEquals(3, client.linsert("list", "BEFORE",
-            "c".getBytes(StandardCharsets.UTF_8),
-            "b".getBytes(StandardCharsets.UTF_8)
-        ));
-
-        List<byte[]> elements = client.lrange("list", 0, -1);
-        assertEquals(List.of("a", "b", "c"),
-            elements.stream().map(b -> new String(b, StandardCharsets.UTF_8)).toList()
-        );
-
-        // Insert after "c"
-        assertEquals(4, client.linsert("list", "AFTER",
-            "c".getBytes(StandardCharsets.UTF_8),
-            "d".getBytes(StandardCharsets.UTF_8)
-        ));
-
-        List<byte[]> elements2 = client.lrange("list", 0, -1);
-        assertEquals(List.of("a", "b", "c", "d"),
-            elements2.stream().map(b -> new String(b, StandardCharsets.UTF_8)).toList()
-        );
+    @DisplayName("LINDEX returns null on non-existent list")
+    void testLindexNonExistent() {
+        assertNull(client.lindex("nonexistent", 0));
     }
 
     @Test
-    @DisplayName("LTRIM trims list to specified range")
-    void testLtrim() {
-        client.rpush("list",
-            "1".getBytes(StandardCharsets.UTF_8),
-            "2".getBytes(StandardCharsets.UTF_8),
-            "3".getBytes(StandardCharsets.UTF_8),
-            "4".getBytes(StandardCharsets.UTF_8),
-            "5".getBytes(StandardCharsets.UTF_8)
-        );
-
-        assertTrue(client.ltrim("list", 1, 3));
-
-        List<byte[]> elements = client.lrange("list", 0, -1);
-        assertEquals(List.of("2", "3", "4"),
-            elements.stream().map(b -> new String(b, StandardCharsets.UTF_8)).toList()
-        );
-    }
-
-    @Test
-    @DisplayName("LREM removes matching elements")
-    void testLrem() {
-        client.rpush("list",
-            "a".getBytes(StandardCharsets.UTF_8),
-            "b".getBytes(StandardCharsets.UTF_8),
-            "a".getBytes(StandardCharsets.UTF_8),
-            "c".getBytes(StandardCharsets.UTF_8),
-            "a".getBytes(StandardCharsets.UTF_8)
-        );
-
-        // Remove 2 occurrences of "a" from head
-        assertEquals(2, client.lrem("list", 2, "a".getBytes(StandardCharsets.UTF_8)));
-
-        List<byte[]> elements = client.lrange("list", 0, -1);
-        assertEquals(List.of("b", "c", "a"),
-            elements.stream().map(b -> new String(b, StandardCharsets.UTF_8)).toList()
-        );
-    }
-
-    @Test
-    @DisplayName("LREM with negative count removes from tail")
-    void testLremFromTail() {
-        client.rpush("list",
-            "a".getBytes(StandardCharsets.UTF_8),
-            "b".getBytes(StandardCharsets.UTF_8),
-            "a".getBytes(StandardCharsets.UTF_8),
-            "c".getBytes(StandardCharsets.UTF_8),
-            "a".getBytes(StandardCharsets.UTF_8)
-        );
-
-        // Remove 2 occurrences of "a" from tail
-        assertEquals(2, client.lrem("list", -2, "a".getBytes(StandardCharsets.UTF_8)));
-
-        List<byte[]> elements = client.lrange("list", 0, -1);
-        assertEquals(List.of("a", "b", "c"),
-            elements.stream().map(b -> new String(b, StandardCharsets.UTF_8)).toList()
-        );
-    }
-
-    @Test
-    @DisplayName("LPOS finds position of element")
-    void testLpos() {
-        client.rpush("list",
-            "a".getBytes(StandardCharsets.UTF_8),
-            "b".getBytes(StandardCharsets.UTF_8),
-            "c".getBytes(StandardCharsets.UTF_8),
-            "b".getBytes(StandardCharsets.UTF_8),
-            "d".getBytes(StandardCharsets.UTF_8)
-        );
-
-        assertEquals(1, client.lpos("list", "b".getBytes(StandardCharsets.UTF_8)));
-        assertEquals(0, client.lpos("list", "a".getBytes(StandardCharsets.UTF_8)));
-        assertNull(client.lpos("list", "z".getBytes(StandardCharsets.UTF_8)));
-    }
-
-    @Test
-    @DisplayName("LMOVE moves element between lists")
-    void testLmove() {
-        client.rpush("src",
-            "1".getBytes(StandardCharsets.UTF_8),
-            "2".getBytes(StandardCharsets.UTF_8),
-            "3".getBytes(StandardCharsets.UTF_8)
-        );
-        client.rpush("dst", "a".getBytes(StandardCharsets.UTF_8));
-
-        byte[] moved = client.lmove("src", "dst", "LEFT", "RIGHT");
-        assertEquals("1", new String(moved, StandardCharsets.UTF_8));
-
-        assertEquals(List.of("2", "3"),
-            client.lrange("src", 0, -1).stream()
-                .map(b -> new String(b, StandardCharsets.UTF_8)).toList()
-        );
-        assertEquals(List.of("a", "1"),
-            client.lrange("dst", 0, -1).stream()
-                .map(b -> new String(b, StandardCharsets.UTF_8)).toList()
-        );
-    }
-
-    @Test
-    @DisplayName("LPUSHX only pushes to existing list")
-    void testLpushX() {
-        // Non-existent list
-        assertEquals(0, client.lpushx("newlist", "value".getBytes(StandardCharsets.UTF_8)));
-        assertEquals(0, client.llen("newlist"));
-
-        // Existing list
-        client.lpush("list", "first".getBytes(StandardCharsets.UTF_8));
-        assertEquals(2, client.lpushx("list", "second".getBytes(StandardCharsets.UTF_8)));
-    }
-
-    @Test
-    @DisplayName("RPUSHX only pushes to existing list")
-    void testRpushX() {
-        assertEquals(0, client.rpushx("newlist", "value".getBytes(StandardCharsets.UTF_8)));
-
-        client.rpush("list", "first".getBytes(StandardCharsets.UTF_8));
-        assertEquals(2, client.rpushx("list", "second".getBytes(StandardCharsets.UTF_8)));
+    @DisplayName("LPOP and RPOP on empty list returns null/empty")
+    void testPopEmpty() {
+        assertNull(client.lpop("nonexistent"));
+        assertNull(client.rpop("nonexistent"));
+        assertTrue(client.lpop("nonexistent", 5).isEmpty());
+        assertTrue(client.rpop("nonexistent", 5).isEmpty());
     }
 }

@@ -1,5 +1,4 @@
 use thiserror::Error;
-use wasm_bindgen::JsError;
 
 #[derive(Error, Debug)]
 pub enum WasmError {
@@ -58,10 +57,7 @@ impl From<sqlite_wasm_rs::Error> for WasmError {
     }
 }
 
-impl From<WasmError> for JsError {
-    fn from(e: WasmError) -> Self {
-        JsError::new(&e.to_string())
-    }
-}
+// Note: wasm-bindgen already provides a blanket impl `From<E> for JsError where E: StdError`
+// so we don't need to implement it manually since WasmError derives thiserror::Error
 
 pub type Result<T> = std::result::Result<T, WasmError>;

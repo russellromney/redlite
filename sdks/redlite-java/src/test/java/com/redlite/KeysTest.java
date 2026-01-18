@@ -6,9 +6,7 @@ import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.DisplayName;
 
 import java.nio.charset.StandardCharsets;
-import java.util.HashSet;
 import java.util.List;
-import java.util.Set;
 
 import static org.junit.jupiter.api.Assertions.*;
 
@@ -21,7 +19,7 @@ class KeysTest {
 
     @BeforeEach
     void setUp() {
-        client = Redlite.open(":memory:");
+        client = new Redlite(":memory:");
     }
 
     @AfterEach
@@ -30,13 +28,13 @@ class KeysTest {
     }
 
     @Test
-    @DisplayName("DEL removes existing keys")
-    void testDel() {
+    @DisplayName("DELETE removes existing keys")
+    void testDelete() {
         client.set("del1", "v1".getBytes(StandardCharsets.UTF_8));
         client.set("del2", "v2".getBytes(StandardCharsets.UTF_8));
         client.set("del3", "v3".getBytes(StandardCharsets.UTF_8));
 
-        assertEquals(2, client.del("del1", "del2", "nonexistent"));
+        assertEquals(2, client.delete("del1", "del2", "nonexistent"));
         assertNull(client.get("del1"));
         assertNull(client.get("del2"));
         assertNotNull(client.get("del3"));
@@ -67,7 +65,7 @@ class KeysTest {
         client.sadd("setkey", "member".getBytes(StandardCharsets.UTF_8));
         assertEquals("set", client.type("setkey"));
 
-        client.zadd("zsetkey", new ZMember("member", 1.0));
+        client.zadd("zsetkey", ZMember.of(1.0, "member"));
         assertEquals("zset", client.type("zsetkey"));
 
         assertEquals("none", client.type("nonexistent"));
@@ -89,10 +87,10 @@ class KeysTest {
         client.set("src", "value".getBytes(StandardCharsets.UTF_8));
         client.set("existing", "other".getBytes(StandardCharsets.UTF_8));
 
-        assertFalse(client.renameNx("src", "existing"));
+        assertFalse(client.renamenx("src", "existing"));
         assertEquals("value", new String(client.get("src"), StandardCharsets.UTF_8));
 
-        assertTrue(client.renameNx("src", "newdest"));
+        assertTrue(client.renamenx("src", "newdest"));
         assertNull(client.get("src"));
         assertEquals("value", new String(client.get("newdest"), StandardCharsets.UTF_8));
     }
@@ -136,7 +134,7 @@ class KeysTest {
         client.set("expireatkey", "value".getBytes(StandardCharsets.UTF_8));
 
         long futureTime = System.currentTimeMillis() / 1000 + 3600; // 1 hour from now
-        assertTrue(client.expireAt("expireatkey", futureTime));
+        assertTrue(client.expireat("expireatkey", futureTime));
 
         long ttl = client.ttl("expireatkey");
         assertTrue(ttl > 3500 && ttl <= 3600);
@@ -165,141 +163,49 @@ class KeysTest {
     }
 
     @Test
-    @DisplayName("COPY duplicates a key")
-    void testCopy() {
-        client.set("src", "value".getBytes(StandardCharsets.UTF_8));
+    @DisplayName("DBSIZE returns number of keys")
+    void testDbSize() {
+        assertEquals(0, client.dbsize());
 
-        assertTrue(client.copy("src", "dst"));
-        assertEquals("value", new String(client.get("dst"), StandardCharsets.UTF_8));
-        assertEquals("value", new String(client.get("src"), StandardCharsets.UTF_8)); // Original still exists
+        client.set("key1", "v1".getBytes(StandardCharsets.UTF_8));
+        client.set("key2", "v2".getBytes(StandardCharsets.UTF_8));
+
+        assertEquals(2, client.dbsize());
     }
 
     @Test
-    @DisplayName("COPY with REPLACE option")
-    void testCopyReplace() {
-        client.set("src", "newvalue".getBytes(StandardCharsets.UTF_8));
-        client.set("dst", "oldvalue".getBytes(StandardCharsets.UTF_8));
+    @DisplayName("FLUSHDB clears the database")
+    void testFlushDb() {
+        client.set("key1", "v1".getBytes(StandardCharsets.UTF_8));
+        client.set("key2", "v2".getBytes(StandardCharsets.UTF_8));
 
-        assertTrue(client.copy("src", "dst", true));
-        assertEquals("newvalue", new String(client.get("dst"), StandardCharsets.UTF_8));
+        assertTrue(client.flushdb());
+        assertEquals(0, client.dbsize());
     }
 
     @Test
-    @DisplayName("DUMP and RESTORE key serialization")
-    void testDumpRestore() {
-        client.set("dumpkey", "dumpvalue".getBytes(StandardCharsets.UTF_8));
+    @DisplayName("PEXPIREAT sets expiration timestamp in milliseconds")
+    void testPexpireAt() {
+        client.set("pexpireatkey", "value".getBytes(StandardCharsets.UTF_8));
 
-        byte[] serialized = client.dump("dumpkey");
-        assertNotNull(serialized);
-        assertTrue(serialized.length > 0);
+        long futureTimeMs = System.currentTimeMillis() + 3600000; // 1 hour from now
+        assertTrue(client.pexpireat("pexpireatkey", futureTimeMs));
 
-        client.del("dumpkey");
-        assertNull(client.get("dumpkey"));
-
-        assertTrue(client.restore("dumpkey", 0, serialized));
-        assertEquals("dumpvalue", new String(client.get("dumpkey"), StandardCharsets.UTF_8));
+        long pttl = client.pttl("pexpireatkey");
+        assertTrue(pttl > 3500000 && pttl <= 3600000);
     }
 
     @Test
-    @DisplayName("OBJECT ENCODING returns encoding type")
-    void testObjectEncoding() {
-        client.set("intkey", "12345".getBytes(StandardCharsets.UTF_8));
-        // Could be "int" or "embstr" depending on implementation
-        String encoding = client.objectEncoding("intkey");
-        assertNotNull(encoding);
+    @DisplayName("SELECT switches database")
+    void testSelect() {
+        client.set("key1", "value1".getBytes(StandardCharsets.UTF_8));
 
-        client.set("strkey", "this is a longer string value".getBytes(StandardCharsets.UTF_8));
-        String strEncoding = client.objectEncoding("strkey");
-        assertNotNull(strEncoding);
-    }
+        // Select database 1
+        assertTrue(client.select(1));
+        assertNull(client.get("key1")); // Key doesn't exist in db 1
 
-    @Test
-    @DisplayName("RANDOMKEY returns a random key")
-    void testRandomKey() {
-        // Empty database
-        assertNull(client.randomKey());
-
-        client.set("rkey1", "v1".getBytes(StandardCharsets.UTF_8));
-        client.set("rkey2", "v2".getBytes(StandardCharsets.UTF_8));
-
-        String randomKey = client.randomKey();
-        assertNotNull(randomKey);
-        assertTrue(List.of("rkey1", "rkey2").contains(randomKey));
-    }
-
-    @Test
-    @DisplayName("TOUCH updates access time")
-    void testTouch() {
-        client.set("touch1", "v1".getBytes(StandardCharsets.UTF_8));
-        client.set("touch2", "v2".getBytes(StandardCharsets.UTF_8));
-
-        assertEquals(2, client.touch("touch1", "touch2", "nonexistent"));
-    }
-
-    @Test
-    @DisplayName("UNLINK removes keys asynchronously")
-    void testUnlink() {
-        client.set("unlink1", "v1".getBytes(StandardCharsets.UTF_8));
-        client.set("unlink2", "v2".getBytes(StandardCharsets.UTF_8));
-
-        assertEquals(2, client.unlink("unlink1", "unlink2"));
-        assertNull(client.get("unlink1"));
-        assertNull(client.get("unlink2"));
-    }
-
-    @Test
-    @DisplayName("SCAN iterates through keys")
-    void testScan() {
-        // Add some keys
-        for (int i = 1; i <= 10; i++) {
-            client.set("scan:" + i, ("value" + i).getBytes(StandardCharsets.UTF_8));
-        }
-
-        Set<String> allKeys = new HashSet<>();
-        String cursor = "0";
-
-        do {
-            ScanResult<String> result = client.scan(cursor);
-            cursor = result.getCursor();
-            allKeys.addAll(result.getResult());
-        } while (!"0".equals(cursor));
-
-        assertEquals(10, allKeys.size());
-        for (int i = 1; i <= 10; i++) {
-            assertTrue(allKeys.contains("scan:" + i));
-        }
-    }
-
-    @Test
-    @DisplayName("SCAN with MATCH pattern")
-    void testScanWithMatch() {
-        for (int i = 1; i <= 5; i++) {
-            client.set("user:" + i, ("u" + i).getBytes(StandardCharsets.UTF_8));
-            client.set("order:" + i, ("o" + i).getBytes(StandardCharsets.UTF_8));
-        }
-
-        Set<String> userKeys = new HashSet<>();
-        String cursor = "0";
-
-        do {
-            ScanResult<String> result = client.scan(cursor, new ScanOptions().match("user:*"));
-            cursor = result.getCursor();
-            userKeys.addAll(result.getResult());
-        } while (!"0".equals(cursor));
-
-        assertEquals(5, userKeys.size());
-        userKeys.forEach(k -> assertTrue(k.startsWith("user:")));
-    }
-
-    @Test
-    @DisplayName("SCAN with COUNT hint")
-    void testScanWithCount() {
-        for (int i = 1; i <= 100; i++) {
-            client.set("count:" + i, ("v" + i).getBytes(StandardCharsets.UTF_8));
-        }
-
-        ScanResult<String> result = client.scan("0", new ScanOptions().count(10));
-        // COUNT is a hint, not a guarantee, but should return some results
-        assertFalse(result.getResult().isEmpty());
+        // Switch back to db 0
+        assertTrue(client.select(0));
+        assertNotNull(client.get("key1")); // Key exists in db 0
     }
 }

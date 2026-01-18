@@ -4,8 +4,8 @@ mod schema;
 mod types;
 
 use db::DbCore;
-use error::{Result, WasmError};
-use types::{HistoryRetention, JsonSetOptions, KeyInfo, KeyType, SetOptions, ZMember};
+use error::WasmError;
+use types::{HistoryRetention, JsonSetOptions, KeyInfo, KeyType, SetOptions};
 use wasm_bindgen::prelude::*;
 
 /// Redlite WASM - Redis-compatible embedded database for WebAssembly
@@ -210,12 +210,13 @@ impl RedliteWasm {
     }
 
     /// MGET key [key ...] - Get the values of all given keys
-    pub fn mget(&self, keys: Vec<String>) -> std::result::Result<Vec<Option<Vec<u8>>>, JsError> {
-        let mut results = Vec::with_capacity(keys.len());
+    /// Returns a JS array of arrays (or null for missing keys)
+    pub fn mget(&self, keys: Vec<String>) -> std::result::Result<JsValue, JsError> {
+        let mut results: Vec<Option<Vec<u8>>> = Vec::with_capacity(keys.len());
         for key in keys {
             results.push(self.get(&key)?);
         }
-        Ok(results)
+        serde_wasm_bindgen::to_value(&results).map_err(|e| JsError::new(&e.to_string()))
     }
 
     /// MSET key value [key value ...] - Set multiple keys to multiple values
@@ -543,21 +544,22 @@ impl RedliteWasm {
     }
 
     /// HVALS key - Get all values in a hash
-    pub fn hvals(&self, key: &str) -> std::result::Result<Vec<Vec<u8>>, JsError> {
+    /// Returns a JS array of Uint8Array values
+    pub fn hvals(&self, key: &str) -> std::result::Result<JsValue, JsError> {
         let key_id = match self.core.get_key_id_typed(key, KeyType::Hash)? {
             Some(id) => id,
-            None => return Ok(Vec::new()),
+            None => return serde_wasm_bindgen::to_value(&Vec::<Vec<u8>>::new()).map_err(|e| JsError::new(&e.to_string())),
         };
 
         let sql = "SELECT value FROM hashes WHERE key_id = ?1";
         let mut stmt = self.core.prepare(sql)?;
         stmt.bind_int64(1, key_id)?;
 
-        let mut values = Vec::new();
+        let mut values: Vec<Vec<u8>> = Vec::new();
         while stmt.step()? {
             values.push(stmt.column_blob(0));
         }
-        Ok(values)
+        serde_wasm_bindgen::to_value(&values).map_err(|e| JsError::new(&e.to_string()))
     }
 
     /// HLEN key - Get the number of fields in a hash
@@ -633,7 +635,10 @@ impl RedliteWasm {
     // ========================================================================
 
     /// LPUSH key element [element ...] - Prepend one or multiple elements to a list
-    pub fn lpush(&mut self, key: &str, values: Vec<Vec<u8>>) -> std::result::Result<i64, JsError> {
+    /// Takes a JS array of Uint8Array values
+    pub fn lpush(&mut self, key: &str, values: JsValue) -> std::result::Result<i64, JsError> {
+        let values: Vec<Vec<u8>> = serde_wasm_bindgen::from_value(values)
+            .map_err(|e| JsError::new(&e.to_string()))?;
         let key_id = self.core.upsert_key(key, KeyType::List, None)?;
 
         // Get minimum position
@@ -659,7 +664,10 @@ impl RedliteWasm {
     }
 
     /// RPUSH key element [element ...] - Append one or multiple elements to a list
-    pub fn rpush(&mut self, key: &str, values: Vec<Vec<u8>>) -> std::result::Result<i64, JsError> {
+    /// Takes a JS array of Uint8Array values
+    pub fn rpush(&mut self, key: &str, values: JsValue) -> std::result::Result<i64, JsError> {
+        let values: Vec<Vec<u8>> = serde_wasm_bindgen::from_value(values)
+            .map_err(|e| JsError::new(&e.to_string()))?;
         let key_id = self.core.upsert_key(key, KeyType::List, None)?;
 
         // Get maximum position
@@ -685,10 +693,11 @@ impl RedliteWasm {
     }
 
     /// LPOP key [count] - Remove and get the first element(s) in a list
-    pub fn lpop(&mut self, key: &str, count: Option<i64>) -> std::result::Result<Vec<Vec<u8>>, JsError> {
+    /// Returns a JS array of Uint8Array values
+    pub fn lpop(&mut self, key: &str, count: Option<i64>) -> std::result::Result<JsValue, JsError> {
         let key_id = match self.core.get_key_id_typed(key, KeyType::List)? {
             Some(id) => id,
-            None => return Ok(Vec::new()),
+            None => return serde_wasm_bindgen::to_value(&Vec::<Vec<u8>>::new()).map_err(|e| JsError::new(&e.to_string())),
         };
 
         let limit = count.unwrap_or(1);
@@ -702,18 +711,19 @@ impl RedliteWasm {
         stmt.bind_int64(1, key_id)?;
         stmt.bind_int64(2, limit)?;
 
-        let mut values = Vec::new();
+        let mut values: Vec<Vec<u8>> = Vec::new();
         while stmt.step()? {
             values.push(stmt.column_blob(0));
         }
-        Ok(values)
+        serde_wasm_bindgen::to_value(&values).map_err(|e| JsError::new(&e.to_string()))
     }
 
     /// RPOP key [count] - Remove and get the last element(s) in a list
-    pub fn rpop(&mut self, key: &str, count: Option<i64>) -> std::result::Result<Vec<Vec<u8>>, JsError> {
+    /// Returns a JS array of Uint8Array values
+    pub fn rpop(&mut self, key: &str, count: Option<i64>) -> std::result::Result<JsValue, JsError> {
         let key_id = match self.core.get_key_id_typed(key, KeyType::List)? {
             Some(id) => id,
-            None => return Ok(Vec::new()),
+            None => return serde_wasm_bindgen::to_value(&Vec::<Vec<u8>>::new()).map_err(|e| JsError::new(&e.to_string())),
         };
 
         let limit = count.unwrap_or(1);
@@ -727,11 +737,11 @@ impl RedliteWasm {
         stmt.bind_int64(1, key_id)?;
         stmt.bind_int64(2, limit)?;
 
-        let mut values = Vec::new();
+        let mut values: Vec<Vec<u8>> = Vec::new();
         while stmt.step()? {
             values.push(stmt.column_blob(0));
         }
-        Ok(values)
+        serde_wasm_bindgen::to_value(&values).map_err(|e| JsError::new(&e.to_string()))
     }
 
     /// LLEN key - Get the length of a list
@@ -749,13 +759,20 @@ impl RedliteWasm {
     }
 
     /// LRANGE key start stop - Get a range of elements from a list
-    pub fn lrange(&self, key: &str, start: i64, stop: i64) -> std::result::Result<Vec<Vec<u8>>, JsError> {
+    /// Returns a JS array of Uint8Array values
+    pub fn lrange(&self, key: &str, start: i64, stop: i64) -> std::result::Result<JsValue, JsError> {
+        let values = self.lrange_internal(key, start, stop)?;
+        serde_wasm_bindgen::to_value(&values).map_err(|e| JsError::new(&e.to_string()))
+    }
+
+    // Internal version that returns Vec<Vec<u8>> for use by other functions
+    fn lrange_internal(&self, key: &str, start: i64, stop: i64) -> std::result::Result<Vec<Vec<u8>>, WasmError> {
         let key_id = match self.core.get_key_id_typed(key, KeyType::List)? {
             Some(id) => id,
             None => return Ok(Vec::new()),
         };
 
-        let len = self.llen(key)?;
+        let len = self.llen(key).map_err(|_| WasmError::Other("llen failed".to_string()))?;
         if len == 0 {
             return Ok(Vec::new());
         }
@@ -786,7 +803,7 @@ impl RedliteWasm {
 
     /// LINDEX key index - Get an element from a list by its index
     pub fn lindex(&self, key: &str, index: i64) -> std::result::Result<Option<Vec<u8>>, JsError> {
-        let values = self.lrange(key, index, index)?;
+        let values = self.lrange_internal(key, index, index)?;
         Ok(values.into_iter().next())
     }
 
@@ -795,7 +812,10 @@ impl RedliteWasm {
     // ========================================================================
 
     /// SADD key member [member ...] - Add one or more members to a set
-    pub fn sadd(&mut self, key: &str, members: Vec<Vec<u8>>) -> std::result::Result<i64, JsError> {
+    /// Takes a JS array of Uint8Array values
+    pub fn sadd(&mut self, key: &str, members: JsValue) -> std::result::Result<i64, JsError> {
+        let members: Vec<Vec<u8>> = serde_wasm_bindgen::from_value(members)
+            .map_err(|e| JsError::new(&e.to_string()))?;
         let key_id = self.core.upsert_key(key, KeyType::Set, None)?;
 
         let sql = "INSERT OR IGNORE INTO sets (key_id, member) VALUES (?1, ?2)";
@@ -811,7 +831,10 @@ impl RedliteWasm {
     }
 
     /// SREM key member [member ...] - Remove one or more members from a set
-    pub fn srem(&mut self, key: &str, members: Vec<Vec<u8>>) -> std::result::Result<i64, JsError> {
+    /// Takes a JS array of Uint8Array values
+    pub fn srem(&mut self, key: &str, members: JsValue) -> std::result::Result<i64, JsError> {
+        let members: Vec<Vec<u8>> = serde_wasm_bindgen::from_value(members)
+            .map_err(|e| JsError::new(&e.to_string()))?;
         let key_id = match self.core.get_key_id_typed(key, KeyType::Set)? {
             Some(id) => id,
             None => return Ok(0),
@@ -830,21 +853,22 @@ impl RedliteWasm {
     }
 
     /// SMEMBERS key - Get all members in a set
-    pub fn smembers(&self, key: &str) -> std::result::Result<Vec<Vec<u8>>, JsError> {
+    /// Returns a JS array of Uint8Array values
+    pub fn smembers(&self, key: &str) -> std::result::Result<JsValue, JsError> {
         let key_id = match self.core.get_key_id_typed(key, KeyType::Set)? {
             Some(id) => id,
-            None => return Ok(Vec::new()),
+            None => return serde_wasm_bindgen::to_value(&Vec::<Vec<u8>>::new()).map_err(|e| JsError::new(&e.to_string())),
         };
 
         let sql = "SELECT member FROM sets WHERE key_id = ?1";
         let mut stmt = self.core.prepare(sql)?;
         stmt.bind_int64(1, key_id)?;
 
-        let mut members = Vec::new();
+        let mut members: Vec<Vec<u8>> = Vec::new();
         while stmt.step()? {
             members.push(stmt.column_blob(0));
         }
-        Ok(members)
+        serde_wasm_bindgen::to_value(&members).map_err(|e| JsError::new(&e.to_string()))
     }
 
     /// SISMEMBER key member - Check if a member is in a set
@@ -915,7 +939,10 @@ impl RedliteWasm {
     }
 
     /// ZREM key member [member ...] - Remove one or more members from a sorted set
-    pub fn zrem(&mut self, key: &str, members: Vec<Vec<u8>>) -> std::result::Result<i64, JsError> {
+    /// Takes a JS array of Uint8Array values
+    pub fn zrem(&mut self, key: &str, members: JsValue) -> std::result::Result<i64, JsError> {
+        let members: Vec<Vec<u8>> = serde_wasm_bindgen::from_value(members)
+            .map_err(|e| JsError::new(&e.to_string()))?;
         let key_id = match self.core.get_key_id_typed(key, KeyType::ZSet)? {
             Some(id) => id,
             None => return Ok(0),
@@ -1132,29 +1159,29 @@ impl RedliteWasm {
     #[wasm_bindgen(js_name = "jsonSet")]
     pub fn json_set(
         &mut self,
-        key: &str,
-        path: &str,
-        value: &str,
-        options: Option<JsonSetOptions>,
+        _key: &str,
+        _path: &str,
+        _value: &str,
+        _options: Option<JsonSetOptions>,
     ) -> std::result::Result<bool, JsError> {
         Err(WasmError::NotImplemented("JSON.SET".to_string()).into())
     }
 
     /// JSON.GET key [path ...] - Get JSON values at the specified paths
     #[wasm_bindgen(js_name = "jsonGet")]
-    pub fn json_get(&self, key: &str, paths: Vec<String>) -> std::result::Result<Option<String>, JsError> {
+    pub fn json_get(&self, _key: &str, _paths: Vec<String>) -> std::result::Result<Option<String>, JsError> {
         Err(WasmError::NotImplemented("JSON.GET".to_string()).into())
     }
 
     /// JSON.DEL key [path] - Delete JSON values at the specified path
     #[wasm_bindgen(js_name = "jsonDel")]
-    pub fn json_del(&mut self, key: &str, path: &str) -> std::result::Result<i64, JsError> {
+    pub fn json_del(&mut self, _key: &str, _path: &str) -> std::result::Result<i64, JsError> {
         Err(WasmError::NotImplemented("JSON.DEL".to_string()).into())
     }
 
     /// JSON.TYPE key [path] - Get the type of JSON value at the specified path
     #[wasm_bindgen(js_name = "jsonType")]
-    pub fn json_type(&self, key: &str, path: &str) -> std::result::Result<Option<String>, JsError> {
+    pub fn json_type(&self, _key: &str, _path: &str) -> std::result::Result<Option<String>, JsError> {
         Err(WasmError::NotImplemented("JSON.TYPE".to_string()).into())
     }
 
@@ -1162,9 +1189,9 @@ impl RedliteWasm {
     #[wasm_bindgen(js_name = "jsonNumIncrBy")]
     pub fn json_num_incr_by(
         &mut self,
-        key: &str,
-        path: &str,
-        increment: f64,
+        _key: &str,
+        _path: &str,
+        _increment: f64,
     ) -> std::result::Result<Option<String>, JsError> {
         Err(WasmError::NotImplemented("JSON.NUMINCRBY".to_string()).into())
     }
@@ -1173,16 +1200,16 @@ impl RedliteWasm {
     #[wasm_bindgen(js_name = "jsonStrAppend")]
     pub fn json_str_append(
         &mut self,
-        key: &str,
-        path: &str,
-        value: &str,
+        _key: &str,
+        _path: &str,
+        _value: &str,
     ) -> std::result::Result<i64, JsError> {
         Err(WasmError::NotImplemented("JSON.STRAPPEND".to_string()).into())
     }
 
     /// JSON.STRLEN key [path] - Get the length of a JSON string
     #[wasm_bindgen(js_name = "jsonStrLen")]
-    pub fn json_str_len(&self, key: &str, path: &str) -> std::result::Result<i64, JsError> {
+    pub fn json_str_len(&self, _key: &str, _path: &str) -> std::result::Result<i64, JsError> {
         Err(WasmError::NotImplemented("JSON.STRLEN".to_string()).into())
     }
 
@@ -1190,16 +1217,16 @@ impl RedliteWasm {
     #[wasm_bindgen(js_name = "jsonArrAppend")]
     pub fn json_arr_append(
         &mut self,
-        key: &str,
-        path: &str,
-        values: Vec<String>,
+        _key: &str,
+        _path: &str,
+        _values: Vec<String>,
     ) -> std::result::Result<i64, JsError> {
         Err(WasmError::NotImplemented("JSON.ARRAPPEND".to_string()).into())
     }
 
     /// JSON.ARRLEN key [path] - Get the length of a JSON array
     #[wasm_bindgen(js_name = "jsonArrLen")]
-    pub fn json_arr_len(&self, key: &str, path: &str) -> std::result::Result<i64, JsError> {
+    pub fn json_arr_len(&self, _key: &str, _path: &str) -> std::result::Result<i64, JsError> {
         Err(WasmError::NotImplemented("JSON.ARRLEN".to_string()).into())
     }
 
@@ -1207,16 +1234,16 @@ impl RedliteWasm {
     #[wasm_bindgen(js_name = "jsonArrPop")]
     pub fn json_arr_pop(
         &mut self,
-        key: &str,
-        path: &str,
-        index: Option<i64>,
+        _key: &str,
+        _path: &str,
+        _index: Option<i64>,
     ) -> std::result::Result<Option<String>, JsError> {
         Err(WasmError::NotImplemented("JSON.ARRPOP".to_string()).into())
     }
 
     /// JSON.CLEAR key [path] - Clear JSON arrays or objects
     #[wasm_bindgen(js_name = "jsonClear")]
-    pub fn json_clear(&mut self, key: &str, path: &str) -> std::result::Result<i64, JsError> {
+    pub fn json_clear(&mut self, _key: &str, _path: &str) -> std::result::Result<i64, JsError> {
         Err(WasmError::NotImplemented("JSON.CLEAR".to_string()).into())
     }
 
@@ -1228,8 +1255,8 @@ impl RedliteWasm {
     #[wasm_bindgen(js_name = "historyEnableGlobal")]
     pub fn history_enable_global(
         &mut self,
-        retention: HistoryRetention,
-        retention_value: i64,
+        _retention: HistoryRetention,
+        _retention_value: i64,
     ) -> std::result::Result<(), JsError> {
         Err(WasmError::NotImplemented("HISTORY.ENABLE GLOBAL".to_string()).into())
     }
@@ -1238,9 +1265,9 @@ impl RedliteWasm {
     #[wasm_bindgen(js_name = "historyEnableDb")]
     pub fn history_enable_db(
         &mut self,
-        db_num: i32,
-        retention: HistoryRetention,
-        retention_value: i64,
+        _db_num: i32,
+        _retention: HistoryRetention,
+        _retention_value: i64,
     ) -> std::result::Result<(), JsError> {
         Err(WasmError::NotImplemented("HISTORY.ENABLE DB".to_string()).into())
     }
@@ -1249,9 +1276,9 @@ impl RedliteWasm {
     #[wasm_bindgen(js_name = "historyEnableKey")]
     pub fn history_enable_key(
         &mut self,
-        key: &str,
-        retention: HistoryRetention,
-        retention_value: i64,
+        _key: &str,
+        _retention: HistoryRetention,
+        _retention_value: i64,
     ) -> std::result::Result<(), JsError> {
         Err(WasmError::NotImplemented("HISTORY.ENABLE KEY".to_string()).into())
     }
@@ -1264,19 +1291,19 @@ impl RedliteWasm {
 
     /// Disable history tracking for a specific database
     #[wasm_bindgen(js_name = "historyDisableDb")]
-    pub fn history_disable_db(&mut self, db_num: i32) -> std::result::Result<(), JsError> {
+    pub fn history_disable_db(&mut self, _db_num: i32) -> std::result::Result<(), JsError> {
         Err(WasmError::NotImplemented("HISTORY.DISABLE DB".to_string()).into())
     }
 
     /// Disable history tracking for a specific key
     #[wasm_bindgen(js_name = "historyDisableKey")]
-    pub fn history_disable_key(&mut self, key: &str) -> std::result::Result<(), JsError> {
+    pub fn history_disable_key(&mut self, _key: &str) -> std::result::Result<(), JsError> {
         Err(WasmError::NotImplemented("HISTORY.DISABLE KEY".to_string()).into())
     }
 
     /// Check if history tracking is enabled for a key
     #[wasm_bindgen(js_name = "historyIsEnabled")]
-    pub fn history_is_enabled(&self, key: &str) -> std::result::Result<bool, JsError> {
+    pub fn history_is_enabled(&self, _key: &str) -> std::result::Result<bool, JsError> {
         Err(WasmError::NotImplemented("HISTORY.ISENABLED".to_string()).into())
     }
 
@@ -1292,19 +1319,19 @@ impl RedliteWasm {
 
     /// Enable FTS indexing for a specific database
     #[wasm_bindgen(js_name = "ftsEnableDb")]
-    pub fn fts_enable_db(&mut self, db_num: i32) -> std::result::Result<(), JsError> {
+    pub fn fts_enable_db(&mut self, _db_num: i32) -> std::result::Result<(), JsError> {
         Err(WasmError::NotImplemented("FTS.ENABLE DB".to_string()).into())
     }
 
     /// Enable FTS indexing for a key pattern
     #[wasm_bindgen(js_name = "ftsEnablePattern")]
-    pub fn fts_enable_pattern(&mut self, pattern: &str) -> std::result::Result<(), JsError> {
+    pub fn fts_enable_pattern(&mut self, _pattern: &str) -> std::result::Result<(), JsError> {
         Err(WasmError::NotImplemented("FTS.ENABLE PATTERN".to_string()).into())
     }
 
     /// Enable FTS indexing for a specific key
     #[wasm_bindgen(js_name = "ftsEnableKey")]
-    pub fn fts_enable_key(&mut self, key: &str) -> std::result::Result<(), JsError> {
+    pub fn fts_enable_key(&mut self, _key: &str) -> std::result::Result<(), JsError> {
         Err(WasmError::NotImplemented("FTS.ENABLE KEY".to_string()).into())
     }
 
@@ -1316,25 +1343,25 @@ impl RedliteWasm {
 
     /// Disable FTS indexing for a specific database
     #[wasm_bindgen(js_name = "ftsDisableDb")]
-    pub fn fts_disable_db(&mut self, db_num: i32) -> std::result::Result<(), JsError> {
+    pub fn fts_disable_db(&mut self, _db_num: i32) -> std::result::Result<(), JsError> {
         Err(WasmError::NotImplemented("FTS.DISABLE DB".to_string()).into())
     }
 
     /// Disable FTS indexing for a key pattern
     #[wasm_bindgen(js_name = "ftsDisablePattern")]
-    pub fn fts_disable_pattern(&mut self, pattern: &str) -> std::result::Result<(), JsError> {
+    pub fn fts_disable_pattern(&mut self, _pattern: &str) -> std::result::Result<(), JsError> {
         Err(WasmError::NotImplemented("FTS.DISABLE PATTERN".to_string()).into())
     }
 
     /// Disable FTS indexing for a specific key
     #[wasm_bindgen(js_name = "ftsDisableKey")]
-    pub fn fts_disable_key(&mut self, key: &str) -> std::result::Result<(), JsError> {
+    pub fn fts_disable_key(&mut self, _key: &str) -> std::result::Result<(), JsError> {
         Err(WasmError::NotImplemented("FTS.DISABLE KEY".to_string()).into())
     }
 
     /// Check if FTS indexing is enabled for a key
     #[wasm_bindgen(js_name = "ftsIsEnabled")]
-    pub fn fts_is_enabled(&self, key: &str) -> std::result::Result<bool, JsError> {
+    pub fn fts_is_enabled(&self, _key: &str) -> std::result::Result<bool, JsError> {
         Err(WasmError::NotImplemented("FTS.ISENABLED".to_string()).into())
     }
 }
