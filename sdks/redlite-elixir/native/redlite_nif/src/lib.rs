@@ -4,6 +4,7 @@
 //! enabling high-performance Redis-compatible operations in Elixir.
 
 use redlite::Db as RedliteDb;
+use redlite::types::{GetExOption, SetOptions as RedliteSetOptions};
 use rustler::{Atom, Binary, Encoder, Env, NifResult, NifStruct, OwnedBinary, ResourceArc, Term};
 use std::sync::Mutex;
 use std::time::Duration;
@@ -47,7 +48,7 @@ impl DbResource {
 #[module = "Redlite.ZMember"]
 pub struct ZMember {
     score: f64,
-    member: Binary<'static>,
+    member: Vec<u8>,
 }
 
 /// SET options
@@ -372,6 +373,123 @@ fn mset<'a>(
         .collect();
     match guard.mset(&kv_pairs) {
         Ok(()) => Ok(ok(env, true)),
+        Err(e) => Ok(to_error(env, e)),
+    }
+}
+
+/// SETNX key value - set if not exists
+/// SETNX key value - Set if not exists
+#[rustler::nif(schedule = "DirtyCpu")]
+fn setnx<'a>(
+    env: Env<'a>,
+    db: ResourceArc<DbResource>,
+    key: &str,
+    value: Binary,
+) -> NifResult<Term<'a>> {
+    let guard = db.db.lock().map_err(|_| rustler::Error::Atom("lock_error"))?;
+    let opts = RedliteSetOptions::new().nx();
+    match guard.set_opts(key, value.as_slice(), opts) {
+        Ok(v) => Ok(ok(env, v)),
+        Err(e) => Ok(to_error(env, e)),
+    }
+}
+
+/// GETEX key [EX seconds | PX milliseconds | EXAT timestamp | PXAT timestamp | PERSIST]
+/// GETEX key [EX seconds | PX milliseconds | EXAT timestamp | PXAT timestamp | PERSIST]
+#[rustler::nif(schedule = "DirtyCpu")]
+fn getex<'a>(
+    env: Env<'a>,
+    db: ResourceArc<DbResource>,
+    key: &str,
+    ex: Option<i64>,
+    px: Option<i64>,
+    exat: Option<i64>,
+    pxat: Option<i64>,
+    persist: bool,
+) -> NifResult<Term<'a>> {
+    let guard = db.db.lock().map_err(|_| rustler::Error::Atom("lock_error"))?;
+
+    // Convert parameters to GetExOption enum
+    let ttl_option = if persist {
+        Some(GetExOption::Persist)
+    } else if let Some(seconds) = ex {
+        Some(GetExOption::Ex(seconds))
+    } else if let Some(milliseconds) = px {
+        Some(GetExOption::Px(milliseconds))
+    } else if let Some(timestamp) = exat {
+        Some(GetExOption::ExAt(timestamp))
+    } else if let Some(timestamp_ms) = pxat {
+        Some(GetExOption::PxAt(timestamp_ms))
+    } else {
+        None
+    };
+
+    match guard.getex(key, ttl_option) {
+        Ok(Some(v)) => Ok(ok(env, vec_to_binary(env, v))),
+        Ok(None) => Ok(ok(env, atoms::nil())),
+        Err(e) => Ok(to_error(env, e)),
+    }
+}
+
+/// GETBIT key offset
+#[rustler::nif(schedule = "DirtyCpu")]
+fn getbit<'a>(
+    env: Env<'a>,
+    db: ResourceArc<DbResource>,
+    key: &str,
+    offset: u64,
+) -> NifResult<Term<'a>> {
+    let guard = db.db.lock().map_err(|_| rustler::Error::Atom("lock_error"))?;
+    match guard.getbit(key, offset) {
+        Ok(bit) => Ok(ok(env, bit)),
+        Err(e) => Ok(to_error(env, e)),
+    }
+}
+
+/// SETBIT key offset value
+#[rustler::nif(schedule = "DirtyCpu")]
+fn setbit<'a>(
+    env: Env<'a>,
+    db: ResourceArc<DbResource>,
+    key: &str,
+    offset: u64,
+    value: bool,
+) -> NifResult<Term<'a>> {
+    let guard = db.db.lock().map_err(|_| rustler::Error::Atom("lock_error"))?;
+    match guard.setbit(key, offset, value) {
+        Ok(prev) => Ok(ok(env, prev)),
+        Err(e) => Ok(to_error(env, e)),
+    }
+}
+
+/// BITCOUNT key [start end]
+#[rustler::nif(schedule = "DirtyCpu")]
+fn bitcount<'a>(
+    env: Env<'a>,
+    db: ResourceArc<DbResource>,
+    key: &str,
+    start: Option<i64>,
+    end: Option<i64>,
+) -> NifResult<Term<'a>> {
+    let guard = db.db.lock().map_err(|_| rustler::Error::Atom("lock_error"))?;
+    match guard.bitcount(key, start, end) {
+        Ok(count) => Ok(ok(env, count)),
+        Err(e) => Ok(to_error(env, e)),
+    }
+}
+
+/// BITOP operation destkey key [key ...]
+#[rustler::nif(schedule = "DirtyCpu")]
+fn bitop<'a>(
+    env: Env<'a>,
+    db: ResourceArc<DbResource>,
+    operation: &str,
+    destkey: &str,
+    keys: Vec<&str>,
+) -> NifResult<Term<'a>> {
+    let guard = db.db.lock().map_err(|_| rustler::Error::Atom("lock_error"))?;
+    match guard.bitop(operation, destkey, &keys) {
+        Ok(len) => Ok(ok(env, len)),
         Err(e) => Ok(to_error(env, e)),
     }
 }
@@ -742,6 +860,41 @@ fn hmget<'a>(
     }
 }
 
+/// HSETNX key field value - set field if not exists
+#[rustler::nif(schedule = "DirtyCpu")]
+fn hsetnx<'a>(
+    env: Env<'a>,
+    db: ResourceArc<DbResource>,
+    key: &str,
+    field: &str,
+    value: Binary,
+) -> NifResult<Term<'a>> {
+    let guard = db.db.lock().map_err(|_| rustler::Error::Atom("lock_error"))?;
+    match guard.hsetnx(key, field, value.as_slice()) {
+        Ok(v) => Ok(ok(env, v)),
+        Err(e) => Ok(to_error(env, e)),
+    }
+}
+
+/// HINCRBYFLOAT key field increment
+#[rustler::nif(schedule = "DirtyCpu")]
+fn hincrbyfloat<'a>(
+    env: Env<'a>,
+    db: ResourceArc<DbResource>,
+    key: &str,
+    field: &str,
+    increment: f64,
+) -> NifResult<Term<'a>> {
+    let guard = db.db.lock().map_err(|_| rustler::Error::Atom("lock_error"))?;
+    match guard.hincrbyfloat(key, field, increment) {
+        Ok(v) => {
+            let f: f64 = v.parse().unwrap_or(0.0);
+            Ok(ok(env, f))
+        }
+        Err(e) => Ok(to_error(env, e)),
+    }
+}
+
 // =============================================================================
 // List Commands
 // =============================================================================
@@ -882,6 +1035,72 @@ fn lindex<'a>(
     }
 }
 
+/// LSET key index value
+#[rustler::nif(schedule = "DirtyCpu")]
+fn lset<'a>(
+    env: Env<'a>,
+    db: ResourceArc<DbResource>,
+    key: &str,
+    index: i64,
+    value: Binary,
+) -> NifResult<Term<'a>> {
+    let guard = db.db.lock().map_err(|_| rustler::Error::Atom("lock_error"))?;
+    match guard.lset(key, index, value.as_slice()) {
+        Ok(()) => Ok(ok(env, true)),
+        Err(e) => Ok(to_error(env, e)),
+    }
+}
+
+/// LTRIM key start stop
+#[rustler::nif(schedule = "DirtyCpu")]
+fn ltrim<'a>(
+    env: Env<'a>,
+    db: ResourceArc<DbResource>,
+    key: &str,
+    start: i64,
+    stop: i64,
+) -> NifResult<Term<'a>> {
+    let guard = db.db.lock().map_err(|_| rustler::Error::Atom("lock_error"))?;
+    match guard.ltrim(key, start, stop) {
+        Ok(()) => Ok(ok(env, true)),
+        Err(e) => Ok(to_error(env, e)),
+    }
+}
+
+/// LREM key count element
+#[rustler::nif(schedule = "DirtyCpu")]
+fn lrem<'a>(
+    env: Env<'a>,
+    db: ResourceArc<DbResource>,
+    key: &str,
+    count: i64,
+    element: Binary,
+) -> NifResult<Term<'a>> {
+    let guard = db.db.lock().map_err(|_| rustler::Error::Atom("lock_error"))?;
+    match guard.lrem(key, count, element.as_slice()) {
+        Ok(n) => Ok(ok(env, n)),
+        Err(e) => Ok(to_error(env, e)),
+    }
+}
+
+/// LINSERT key BEFORE|AFTER pivot element
+/// before: true for BEFORE, false for AFTER
+#[rustler::nif(schedule = "DirtyCpu")]
+fn linsert<'a>(
+    env: Env<'a>,
+    db: ResourceArc<DbResource>,
+    key: &str,
+    before: bool,
+    pivot: Binary,
+    element: Binary,
+) -> NifResult<Term<'a>> {
+    let guard = db.db.lock().map_err(|_| rustler::Error::Atom("lock_error"))?;
+    match guard.linsert(key, before, pivot.as_slice(), element.as_slice()) {
+        Ok(n) => Ok(ok(env, n)),
+        Err(e) => Ok(to_error(env, e)),
+    }
+}
+
 // =============================================================================
 // Set Commands
 // =============================================================================
@@ -955,6 +1174,187 @@ fn scard<'a>(env: Env<'a>, db: ResourceArc<DbResource>, key: &str) -> NifResult<
     let guard = db.db.lock().map_err(|_| rustler::Error::Atom("lock_error"))?;
     match guard.scard(key) {
         Ok(n) => Ok(ok(env, n)),
+        Err(e) => Ok(to_error(env, e)),
+    }
+}
+
+/// SPOP key [count]
+#[rustler::nif(schedule = "DirtyCpu")]
+fn spop<'a>(
+    env: Env<'a>,
+    db: ResourceArc<DbResource>,
+    key: &str,
+    count: Option<usize>,
+) -> NifResult<Term<'a>> {
+    let guard = db.db.lock().map_err(|_| rustler::Error::Atom("lock_error"))?;
+    match guard.spop(key, count) {
+        Ok(members) => {
+            if members.is_empty() {
+                Ok(ok(env, atoms::nil()))
+            } else if count.is_none() {
+                // Single value case
+                Ok(ok(env, vec_to_binary(env, members.into_iter().next().unwrap())))
+            } else {
+                let binaries: Vec<Term> = members
+                    .into_iter()
+                    .map(|m| vec_to_binary(env, m).encode(env))
+                    .collect();
+                Ok(ok(env, binaries))
+            }
+        }
+        Err(e) => Ok(to_error(env, e)),
+    }
+}
+
+/// SRANDMEMBER key [count]
+#[rustler::nif(schedule = "DirtyCpu")]
+fn srandmember<'a>(
+    env: Env<'a>,
+    db: ResourceArc<DbResource>,
+    key: &str,
+    count: Option<i64>,
+) -> NifResult<Term<'a>> {
+    let guard = db.db.lock().map_err(|_| rustler::Error::Atom("lock_error"))?;
+    match guard.srandmember(key, count) {
+        Ok(members) => {
+            if members.is_empty() {
+                if count.is_none() {
+                    Ok(ok(env, atoms::nil()))
+                } else {
+                    Ok(ok(env, Vec::<Term>::new()))
+                }
+            } else if count.is_none() {
+                // Single value case
+                Ok(ok(env, vec_to_binary(env, members.into_iter().next().unwrap())))
+            } else {
+                let binaries: Vec<Term> = members
+                    .into_iter()
+                    .map(|m| vec_to_binary(env, m).encode(env))
+                    .collect();
+                Ok(ok(env, binaries))
+            }
+        }
+        Err(e) => Ok(to_error(env, e)),
+    }
+}
+
+/// SDIFF key [key ...]
+#[rustler::nif(schedule = "DirtyCpu")]
+fn sdiff<'a>(
+    env: Env<'a>,
+    db: ResourceArc<DbResource>,
+    keys: Vec<&str>,
+) -> NifResult<Term<'a>> {
+    let guard = db.db.lock().map_err(|_| rustler::Error::Atom("lock_error"))?;
+    match guard.sdiff(&keys) {
+        Ok(members) => {
+            let binaries: Vec<Term> = members
+                .into_iter()
+                .map(|m| vec_to_binary(env, m).encode(env))
+                .collect();
+            Ok(ok(env, binaries))
+        }
+        Err(e) => Ok(to_error(env, e)),
+    }
+}
+
+/// SINTER key [key ...]
+#[rustler::nif(schedule = "DirtyCpu")]
+fn sinter<'a>(
+    env: Env<'a>,
+    db: ResourceArc<DbResource>,
+    keys: Vec<&str>,
+) -> NifResult<Term<'a>> {
+    let guard = db.db.lock().map_err(|_| rustler::Error::Atom("lock_error"))?;
+    match guard.sinter(&keys) {
+        Ok(members) => {
+            let binaries: Vec<Term> = members
+                .into_iter()
+                .map(|m| vec_to_binary(env, m).encode(env))
+                .collect();
+            Ok(ok(env, binaries))
+        }
+        Err(e) => Ok(to_error(env, e)),
+    }
+}
+
+/// SUNION key [key ...]
+#[rustler::nif(schedule = "DirtyCpu")]
+fn sunion<'a>(
+    env: Env<'a>,
+    db: ResourceArc<DbResource>,
+    keys: Vec<&str>,
+) -> NifResult<Term<'a>> {
+    let guard = db.db.lock().map_err(|_| rustler::Error::Atom("lock_error"))?;
+    match guard.sunion(&keys) {
+        Ok(members) => {
+            let binaries: Vec<Term> = members
+                .into_iter()
+                .map(|m| vec_to_binary(env, m).encode(env))
+                .collect();
+            Ok(ok(env, binaries))
+        }
+        Err(e) => Ok(to_error(env, e)),
+    }
+}
+
+/// SDIFFSTORE destination key [key ...]
+#[rustler::nif(schedule = "DirtyCpu")]
+fn sdiffstore<'a>(
+    env: Env<'a>,
+    db: ResourceArc<DbResource>,
+    destination: &str,
+    keys: Vec<&str>,
+) -> NifResult<Term<'a>> {
+    let guard = db.db.lock().map_err(|_| rustler::Error::Atom("lock_error"))?;
+    match guard.sdiffstore(destination, &keys) {
+        Ok(n) => Ok(ok(env, n)),
+        Err(e) => Ok(to_error(env, e)),
+    }
+}
+
+/// SINTERSTORE destination key [key ...]
+#[rustler::nif(schedule = "DirtyCpu")]
+fn sinterstore<'a>(
+    env: Env<'a>,
+    db: ResourceArc<DbResource>,
+    destination: &str,
+    keys: Vec<&str>,
+) -> NifResult<Term<'a>> {
+    let guard = db.db.lock().map_err(|_| rustler::Error::Atom("lock_error"))?;
+    match guard.sinterstore(destination, &keys) {
+        Ok(n) => Ok(ok(env, n)),
+        Err(e) => Ok(to_error(env, e)),
+    }
+}
+
+/// SUNIONSTORE destination key [key ...]
+#[rustler::nif(schedule = "DirtyCpu")]
+fn sunionstore<'a>(
+    env: Env<'a>,
+    db: ResourceArc<DbResource>,
+    destination: &str,
+    keys: Vec<&str>,
+) -> NifResult<Term<'a>> {
+    let guard = db.db.lock().map_err(|_| rustler::Error::Atom("lock_error"))?;
+    match guard.sunionstore(destination, &keys) {
+        Ok(n) => Ok(ok(env, n)),
+        Err(e) => Ok(to_error(env, e)),
+    }
+}
+
+/// SMOVE source destination member
+#[rustler::nif(schedule = "DirtyCpu")]
+fn smove<'a>(
+    env: Env<'a>,
+    db: ResourceArc<DbResource>,
+    source: &str,
+    destination: &str,
+    member: Binary,
+) -> NifResult<Term<'a>> {
+    let guard = db.db.lock().map_err(|_| rustler::Error::Atom("lock_error"))?;
+    match guard.smove(source, destination, member.as_slice()) {
+        Ok(v) => Ok(ok(env, v)),
         Err(e) => Ok(to_error(env, e)),
     }
 }
@@ -1121,6 +1521,94 @@ fn zrevrange<'a>(
     }
 }
 
+/// ZRANK key member
+#[rustler::nif(schedule = "DirtyCpu")]
+fn zrank<'a>(
+    env: Env<'a>,
+    db: ResourceArc<DbResource>,
+    key: &str,
+    member: Binary,
+) -> NifResult<Term<'a>> {
+    let guard = db.db.lock().map_err(|_| rustler::Error::Atom("lock_error"))?;
+    match guard.zrank(key, member.as_slice()) {
+        Ok(Some(rank)) => Ok(ok(env, rank)),
+        Ok(None) => Ok(ok(env, atoms::nil())),
+        Err(e) => Ok(to_error(env, e)),
+    }
+}
+
+/// ZREVRANK key member
+#[rustler::nif(schedule = "DirtyCpu")]
+fn zrevrank<'a>(
+    env: Env<'a>,
+    db: ResourceArc<DbResource>,
+    key: &str,
+    member: Binary,
+) -> NifResult<Term<'a>> {
+    let guard = db.db.lock().map_err(|_| rustler::Error::Atom("lock_error"))?;
+    match guard.zrevrank(key, member.as_slice()) {
+        Ok(Some(rank)) => Ok(ok(env, rank)),
+        Ok(None) => Ok(ok(env, atoms::nil())),
+        Err(e) => Ok(to_error(env, e)),
+    }
+}
+
+/// ZRANGEBYSCORE key min max [LIMIT offset count]
+#[rustler::nif(schedule = "DirtyCpu")]
+fn zrangebyscore<'a>(
+    env: Env<'a>,
+    db: ResourceArc<DbResource>,
+    key: &str,
+    min: f64,
+    max: f64,
+    offset: Option<i64>,
+    count: Option<i64>,
+) -> NifResult<Term<'a>> {
+    let guard = db.db.lock().map_err(|_| rustler::Error::Atom("lock_error"))?;
+    match guard.zrangebyscore(key, min, max, offset, count) {
+        Ok(members) => {
+            let result: Vec<Term> = members
+                .into_iter()
+                .map(|m| vec_to_binary(env, m.member).encode(env))
+                .collect();
+            Ok(ok(env, result))
+        }
+        Err(e) => Ok(to_error(env, e)),
+    }
+}
+
+/// ZREMRANGEBYRANK key start stop
+#[rustler::nif(schedule = "DirtyCpu")]
+fn zremrangebyrank<'a>(
+    env: Env<'a>,
+    db: ResourceArc<DbResource>,
+    key: &str,
+    start: i64,
+    stop: i64,
+) -> NifResult<Term<'a>> {
+    let guard = db.db.lock().map_err(|_| rustler::Error::Atom("lock_error"))?;
+    match guard.zremrangebyrank(key, start, stop) {
+        Ok(n) => Ok(ok(env, n)),
+        Err(e) => Ok(to_error(env, e)),
+    }
+}
+
+/// ZREMRANGEBYSCORE key min max
+#[rustler::nif(schedule = "DirtyCpu")]
+fn zremrangebyscore<'a>(
+    env: Env<'a>,
+    db: ResourceArc<DbResource>,
+    key: &str,
+    min: f64,
+    max: f64,
+) -> NifResult<Term<'a>> {
+    let guard = db.db.lock().map_err(|_| rustler::Error::Atom("lock_error"))?;
+    match guard.zremrangebyscore(key, min, max) {
+        Ok(n) => Ok(ok(env, n)),
+        Err(e) => Ok(to_error(env, e)),
+    }
+}
+
 // =============================================================================
 // Scan Commands
 // =============================================================================
@@ -1211,6 +1699,140 @@ fn zscan<'a>(
 }
 
 // =============================================================================
+// New List Commands (Session 53)
+// =============================================================================
+
+/// LPUSHX key values - push only if list exists
+#[rustler::nif(schedule = "DirtyCpu")]
+fn lpushx<'a>(
+    env: Env<'a>,
+    db: ResourceArc<DbResource>,
+    key: &str,
+    values: Vec<Binary>,
+) -> NifResult<Term<'a>> {
+    let guard = db.db.lock().map_err(|_| rustler::Error::Atom("lock_error"))?;
+    let value_refs: Vec<&[u8]> = values.iter().map(|v| v.as_slice()).collect();
+    match guard.lpushx(key, &value_refs) {
+        Ok(n) => Ok(ok(env, n)),
+        Err(e) => Ok(to_error(env, e)),
+    }
+}
+
+/// RPUSHX key values - push only if list exists
+#[rustler::nif(schedule = "DirtyCpu")]
+fn rpushx<'a>(
+    env: Env<'a>,
+    db: ResourceArc<DbResource>,
+    key: &str,
+    values: Vec<Binary>,
+) -> NifResult<Term<'a>> {
+    let guard = db.db.lock().map_err(|_| rustler::Error::Atom("lock_error"))?;
+    let value_refs: Vec<&[u8]> = values.iter().map(|v| v.as_slice()).collect();
+    match guard.rpushx(key, &value_refs) {
+        Ok(n) => Ok(ok(env, n)),
+        Err(e) => Ok(to_error(env, e)),
+    }
+}
+
+/// LMOVE source destination LEFT|RIGHT LEFT|RIGHT
+/// wherefrom: 0 for LEFT, 1 for RIGHT
+/// whereto: 0 for LEFT, 1 for RIGHT
+#[rustler::nif(schedule = "DirtyCpu")]
+fn lmove<'a>(
+    env: Env<'a>,
+    db: ResourceArc<DbResource>,
+    source: &str,
+    destination: &str,
+    wherefrom: i32,
+    whereto: i32,
+) -> NifResult<Term<'a>> {
+    let guard = db.db.lock().map_err(|_| rustler::Error::Atom("lock_error"))?;
+    let from_dir = if wherefrom == 0 {
+        redlite::ListDirection::Left
+    } else {
+        redlite::ListDirection::Right
+    };
+    let to_dir = if whereto == 0 {
+        redlite::ListDirection::Left
+    } else {
+        redlite::ListDirection::Right
+    };
+    match guard.lmove(source, destination, from_dir, to_dir) {
+        Ok(Some(v)) => Ok(ok(env, vec_to_binary(env, v))),
+        Ok(None) => Ok(ok(env, atoms::nil())),
+        Err(e) => Ok(to_error(env, e)),
+    }
+}
+
+/// LPOS key element [RANK rank] [COUNT count] [MAXLEN maxlen]
+#[rustler::nif(schedule = "DirtyCpu")]
+fn lpos<'a>(
+    env: Env<'a>,
+    db: ResourceArc<DbResource>,
+    key: &str,
+    element: Binary,
+    rank: Option<i64>,
+    count: Option<usize>,
+    maxlen: Option<usize>,
+) -> NifResult<Term<'a>> {
+    let guard = db.db.lock().map_err(|_| rustler::Error::Atom("lock_error"))?;
+    match guard.lpos(key, element.as_slice(), rank, count, maxlen) {
+        Ok(positions) => {
+            if positions.is_empty() {
+                Ok(ok(env, atoms::nil()))
+            } else if count.is_none() || count == Some(1) {
+                // Single result - return just the position
+                Ok(ok(env, positions[0]))
+            } else {
+                // Multiple results - return list
+                Ok(ok(env, positions))
+            }
+        }
+        Err(e) => Ok(to_error(env, e)),
+    }
+}
+
+// =============================================================================
+// New Sorted Set Commands (Session 53)
+// =============================================================================
+
+/// ZINTERSTORE destination numkeys key [key ...] [WEIGHTS weight ...] [AGGREGATE SUM|MIN|MAX]
+#[rustler::nif(schedule = "DirtyCpu")]
+fn zinterstore<'a>(
+    env: Env<'a>,
+    db: ResourceArc<DbResource>,
+    destination: &str,
+    keys: Vec<&str>,
+    weights: Option<Vec<f64>>,
+    aggregate: Option<&str>,
+) -> NifResult<Term<'a>> {
+    let guard = db.db.lock().map_err(|_| rustler::Error::Atom("lock_error"))?;
+    let weights_ref = weights.as_ref().map(|w| w.as_slice());
+    match guard.zinterstore(destination, &keys, weights_ref, aggregate) {
+        Ok(n) => Ok(ok(env, n)),
+        Err(e) => Ok(to_error(env, e)),
+    }
+}
+
+/// ZUNIONSTORE destination numkeys key [key ...] [WEIGHTS weight ...] [AGGREGATE SUM|MIN|MAX]
+#[rustler::nif(schedule = "DirtyCpu")]
+fn zunionstore<'a>(
+    env: Env<'a>,
+    db: ResourceArc<DbResource>,
+    destination: &str,
+    keys: Vec<&str>,
+    weights: Option<Vec<f64>>,
+    aggregate: Option<&str>,
+) -> NifResult<Term<'a>> {
+    let guard = db.db.lock().map_err(|_| rustler::Error::Atom("lock_error"))?;
+    let weights_ref = weights.as_ref().map(|w| w.as_slice());
+    match guard.zunionstore(destination, &keys, weights_ref, aggregate) {
+        Ok(n) => Ok(ok(env, n)),
+        Err(e) => Ok(to_error(env, e)),
+    }
+}
+
+// =============================================================================
 // Server Commands
 // =============================================================================
 
@@ -1249,6 +1871,13 @@ rustler::init!(
         incrbyfloat,
         mget,
         mset,
+        setnx,
+        getex,
+        // Bit operations
+        getbit,
+        setbit,
+        bitcount,
+        bitop,
         // Key commands
         del,
         exists,
@@ -1277,6 +1906,8 @@ rustler::init!(
         hincrby,
         hgetall,
         hmget,
+        hsetnx,
+        hincrbyfloat,
         // List commands
         lpush,
         rpush,
@@ -1285,12 +1916,29 @@ rustler::init!(
         llen,
         lrange,
         lindex,
+        lset,
+        ltrim,
+        lrem,
+        linsert,
+        lpushx,
+        rpushx,
+        lmove,
+        lpos,
         // Set commands
         sadd,
         srem,
         smembers,
         sismember,
         scard,
+        spop,
+        srandmember,
+        sdiff,
+        sinter,
+        sunion,
+        sdiffstore,
+        sinterstore,
+        sunionstore,
+        smove,
         // Sorted set commands
         zadd,
         zrem,
@@ -1300,6 +1948,13 @@ rustler::init!(
         zincrby,
         zrange,
         zrevrange,
+        zrank,
+        zrevrank,
+        zrangebyscore,
+        zremrangebyrank,
+        zremrangebyscore,
+        zinterstore,
+        zunionstore,
         // Scan commands
         scan,
         hscan,

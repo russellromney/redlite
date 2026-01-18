@@ -12,6 +12,7 @@ pub enum KeyType {
     Set = 4,
     ZSet = 5,
     Stream = 6,
+    Json = 7,
 }
 
 impl KeyType {
@@ -23,6 +24,7 @@ impl KeyType {
             4 => Some(KeyType::Set),
             5 => Some(KeyType::ZSet),
             6 => Some(KeyType::Stream),
+            7 => Some(KeyType::Json),
             _ => None,
         }
     }
@@ -35,6 +37,7 @@ impl KeyType {
             KeyType::Set => "set",
             KeyType::ZSet => "zset",
             KeyType::Stream => "stream",
+            KeyType::Json => "json",
         }
     }
 }
@@ -197,5 +200,60 @@ impl ScanResult {
     #[wasm_bindgen(getter)]
     pub fn keys(&self) -> Vec<String> {
         self.keys.clone()
+    }
+}
+
+/// Options for JSON.SET command
+#[wasm_bindgen]
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct JsonSetOptions {
+    /// Only set if key does not exist
+    #[wasm_bindgen(skip)]
+    pub nx: bool,
+    /// Only set if key exists
+    #[wasm_bindgen(skip)]
+    pub xx: bool,
+}
+
+#[wasm_bindgen]
+impl JsonSetOptions {
+    #[wasm_bindgen(constructor)]
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    /// Only set if key does not exist (NX flag)
+    #[wasm_bindgen(js_name = "withNx")]
+    pub fn with_nx(mut self) -> Self {
+        self.nx = true;
+        self.xx = false;
+        self
+    }
+
+    /// Only set if key exists (XX flag)
+    #[wasm_bindgen(js_name = "withXx")]
+    pub fn with_xx(mut self) -> Self {
+        self.xx = true;
+        self.nx = false;
+        self
+    }
+}
+
+/// History retention type
+#[wasm_bindgen]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub enum HistoryRetention {
+    Unlimited,
+    Time,
+    Count,
+}
+
+impl HistoryRetention {
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            HistoryRetention::Unlimited => "unlimited",
+            HistoryRetention::Time => "time",
+            HistoryRetention::Count => "count",
+        }
     }
 }

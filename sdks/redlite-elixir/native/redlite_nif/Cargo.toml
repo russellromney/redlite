@@ -11,7 +11,7 @@ crate-type = ["cdylib"]
 
 [dependencies]
 redlite = { path = "../../../../crates/redlite", features = ["full"] }
-rustler = "0.30"
+rustler = "0.37"
 
 [features]
 default = []

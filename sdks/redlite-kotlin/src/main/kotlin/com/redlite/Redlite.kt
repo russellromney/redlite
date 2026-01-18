@@ -3,6 +3,7 @@ package com.redlite
 import com.redlite.namespaces.FTSNamespace
 import com.redlite.namespaces.GeoNamespace
 import com.redlite.namespaces.HistoryNamespace
+import com.redlite.namespaces.JSONNamespace
 import com.redlite.namespaces.VectorNamespace
 import redis.clients.jedis.Jedis
 import redis.clients.jedis.JedisPool
@@ -59,6 +60,11 @@ class Redlite(
      */
     val history: HistoryNamespace
 
+    /**
+     * JSON namespace (ReJSON-compatible)
+     */
+    val json: JSONNamespace
+
     init {
         mode = when {
             url.startsWith("redis://") || url.startsWith("rediss://") -> {
@@ -79,6 +85,7 @@ class Redlite(
         vector = VectorNamespace(this)
         geo = GeoNamespace(this)
         history = HistoryNamespace(this)
+        json = JSONNamespace(this)
     }
 
     override fun close() {
@@ -516,6 +523,17 @@ class Redlite(
         } else {
             native!!.flushdb()
         }
+    }
+
+    /**
+     * Get detailed information about a key.
+     *
+     * @param key The key to get info for
+     * @return KeyInfo with type, TTL, and timestamps, or null if key doesn't exist
+     */
+    fun keyinfo(key: String): KeyInfo? {
+        checkOpen()
+        throw RedliteException("KEYINFO command not yet implemented")
     }
 
     /**

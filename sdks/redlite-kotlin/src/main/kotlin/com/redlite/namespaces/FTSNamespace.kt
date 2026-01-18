@@ -1,11 +1,98 @@
 package com.redlite.namespaces
 
 import com.redlite.Redlite
+import com.redlite.RedliteException
 
 /**
  * Full-text search namespace for Redlite FT.* commands.
  */
 class FTSNamespace(private val client: Redlite) {
+
+    // =========================================================================
+    // FTS Enable/Disable Commands
+    // =========================================================================
+
+    /**
+     * Enable FTS indexing globally.
+     */
+    fun enableGlobal() {
+        throw RedliteException("FTS commands not yet implemented")
+    }
+
+    /**
+     * Enable FTS indexing for a specific database.
+     *
+     * @param dbNum Database number
+     */
+    fun enableDatabase(dbNum: Int) {
+        throw RedliteException("FTS commands not yet implemented")
+    }
+
+    /**
+     * Enable FTS indexing for a key pattern.
+     *
+     * @param pattern Key pattern (e.g., "user:*")
+     */
+    fun enablePattern(pattern: String) {
+        throw RedliteException("FTS commands not yet implemented")
+    }
+
+    /**
+     * Enable FTS indexing for a specific key.
+     *
+     * @param key Key to enable FTS for
+     */
+    fun enableKey(key: String) {
+        throw RedliteException("FTS commands not yet implemented")
+    }
+
+    /**
+     * Disable FTS indexing globally.
+     */
+    fun disableGlobal() {
+        throw RedliteException("FTS commands not yet implemented")
+    }
+
+    /**
+     * Disable FTS indexing for a specific database.
+     *
+     * @param dbNum Database number
+     */
+    fun disableDatabase(dbNum: Int) {
+        throw RedliteException("FTS commands not yet implemented")
+    }
+
+    /**
+     * Disable FTS indexing for a key pattern.
+     *
+     * @param pattern Key pattern
+     */
+    fun disablePattern(pattern: String) {
+        throw RedliteException("FTS commands not yet implemented")
+    }
+
+    /**
+     * Disable FTS indexing for a specific key.
+     *
+     * @param key Key to disable FTS for
+     */
+    fun disableKey(key: String) {
+        throw RedliteException("FTS commands not yet implemented")
+    }
+
+    /**
+     * Check if FTS indexing is enabled for a key.
+     *
+     * @param key Key to check
+     * @return true if FTS is enabled
+     */
+    fun isEnabled(key: String): Boolean {
+        throw RedliteException("FTS commands not yet implemented")
+    }
+
+    // =========================================================================
+    // FTS Search Commands
+    // =========================================================================
 
     /**
      * Search an FTS index.

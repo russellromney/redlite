@@ -35,12 +35,13 @@ class RedliteError(Exception):
 
 # Export native module types for advanced usage
 try:
-    from ._native import EmbeddedDb, SetOptions, ZMember
+    from ._native import EmbeddedDb, SetOptions, ZMember, StreamId
 except ImportError:
     # Native module not available (maturin build needed)
     EmbeddedDb = None
     SetOptions = None
     ZMember = None
+    StreamId = None
 
 __all__ = [
     "Redlite",
@@ -51,5 +52,6 @@ __all__ = [
     "EmbeddedDb",
     "SetOptions",
     "ZMember",
+    "StreamId",
 ]
 __version__ = "0.1.0"

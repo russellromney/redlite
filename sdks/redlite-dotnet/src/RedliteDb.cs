@@ -1212,6 +1212,444 @@ public sealed class RedliteDb : IDisposable
         return version;
     }
 
+    // ==================== JSON Commands (ReJSON-compatible) ====================
+
+    /// <summary>
+    /// JSON.SET key path value - Set a JSON value at the specified path.
+    /// </summary>
+    /// <param name="key">The key</param>
+    /// <param name="path">JSON path (use "$" for root)</param>
+    /// <param name="value">JSON-encoded value</param>
+    /// <param name="options">NX/XX options</param>
+    /// <returns>True if set, false if NX/XX condition not met</returns>
+    public bool JsonSet(string key, string path, string value, JsonSetOptions? options = null)
+    {
+        ThrowIfDisposed();
+        var result = NativeMethods.redlite_json_set(
+            _db, key, path, value,
+            options?.Nx == true ? 1 : 0,
+            options?.Xx == true ? 1 : 0);
+        if (result < 0)
+        {
+            throw new RedliteException(GetLastError() ?? "JSON.SET failed");
+        }
+        return result == 1;
+    }
+
+    /// <summary>
+    /// JSON.GET key [path ...] - Get JSON values at the specified paths.
+    /// </summary>
+    /// <param name="key">The key</param>
+    /// <param name="paths">JSON paths to get (defaults to "$")</param>
+    /// <returns>JSON-encoded result or null if not found</returns>
+    public string? JsonGet(string key, params string[] paths)
+    {
+        ThrowIfDisposed();
+        var pathsToUse = paths.Length == 0 ? new[] { "$" } : paths;
+        var pathPtrs = AllocateStringArray(pathsToUse);
+        try
+        {
+            var result = NativeMethods.redlite_json_get(_db, key, pathPtrs, (nuint)pathsToUse.Length);
+            if (result == IntPtr.Zero) return null;
+            var str = Marshal.PtrToStringUTF8(result);
+            NativeMethods.redlite_free_string(result);
+            return str;
+        }
+        finally
+        {
+            FreeStringArray(pathPtrs, pathsToUse.Length);
+        }
+    }
+
+    /// <summary>
+    /// JSON.DEL key [path] - Delete JSON values at the specified path.
+    /// </summary>
+    /// <param name="key">The key</param>
+    /// <param name="path">JSON path (defaults to "$")</param>
+    /// <returns>Number of paths deleted</returns>
+    public long JsonDel(string key, string path = "$")
+    {
+        ThrowIfDisposed();
+        return NativeMethods.redlite_json_del(_db, key, path);
+    }
+
+    /// <summary>
+    /// JSON.TYPE key [path] - Get the type of JSON value at the specified path.
+    /// </summary>
+    /// <param name="key">The key</param>
+    /// <param name="path">JSON path (defaults to "$")</param>
+    /// <returns>Type name or null if not found</returns>
+    public string? JsonType(string key, string path = "$")
+    {
+        ThrowIfDisposed();
+        var result = NativeMethods.redlite_json_type(_db, key, path);
+        if (result == IntPtr.Zero) return null;
+        var str = Marshal.PtrToStringUTF8(result);
+        NativeMethods.redlite_free_string(result);
+        return str;
+    }
+
+    /// <summary>
+    /// JSON.NUMINCRBY key path increment - Increment a JSON number.
+    /// </summary>
+    /// <param name="key">The key</param>
+    /// <param name="path">JSON path</param>
+    /// <param name="increment">Amount to increment</param>
+    /// <returns>New value as JSON string</returns>
+    public string? JsonNumIncrBy(string key, string path, double increment)
+    {
+        ThrowIfDisposed();
+        var result = NativeMethods.redlite_json_numincrby(_db, key, path, increment);
+        if (result == IntPtr.Zero) return null;
+        var str = Marshal.PtrToStringUTF8(result);
+        NativeMethods.redlite_free_string(result);
+        return str;
+    }
+
+    /// <summary>
+    /// JSON.STRAPPEND key path value - Append to a JSON string.
+    /// </summary>
+    /// <param name="key">The key</param>
+    /// <param name="path">JSON path</param>
+    /// <param name="value">String to append (JSON-encoded)</param>
+    /// <returns>New length of string</returns>
+    public long JsonStrAppend(string key, string path, string value)
+    {
+        ThrowIfDisposed();
+        var result = NativeMethods.redlite_json_strappend(_db, key, path, value);
+        if (result < 0)
+        {
+            throw new RedliteException(GetLastError() ?? "JSON.STRAPPEND failed");
+        }
+        return result;
+    }
+
+    /// <summary>
+    /// JSON.STRLEN key [path] - Get the length of a JSON string.
+    /// </summary>
+    /// <param name="key">The key</param>
+    /// <param name="path">JSON path (defaults to "$")</param>
+    /// <returns>Length of string</returns>
+    public long JsonStrLen(string key, string path = "$")
+    {
+        ThrowIfDisposed();
+        return NativeMethods.redlite_json_strlen(_db, key, path);
+    }
+
+    /// <summary>
+    /// JSON.ARRAPPEND key path value [value ...] - Append to a JSON array.
+    /// </summary>
+    /// <param name="key">The key</param>
+    /// <param name="path">JSON path</param>
+    /// <param name="values">JSON-encoded values to append</param>
+    /// <returns>New length of array</returns>
+    public long JsonArrAppend(string key, string path, params string[] values)
+    {
+        ThrowIfDisposed();
+        var valuePtrs = AllocateStringArray(values);
+        try
+        {
+            var result = NativeMethods.redlite_json_arrappend(_db, key, path, valuePtrs, (nuint)values.Length);
+            if (result < 0)
+            {
+                throw new RedliteException(GetLastError() ?? "JSON.ARRAPPEND failed");
+            }
+            return result;
+        }
+        finally
+        {
+            FreeStringArray(valuePtrs, values.Length);
+        }
+    }
+
+    /// <summary>
+    /// JSON.ARRLEN key [path] - Get the length of a JSON array.
+    /// </summary>
+    /// <param name="key">The key</param>
+    /// <param name="path">JSON path (defaults to "$")</param>
+    /// <returns>Length of array</returns>
+    public long JsonArrLen(string key, string path = "$")
+    {
+        ThrowIfDisposed();
+        return NativeMethods.redlite_json_arrlen(_db, key, path);
+    }
+
+    /// <summary>
+    /// JSON.ARRPOP key [path [index]] - Pop an element from a JSON array.
+    /// </summary>
+    /// <param name="key">The key</param>
+    /// <param name="path">JSON path (defaults to "$")</param>
+    /// <param name="index">Index to pop from (defaults to -1, last element)</param>
+    /// <returns>Popped value as JSON string</returns>
+    public string? JsonArrPop(string key, string path = "$", long index = -1)
+    {
+        ThrowIfDisposed();
+        var result = NativeMethods.redlite_json_arrpop(_db, key, path, index);
+        if (result == IntPtr.Zero) return null;
+        var str = Marshal.PtrToStringUTF8(result);
+        NativeMethods.redlite_free_string(result);
+        return str;
+    }
+
+    /// <summary>
+    /// JSON.CLEAR key [path] - Clear JSON arrays or objects.
+    /// </summary>
+    /// <param name="key">The key</param>
+    /// <param name="path">JSON path (defaults to "$")</param>
+    /// <returns>Number of values cleared</returns>
+    public long JsonClear(string key, string path = "$")
+    {
+        ThrowIfDisposed();
+        return NativeMethods.redlite_json_clear(_db, key, path);
+    }
+
+    // ==================== History Commands ====================
+
+    /// <summary>
+    /// Enable history tracking globally.
+    /// </summary>
+    /// <param name="retentionType">"unlimited", "time", or "count"</param>
+    /// <param name="retentionValue">Value for time (ms) or count retention</param>
+    public void HistoryEnableGlobal(string retentionType = "unlimited", long retentionValue = 0)
+    {
+        ThrowIfDisposed();
+        var result = NativeMethods.redlite_history_enable_global(_db, retentionType, retentionValue);
+        if (result < 0)
+        {
+            throw new RedliteException(GetLastError() ?? "HISTORY.ENABLE GLOBAL failed");
+        }
+    }
+
+    /// <summary>
+    /// Enable history tracking for a specific database.
+    /// </summary>
+    /// <param name="dbNum">Database number</param>
+    /// <param name="retentionType">"unlimited", "time", or "count"</param>
+    /// <param name="retentionValue">Value for time (ms) or count retention</param>
+    public void HistoryEnableDatabase(int dbNum, string retentionType = "unlimited", long retentionValue = 0)
+    {
+        ThrowIfDisposed();
+        var result = NativeMethods.redlite_history_enable_database(_db, dbNum, retentionType, retentionValue);
+        if (result < 0)
+        {
+            throw new RedliteException(GetLastError() ?? "HISTORY.ENABLE DATABASE failed");
+        }
+    }
+
+    /// <summary>
+    /// Enable history tracking for a specific key.
+    /// </summary>
+    /// <param name="key">Key to enable history for</param>
+    /// <param name="retentionType">"unlimited", "time", or "count"</param>
+    /// <param name="retentionValue">Value for time (ms) or count retention</param>
+    public void HistoryEnableKey(string key, string retentionType = "unlimited", long retentionValue = 0)
+    {
+        ThrowIfDisposed();
+        var result = NativeMethods.redlite_history_enable_key(_db, key, retentionType, retentionValue);
+        if (result < 0)
+        {
+            throw new RedliteException(GetLastError() ?? "HISTORY.ENABLE KEY failed");
+        }
+    }
+
+    /// <summary>
+    /// Disable history tracking globally.
+    /// </summary>
+    public void HistoryDisableGlobal()
+    {
+        ThrowIfDisposed();
+        var result = NativeMethods.redlite_history_disable_global(_db);
+        if (result < 0)
+        {
+            throw new RedliteException(GetLastError() ?? "HISTORY.DISABLE GLOBAL failed");
+        }
+    }
+
+    /// <summary>
+    /// Disable history tracking for a specific database.
+    /// </summary>
+    /// <param name="dbNum">Database number</param>
+    public void HistoryDisableDatabase(int dbNum)
+    {
+        ThrowIfDisposed();
+        var result = NativeMethods.redlite_history_disable_database(_db, dbNum);
+        if (result < 0)
+        {
+            throw new RedliteException(GetLastError() ?? "HISTORY.DISABLE DATABASE failed");
+        }
+    }
+
+    /// <summary>
+    /// Disable history tracking for a specific key.
+    /// </summary>
+    /// <param name="key">Key to disable history for</param>
+    public void HistoryDisableKey(string key)
+    {
+        ThrowIfDisposed();
+        var result = NativeMethods.redlite_history_disable_key(_db, key);
+        if (result < 0)
+        {
+            throw new RedliteException(GetLastError() ?? "HISTORY.DISABLE KEY failed");
+        }
+    }
+
+    /// <summary>
+    /// Check if history tracking is enabled for a key.
+    /// </summary>
+    /// <param name="key">Key to check</param>
+    /// <returns>True if history is enabled</returns>
+    public bool IsHistoryEnabled(string key)
+    {
+        ThrowIfDisposed();
+        return NativeMethods.redlite_is_history_enabled(_db, key) == 1;
+    }
+
+    // ==================== FTS (Full-Text Search) Commands ====================
+
+    /// <summary>
+    /// Enable FTS indexing globally.
+    /// </summary>
+    public void FtsEnableGlobal()
+    {
+        ThrowIfDisposed();
+        var result = NativeMethods.redlite_fts_enable_global(_db);
+        if (result < 0)
+        {
+            throw new RedliteException(GetLastError() ?? "FTS.ENABLE GLOBAL failed");
+        }
+    }
+
+    /// <summary>
+    /// Enable FTS indexing for a specific database.
+    /// </summary>
+    /// <param name="dbNum">Database number</param>
+    public void FtsEnableDatabase(int dbNum)
+    {
+        ThrowIfDisposed();
+        var result = NativeMethods.redlite_fts_enable_database(_db, dbNum);
+        if (result < 0)
+        {
+            throw new RedliteException(GetLastError() ?? "FTS.ENABLE DATABASE failed");
+        }
+    }
+
+    /// <summary>
+    /// Enable FTS indexing for keys matching a pattern.
+    /// </summary>
+    /// <param name="pattern">Glob pattern</param>
+    public void FtsEnablePattern(string pattern)
+    {
+        ThrowIfDisposed();
+        var result = NativeMethods.redlite_fts_enable_pattern(_db, pattern);
+        if (result < 0)
+        {
+            throw new RedliteException(GetLastError() ?? "FTS.ENABLE PATTERN failed");
+        }
+    }
+
+    /// <summary>
+    /// Enable FTS indexing for a specific key.
+    /// </summary>
+    /// <param name="key">Key to enable FTS for</param>
+    public void FtsEnableKey(string key)
+    {
+        ThrowIfDisposed();
+        var result = NativeMethods.redlite_fts_enable_key(_db, key);
+        if (result < 0)
+        {
+            throw new RedliteException(GetLastError() ?? "FTS.ENABLE KEY failed");
+        }
+    }
+
+    /// <summary>
+    /// Disable FTS indexing globally.
+    /// </summary>
+    public void FtsDisableGlobal()
+    {
+        ThrowIfDisposed();
+        var result = NativeMethods.redlite_fts_disable_global(_db);
+        if (result < 0)
+        {
+            throw new RedliteException(GetLastError() ?? "FTS.DISABLE GLOBAL failed");
+        }
+    }
+
+    /// <summary>
+    /// Disable FTS indexing for a specific database.
+    /// </summary>
+    /// <param name="dbNum">Database number</param>
+    public void FtsDisableDatabase(int dbNum)
+    {
+        ThrowIfDisposed();
+        var result = NativeMethods.redlite_fts_disable_database(_db, dbNum);
+        if (result < 0)
+        {
+            throw new RedliteException(GetLastError() ?? "FTS.DISABLE DATABASE failed");
+        }
+    }
+
+    /// <summary>
+    /// Disable FTS indexing for keys matching a pattern.
+    /// </summary>
+    /// <param name="pattern">Glob pattern</param>
+    public void FtsDisablePattern(string pattern)
+    {
+        ThrowIfDisposed();
+        var result = NativeMethods.redlite_fts_disable_pattern(_db, pattern);
+        if (result < 0)
+        {
+            throw new RedliteException(GetLastError() ?? "FTS.DISABLE PATTERN failed");
+        }
+    }
+
+    /// <summary>
+    /// Disable FTS indexing for a specific key.
+    /// </summary>
+    /// <param name="key">Key to disable FTS for</param>
+    public void FtsDisableKey(string key)
+    {
+        ThrowIfDisposed();
+        var result = NativeMethods.redlite_fts_disable_key(_db, key);
+        if (result < 0)
+        {
+            throw new RedliteException(GetLastError() ?? "FTS.DISABLE KEY failed");
+        }
+    }
+
+    /// <summary>
+    /// Check if FTS indexing is enabled for a key.
+    /// </summary>
+    /// <param name="key">Key to check</param>
+    /// <returns>True if FTS is enabled</returns>
+    public bool IsFtsEnabled(string key)
+    {
+        ThrowIfDisposed();
+        return NativeMethods.redlite_is_fts_enabled(_db, key) == 1;
+    }
+
+    // ==================== KeyInfo Command ====================
+
+    /// <summary>
+    /// KEYINFO - Get detailed information about a key.
+    /// </summary>
+    /// <param name="key">Key to get info for</param>
+    /// <returns>KeyInfo or null if key doesn't exist</returns>
+    public KeyInfo? KeyInfo(string key)
+    {
+        ThrowIfDisposed();
+        var info = NativeMethods.redlite_keyinfo(_db, key);
+        if (info.Valid == 0)
+        {
+            NativeMethods.redlite_free_keyinfo(info);
+            return null;
+        }
+
+        var keyType = info.KeyType != IntPtr.Zero ? Marshal.PtrToStringUTF8(info.KeyType) ?? "none" : "none";
+        var result = new KeyInfo(keyType, info.Ttl, info.CreatedAt, info.UpdatedAt);
+        NativeMethods.redlite_free_keyinfo(info);
+        return result;
+    }
+
     // ==================== Helper Methods ====================
 
     private static IntPtr AllocateStringArray(string[] strings)

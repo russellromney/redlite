@@ -10,6 +10,7 @@ package redlite
 */
 import "C"
 import (
+	"encoding/binary"
 	"errors"
 	"math"
 	"time"
@@ -1390,6 +1391,245 @@ func (db *EmbeddedDb) ZRevRange(key string, start, stop int64, withScores bool) 
 
 	result := C.redlite_zrevrange(db.handle, cKey, C.int64_t(start), C.int64_t(stop), withScoresInt)
 	return bytesArrayToGo(result), nil
+}
+
+// =============================================================================
+// New List Commands (Session 53)
+// =============================================================================
+
+// LPushX pushes values to the head of a list only if it exists.
+func (db *EmbeddedDb) LPushX(key string, values ...[]byte) (int64, error) {
+	if err := db.checkOpen(); err != nil {
+		return 0, err
+	}
+	if len(values) == 0 {
+		return 0, nil
+	}
+
+	cKey := C.CString(key)
+	defer C.free(unsafe.Pointer(cKey))
+
+	// Allocate C array
+	valuesPtr := C.malloc(C.size_t(len(values)) * C.size_t(unsafe.Sizeof(C.RedliteBytes{})))
+	defer C.free(valuesPtr)
+	cValues := (*[1 << 30]C.RedliteBytes)(valuesPtr)[:len(values):len(values)]
+
+	// Track C allocations for cleanup
+	cDataPtrs := make([]unsafe.Pointer, 0, len(values))
+	defer func() {
+		for _, p := range cDataPtrs {
+			C.free(p)
+		}
+	}()
+
+	for i, v := range values {
+		if len(v) > 0 {
+			cData := C.CBytes(v)
+			cDataPtrs = append(cDataPtrs, cData)
+			cValues[i] = C.RedliteBytes{
+				data: (*C.uint8_t)(cData),
+				len:  C.size_t(len(v)),
+			}
+		} else {
+			cValues[i] = C.RedliteBytes{data: nil, len: 0}
+		}
+	}
+
+	result := C.redlite_lpushx(db.handle, cKey, (*C.RedliteBytes)(valuesPtr), C.size_t(len(values)))
+	if result < 0 {
+		return 0, getLastError()
+	}
+	return int64(result), nil
+}
+
+// RPushX pushes values to the tail of a list only if it exists.
+func (db *EmbeddedDb) RPushX(key string, values ...[]byte) (int64, error) {
+	if err := db.checkOpen(); err != nil {
+		return 0, err
+	}
+	if len(values) == 0 {
+		return 0, nil
+	}
+
+	cKey := C.CString(key)
+	defer C.free(unsafe.Pointer(cKey))
+
+	// Allocate C array
+	valuesPtr := C.malloc(C.size_t(len(values)) * C.size_t(unsafe.Sizeof(C.RedliteBytes{})))
+	defer C.free(valuesPtr)
+	cValues := (*[1 << 30]C.RedliteBytes)(valuesPtr)[:len(values):len(values)]
+
+	// Track C allocations for cleanup
+	cDataPtrs := make([]unsafe.Pointer, 0, len(values))
+	defer func() {
+		for _, p := range cDataPtrs {
+			C.free(p)
+		}
+	}()
+
+	for i, v := range values {
+		if len(v) > 0 {
+			cData := C.CBytes(v)
+			cDataPtrs = append(cDataPtrs, cData)
+			cValues[i] = C.RedliteBytes{
+				data: (*C.uint8_t)(cData),
+				len:  C.size_t(len(v)),
+			}
+		} else {
+			cValues[i] = C.RedliteBytes{data: nil, len: 0}
+		}
+	}
+
+	result := C.redlite_rpushx(db.handle, cKey, (*C.RedliteBytes)(valuesPtr), C.size_t(len(values)))
+	if result < 0 {
+		return 0, getLastError()
+	}
+	return int64(result), nil
+}
+
+// ListDirection represents LEFT or RIGHT for LMOVE
+type ListDirection int
+
+const (
+	Left  ListDirection = 0
+	Right ListDirection = 1
+)
+
+// LMove atomically moves an element from source to destination.
+// wherefrom: Left (0) or Right (1) - where to pop from source
+// whereto: Left (0) or Right (1) - where to push to destination
+func (db *EmbeddedDb) LMove(source, destination string, wherefrom, whereto ListDirection) ([]byte, error) {
+	if err := db.checkOpen(); err != nil {
+		return nil, err
+	}
+
+	cSource := C.CString(source)
+	defer C.free(unsafe.Pointer(cSource))
+	cDest := C.CString(destination)
+	defer C.free(unsafe.Pointer(cDest))
+
+	result := C.redlite_lmove(db.handle, cSource, cDest, C.int(wherefrom), C.int(whereto))
+	return bytesToGo(result), nil
+}
+
+// LPos returns positions of element in the list.
+// rank: search direction (positive=left-to-right, negative=right-to-left), 0 means default (1)
+// count: number of matches to return, 0 means all
+// maxlen: max elements to scan, 0 means no limit
+func (db *EmbeddedDb) LPos(key string, element []byte, rank int64, count, maxlen int) ([]int64, error) {
+	if err := db.checkOpen(); err != nil {
+		return nil, err
+	}
+
+	cKey := C.CString(key)
+	defer C.free(unsafe.Pointer(cKey))
+
+	var dataPtr *C.uint8_t
+	if len(element) > 0 {
+		dataPtr = (*C.uint8_t)(unsafe.Pointer(&element[0]))
+	}
+
+	result := C.redlite_lpos(db.handle, cKey, dataPtr, C.size_t(len(element)), C.int64_t(rank), C.size_t(count), C.size_t(maxlen))
+	defer C.redlite_free_bytes_array(result)
+
+	if result.items == nil || result.len == 0 {
+		return nil, nil
+	}
+
+	// Parse positions from bytes array (each position is encoded as 8-byte little-endian i64)
+	positions := make([]int64, result.len)
+	items := (*[1 << 30]C.RedliteBytes)(unsafe.Pointer(result.items))[:result.len:result.len]
+	for i, item := range items {
+		if item.data != nil && item.len == 8 {
+			bytes := C.GoBytes(unsafe.Pointer(item.data), 8)
+			positions[i] = int64(binary.LittleEndian.Uint64(bytes))
+		}
+	}
+	return positions, nil
+}
+
+// =============================================================================
+// New Sorted Set Commands (Session 53)
+// =============================================================================
+
+// ZInterStore computes the intersection of sorted sets and stores result.
+// weights: optional weight multipliers for each set (nil for default 1.0)
+// aggregate: optional aggregation function ("SUM", "MIN", "MAX"), empty for default "SUM"
+func (db *EmbeddedDb) ZInterStore(destination string, keys []string, weights []float64, aggregate string) (int64, error) {
+	if err := db.checkOpen(); err != nil {
+		return 0, err
+	}
+	if len(keys) == 0 {
+		return 0, nil
+	}
+
+	cDest := C.CString(destination)
+	defer C.free(unsafe.Pointer(cDest))
+
+	cKeys := make([]*C.char, len(keys))
+	for i, k := range keys {
+		cKeys[i] = C.CString(k)
+		defer C.free(unsafe.Pointer(cKeys[i]))
+	}
+
+	var weightsPtr *C.double
+	weightsLen := C.size_t(0)
+	if len(weights) > 0 {
+		weightsPtr = (*C.double)(unsafe.Pointer(&weights[0]))
+		weightsLen = C.size_t(len(weights))
+	}
+
+	var cAggregate *C.char
+	if aggregate != "" {
+		cAggregate = C.CString(aggregate)
+		defer C.free(unsafe.Pointer(cAggregate))
+	}
+
+	result := C.redlite_zinterstore(db.handle, cDest, &cKeys[0], C.size_t(len(keys)), weightsPtr, weightsLen, cAggregate)
+	if result < 0 {
+		return 0, getLastError()
+	}
+	return int64(result), nil
+}
+
+// ZUnionStore computes the union of sorted sets and stores result.
+// weights: optional weight multipliers for each set (nil for default 1.0)
+// aggregate: optional aggregation function ("SUM", "MIN", "MAX"), empty for default "SUM"
+func (db *EmbeddedDb) ZUnionStore(destination string, keys []string, weights []float64, aggregate string) (int64, error) {
+	if err := db.checkOpen(); err != nil {
+		return 0, err
+	}
+	if len(keys) == 0 {
+		return 0, nil
+	}
+
+	cDest := C.CString(destination)
+	defer C.free(unsafe.Pointer(cDest))
+
+	cKeys := make([]*C.char, len(keys))
+	for i, k := range keys {
+		cKeys[i] = C.CString(k)
+		defer C.free(unsafe.Pointer(cKeys[i]))
+	}
+
+	var weightsPtr *C.double
+	weightsLen := C.size_t(0)
+	if len(weights) > 0 {
+		weightsPtr = (*C.double)(unsafe.Pointer(&weights[0]))
+		weightsLen = C.size_t(len(weights))
+	}
+
+	var cAggregate *C.char
+	if aggregate != "" {
+		cAggregate = C.CString(aggregate)
+		defer C.free(unsafe.Pointer(cAggregate))
+	}
+
+	result := C.redlite_zunionstore(db.handle, cDest, &cKeys[0], C.size_t(len(keys)), weightsPtr, weightsLen, cAggregate)
+	if result < 0 {
+		return 0, getLastError()
+	}
+	return int64(result), nil
 }
 
 // =============================================================================

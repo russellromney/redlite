@@ -1175,6 +1175,353 @@ defmodule Redlite do
   def vacuum(db), do: call(db, &Native.vacuum(&1))
 
   # =============================================================================
+  # JSON Commands (ReJSON-compatible)
+  # =============================================================================
+
+  @doc """
+  Set a JSON value at a path.
+
+  ## Options
+    * `:nx` - Only set if key does not exist
+    * `:xx` - Only set if key already exists
+
+  ## Examples
+
+      Redlite.json_set(db, "doc", "$", ~s({"name": "Alice"}))
+      Redlite.json_set(db, "doc", "$.age", "30", nx: true)
+  """
+  @spec json_set(server() | db(), key(), String.t(), String.t(), keyword()) ::
+          {:ok, boolean()} | {:error, term()}
+  def json_set(db, key, path, value, opts \\ []) do
+    nx = Keyword.get(opts, :nx, false)
+    xx = Keyword.get(opts, :xx, false)
+    call(db, &Native.json_set(&1, key, path, value, nx, xx))
+  end
+
+  @doc """
+  Get JSON value(s) at path(s).
+
+  ## Examples
+
+      Redlite.json_get(db, "doc")
+      Redlite.json_get(db, "doc", ["$.name", "$.age"])
+  """
+  @spec json_get(server() | db(), key(), [String.t()]) ::
+          {:ok, String.t() | nil} | {:error, term()}
+  def json_get(db, key, paths \\ ["$"]) do
+    call(db, &Native.json_get(&1, key, paths))
+  end
+
+  @doc """
+  Delete JSON value at path.
+
+  Returns the number of paths deleted.
+  """
+  @spec json_del(server() | db(), key(), String.t()) ::
+          {:ok, non_neg_integer()} | {:error, term()}
+  def json_del(db, key, path \\ "$") do
+    call(db, &Native.json_del(&1, key, path))
+  end
+
+  @doc """
+  Get the type of JSON value at path.
+
+  Returns: "object", "array", "string", "number", "boolean", "null", or nil if path doesn't exist.
+  """
+  @spec json_type(server() | db(), key(), String.t()) ::
+          {:ok, String.t() | nil} | {:error, term()}
+  def json_type(db, key, path \\ "$") do
+    call(db, &Native.json_type(&1, key, path))
+  end
+
+  @doc """
+  Increment numeric value at path.
+
+  Returns the new value as a string.
+  """
+  @spec json_numincrby(server() | db(), key(), String.t(), float()) ::
+          {:ok, String.t() | nil} | {:error, term()}
+  def json_numincrby(db, key, path, increment) do
+    call(db, &Native.json_numincrby(&1, key, path, increment * 1.0))
+  end
+
+  @doc """
+  Append to JSON string at path.
+
+  Returns the new string length.
+  """
+  @spec json_strappend(server() | db(), key(), String.t(), String.t()) ::
+          {:ok, non_neg_integer()} | {:error, term()}
+  def json_strappend(db, key, path, value) do
+    call(db, &Native.json_strappend(&1, key, path, value))
+  end
+
+  @doc """
+  Get length of JSON string at path.
+  """
+  @spec json_strlen(server() | db(), key(), String.t()) ::
+          {:ok, non_neg_integer()} | {:error, term()}
+  def json_strlen(db, key, path \\ "$") do
+    call(db, &Native.json_strlen(&1, key, path))
+  end
+
+  @doc """
+  Append values to JSON array at path.
+
+  Values should be JSON-encoded strings.
+  Returns the new array length.
+  """
+  @spec json_arrappend(server() | db(), key(), String.t(), [String.t()]) ::
+          {:ok, non_neg_integer()} | {:error, term()}
+  def json_arrappend(db, key, path, values) do
+    call(db, &Native.json_arrappend(&1, key, path, values))
+  end
+
+  @doc """
+  Get length of JSON array at path.
+  """
+  @spec json_arrlen(server() | db(), key(), String.t()) ::
+          {:ok, non_neg_integer()} | {:error, term()}
+  def json_arrlen(db, key, path \\ "$") do
+    call(db, &Native.json_arrlen(&1, key, path))
+  end
+
+  @doc """
+  Pop element from JSON array at path.
+
+  Index -1 pops the last element.
+  Returns the popped element as a JSON string.
+  """
+  @spec json_arrpop(server() | db(), key(), String.t(), integer()) ::
+          {:ok, String.t() | nil} | {:error, term()}
+  def json_arrpop(db, key, path \\ "$", index \\ -1) do
+    call(db, &Native.json_arrpop(&1, key, path, index))
+  end
+
+  @doc """
+  Clear container values (arrays/objects) at path.
+
+  Returns the number of containers cleared.
+  """
+  @spec json_clear(server() | db(), key(), String.t()) ::
+          {:ok, non_neg_integer()} | {:error, term()}
+  def json_clear(db, key, path \\ "$") do
+    call(db, &Native.json_clear(&1, key, path))
+  end
+
+  # =============================================================================
+  # History Commands
+  # =============================================================================
+
+  @doc """
+  Enable history tracking globally.
+
+  ## Options
+    * `:retention_type` - "unlimited", "time", or "count" (default: "unlimited")
+    * `:retention_value` - Value for time (ms) or count retention (default: 0)
+  """
+  @spec history_enable_global(server() | db(), keyword()) :: :ok | {:error, term()}
+  def history_enable_global(db, opts \\ []) do
+    retention_type = Keyword.get(opts, :retention_type, "unlimited")
+    retention_value = Keyword.get(opts, :retention_value, 0)
+
+    case call(db, &Native.history_enable_global(&1, retention_type, retention_value)) do
+      {:ok, true} -> :ok
+      error -> error
+    end
+  end
+
+  @doc """
+  Enable history tracking for a specific database.
+  """
+  @spec history_enable_database(server() | db(), non_neg_integer(), keyword()) ::
+          :ok | {:error, term()}
+  def history_enable_database(db, db_num, opts \\ []) do
+    retention_type = Keyword.get(opts, :retention_type, "unlimited")
+    retention_value = Keyword.get(opts, :retention_value, 0)
+
+    case call(db, &Native.history_enable_database(&1, db_num, retention_type, retention_value)) do
+      {:ok, true} -> :ok
+      error -> error
+    end
+  end
+
+  @doc """
+  Enable history tracking for a specific key.
+  """
+  @spec history_enable_key(server() | db(), key(), keyword()) :: :ok | {:error, term()}
+  def history_enable_key(db, key, opts \\ []) do
+    retention_type = Keyword.get(opts, :retention_type, "unlimited")
+    retention_value = Keyword.get(opts, :retention_value, 0)
+
+    case call(db, &Native.history_enable_key(&1, key, retention_type, retention_value)) do
+      {:ok, true} -> :ok
+      error -> error
+    end
+  end
+
+  @doc """
+  Disable history tracking globally.
+  """
+  @spec history_disable_global(server() | db()) :: :ok | {:error, term()}
+  def history_disable_global(db) do
+    case call(db, &Native.history_disable_global(&1)) do
+      {:ok, true} -> :ok
+      error -> error
+    end
+  end
+
+  @doc """
+  Disable history tracking for a specific database.
+  """
+  @spec history_disable_database(server() | db(), non_neg_integer()) :: :ok | {:error, term()}
+  def history_disable_database(db, db_num) do
+    case call(db, &Native.history_disable_database(&1, db_num)) do
+      {:ok, true} -> :ok
+      error -> error
+    end
+  end
+
+  @doc """
+  Disable history tracking for a specific key.
+  """
+  @spec history_disable_key(server() | db(), key()) :: :ok | {:error, term()}
+  def history_disable_key(db, key) do
+    case call(db, &Native.history_disable_key(&1, key)) do
+      {:ok, true} -> :ok
+      error -> error
+    end
+  end
+
+  @doc """
+  Check if history tracking is enabled for a key.
+  """
+  @spec history_enabled?(server() | db(), key()) :: {:ok, boolean()} | {:error, term()}
+  def history_enabled?(db, key) do
+    call(db, &Native.is_history_enabled(&1, key))
+  end
+
+  # =============================================================================
+  # FTS (Full-Text Search) Commands
+  # =============================================================================
+
+  @doc """
+  Enable full-text search globally.
+  """
+  @spec fts_enable_global(server() | db()) :: :ok | {:error, term()}
+  def fts_enable_global(db) do
+    case call(db, &Native.fts_enable_global(&1)) do
+      {:ok, true} -> :ok
+      error -> error
+    end
+  end
+
+  @doc """
+  Enable full-text search for a specific database.
+  """
+  @spec fts_enable_database(server() | db(), non_neg_integer()) :: :ok | {:error, term()}
+  def fts_enable_database(db, db_num) do
+    case call(db, &Native.fts_enable_database(&1, db_num)) do
+      {:ok, true} -> :ok
+      error -> error
+    end
+  end
+
+  @doc """
+  Enable full-text search for keys matching a pattern.
+  """
+  @spec fts_enable_pattern(server() | db(), pattern()) :: :ok | {:error, term()}
+  def fts_enable_pattern(db, pattern) do
+    case call(db, &Native.fts_enable_pattern(&1, pattern)) do
+      {:ok, true} -> :ok
+      error -> error
+    end
+  end
+
+  @doc """
+  Enable full-text search for a specific key.
+  """
+  @spec fts_enable_key(server() | db(), key()) :: :ok | {:error, term()}
+  def fts_enable_key(db, key) do
+    case call(db, &Native.fts_enable_key(&1, key)) do
+      {:ok, true} -> :ok
+      error -> error
+    end
+  end
+
+  @doc """
+  Disable full-text search globally.
+  """
+  @spec fts_disable_global(server() | db()) :: :ok | {:error, term()}
+  def fts_disable_global(db) do
+    case call(db, &Native.fts_disable_global(&1)) do
+      {:ok, true} -> :ok
+      error -> error
+    end
+  end
+
+  @doc """
+  Disable full-text search for a specific database.
+  """
+  @spec fts_disable_database(server() | db(), non_neg_integer()) :: :ok | {:error, term()}
+  def fts_disable_database(db, db_num) do
+    case call(db, &Native.fts_disable_database(&1, db_num)) do
+      {:ok, true} -> :ok
+      error -> error
+    end
+  end
+
+  @doc """
+  Disable full-text search for keys matching a pattern.
+  """
+  @spec fts_disable_pattern(server() | db(), pattern()) :: :ok | {:error, term()}
+  def fts_disable_pattern(db, pattern) do
+    case call(db, &Native.fts_disable_pattern(&1, pattern)) do
+      {:ok, true} -> :ok
+      error -> error
+    end
+  end
+
+  @doc """
+  Disable full-text search for a specific key.
+  """
+  @spec fts_disable_key(server() | db(), key()) :: :ok | {:error, term()}
+  def fts_disable_key(db, key) do
+    case call(db, &Native.fts_disable_key(&1, key)) do
+      {:ok, true} -> :ok
+      error -> error
+    end
+  end
+
+  @doc """
+  Check if full-text search is enabled for a key.
+  """
+  @spec fts_enabled?(server() | db(), key()) :: {:ok, boolean()} | {:error, term()}
+  def fts_enabled?(db, key) do
+    call(db, &Native.is_fts_enabled(&1, key))
+  end
+
+  # =============================================================================
+  # KeyInfo Command
+  # =============================================================================
+
+  @doc """
+  Get detailed information about a key.
+
+  Returns a map with:
+    * `:type` - Key type (string, list, set, zset, hash, stream, none)
+    * `:ttl` - Time to live in milliseconds (-1 if no expiry, -2 if key doesn't exist)
+    * `:created_at` - Unix timestamp when key was created
+    * `:updated_at` - Unix timestamp when key was last updated
+  """
+  @spec keyinfo(server() | db(), key()) ::
+          {:ok, %{type: String.t(), ttl: integer(), created_at: integer(), updated_at: integer()} | nil}
+          | {:error, term()}
+  def keyinfo(db, key) do
+    call(db, &Native.keyinfo(&1, key))
+  end
+
+  # =============================================================================
   # Private Helpers
   # =============================================================================
 

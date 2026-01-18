@@ -13,11 +13,7 @@ defmodule Redlite.MixProject do
       deps: deps(),
       description: description(),
       package: package(),
-      docs: docs(),
-
-      # Rustler
-      compilers: [:rustler] ++ Mix.compilers(),
-      rustler_crates: [redlite_nif: []]
+      docs: docs()
     ]
   end
 
@@ -29,8 +25,8 @@ defmodule Redlite.MixProject do
 
   defp deps do
     [
-      {:rustler, "~> 0.30"},
-      {:rustler_precompiled, "~> 0.7"},
+      {:rustler, "~> 0.37"},
+      {:rustler_precompiled, "~> 0.8"},
       {:yaml_elixir, "~> 2.9", only: [:dev, :test]},
       {:ex_doc, "~> 0.31", only: :dev, runtime: false}
     ]

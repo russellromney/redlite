@@ -77,11 +77,15 @@ pub const hmget = c.redlite_hmget;
 // List commands
 pub const lpush = c.redlite_lpush;
 pub const rpush = c.redlite_rpush;
+pub const lpushx = c.redlite_lpushx;
+pub const rpushx = c.redlite_rpushx;
 pub const lpop = c.redlite_lpop;
 pub const rpop = c.redlite_rpop;
 pub const llen = c.redlite_llen;
 pub const lrange = c.redlite_lrange;
 pub const lindex = c.redlite_lindex;
+pub const lmove = c.redlite_lmove;
+pub const lpos = c.redlite_lpos;
 
 // Set commands
 pub const sadd = c.redlite_sadd;
@@ -99,7 +103,46 @@ pub const zcount = c.redlite_zcount;
 pub const zincrby = c.redlite_zincrby;
 pub const zrange = c.redlite_zrange;
 pub const zrevrange = c.redlite_zrevrange;
+pub const zinterstore = c.redlite_zinterstore;
+pub const zunionstore = c.redlite_zunionstore;
 
 // Server commands
 pub const vacuum = c.redlite_vacuum;
 pub const version = c.redlite_version;
+
+// KeyInfo command
+pub const RedliteKeyInfo = c.RedliteKeyInfo;
+pub const keyinfo = c.redlite_keyinfo;
+
+// JSON commands
+pub const json_set = c.redlite_json_set;
+pub const json_get = c.redlite_json_get;
+pub const json_del = c.redlite_json_del;
+pub const json_type = c.redlite_json_type;
+pub const json_numincrby = c.redlite_json_numincrby;
+pub const json_strappend = c.redlite_json_strappend;
+pub const json_strlen = c.redlite_json_strlen;
+pub const json_arrappend = c.redlite_json_arrappend;
+pub const json_arrlen = c.redlite_json_arrlen;
+pub const json_arrpop = c.redlite_json_arrpop;
+pub const json_clear = c.redlite_json_clear;
+
+// History commands
+pub const history_enable_global = c.redlite_history_enable_global;
+pub const history_enable_db = c.redlite_history_enable_db;
+pub const history_enable_key = c.redlite_history_enable_key;
+pub const history_disable_global = c.redlite_history_disable_global;
+pub const history_disable_db = c.redlite_history_disable_db;
+pub const history_disable_key = c.redlite_history_disable_key;
+pub const history_is_enabled = c.redlite_history_is_enabled;
+
+// FTS commands
+pub const fts_enable_global = c.redlite_fts_enable_global;
+pub const fts_enable_db = c.redlite_fts_enable_db;
+pub const fts_enable_pattern = c.redlite_fts_enable_pattern;
+pub const fts_enable_key = c.redlite_fts_enable_key;
+pub const fts_disable_global = c.redlite_fts_disable_global;
+pub const fts_disable_db = c.redlite_fts_disable_db;
+pub const fts_disable_pattern = c.redlite_fts_disable_pattern;
+pub const fts_disable_key = c.redlite_fts_disable_key;
+pub const fts_is_enabled = c.redlite_fts_is_enabled;

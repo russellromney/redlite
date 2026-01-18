@@ -5,7 +5,7 @@ mod types;
 
 use db::DbCore;
 use error::{Result, WasmError};
-use types::{KeyInfo, KeyType, SetOptions, ZMember};
+use types::{HistoryRetention, JsonSetOptions, KeyInfo, KeyType, SetOptions, ZMember};
 use wasm_bindgen::prelude::*;
 
 /// Redlite WASM - Redis-compatible embedded database for WebAssembly
@@ -1079,5 +1079,262 @@ impl RedliteWasm {
         stmt.bind_double(3, max)?;
         stmt.step()?;
         Ok(stmt.column_int64(0))
+    }
+
+    // ========================================================================
+    // KeyInfo Command
+    // ========================================================================
+
+    /// KEYINFO key - Get detailed information about a key
+    pub fn keyinfo(&self, key: &str) -> std::result::Result<Option<KeyInfo>, JsError> {
+        let sql = "SELECT type, expire_at, created_at, updated_at FROM keys WHERE db = ?1 AND key = ?2";
+        let mut stmt = self.core.prepare(sql)?;
+        stmt.bind_int(1, self.core.selected_db())?;
+        stmt.bind_text(2, key)?;
+
+        if stmt.step()? {
+            let type_id = stmt.column_int(0);
+            let expire_at = stmt.column_int64_opt(1);
+            let created_at = stmt.column_int64(2);
+            let updated_at = stmt.column_int64(3);
+
+            // Calculate TTL
+            let ttl = match expire_at {
+                Some(exp) => {
+                    let now = DbCore::now_ms();
+                    if exp <= now {
+                        -2 // Expired
+                    } else {
+                        (exp - now) / 1000 // Convert to seconds
+                    }
+                }
+                None => -1, // No TTL
+            };
+
+            let key_type = KeyType::from_i32(type_id).unwrap_or(KeyType::String);
+
+            Ok(Some(KeyInfo {
+                key_type,
+                ttl,
+                created_at,
+                updated_at,
+            }))
+        } else {
+            Ok(None)
+        }
+    }
+
+    // ========================================================================
+    // JSON Commands (ReJSON-compatible)
+    // ========================================================================
+
+    /// JSON.SET key path value [NX|XX] - Set a JSON value at the specified path
+    #[wasm_bindgen(js_name = "jsonSet")]
+    pub fn json_set(
+        &mut self,
+        key: &str,
+        path: &str,
+        value: &str,
+        options: Option<JsonSetOptions>,
+    ) -> std::result::Result<bool, JsError> {
+        Err(WasmError::NotImplemented("JSON.SET".to_string()).into())
+    }
+
+    /// JSON.GET key [path ...] - Get JSON values at the specified paths
+    #[wasm_bindgen(js_name = "jsonGet")]
+    pub fn json_get(&self, key: &str, paths: Vec<String>) -> std::result::Result<Option<String>, JsError> {
+        Err(WasmError::NotImplemented("JSON.GET".to_string()).into())
+    }
+
+    /// JSON.DEL key [path] - Delete JSON values at the specified path
+    #[wasm_bindgen(js_name = "jsonDel")]
+    pub fn json_del(&mut self, key: &str, path: &str) -> std::result::Result<i64, JsError> {
+        Err(WasmError::NotImplemented("JSON.DEL".to_string()).into())
+    }
+
+    /// JSON.TYPE key [path] - Get the type of JSON value at the specified path
+    #[wasm_bindgen(js_name = "jsonType")]
+    pub fn json_type(&self, key: &str, path: &str) -> std::result::Result<Option<String>, JsError> {
+        Err(WasmError::NotImplemented("JSON.TYPE".to_string()).into())
+    }
+
+    /// JSON.NUMINCRBY key path increment - Increment a JSON number
+    #[wasm_bindgen(js_name = "jsonNumIncrBy")]
+    pub fn json_num_incr_by(
+        &mut self,
+        key: &str,
+        path: &str,
+        increment: f64,
+    ) -> std::result::Result<Option<String>, JsError> {
+        Err(WasmError::NotImplemented("JSON.NUMINCRBY".to_string()).into())
+    }
+
+    /// JSON.STRAPPEND key path value - Append to a JSON string
+    #[wasm_bindgen(js_name = "jsonStrAppend")]
+    pub fn json_str_append(
+        &mut self,
+        key: &str,
+        path: &str,
+        value: &str,
+    ) -> std::result::Result<i64, JsError> {
+        Err(WasmError::NotImplemented("JSON.STRAPPEND".to_string()).into())
+    }
+
+    /// JSON.STRLEN key [path] - Get the length of a JSON string
+    #[wasm_bindgen(js_name = "jsonStrLen")]
+    pub fn json_str_len(&self, key: &str, path: &str) -> std::result::Result<i64, JsError> {
+        Err(WasmError::NotImplemented("JSON.STRLEN".to_string()).into())
+    }
+
+    /// JSON.ARRAPPEND key path value [value ...] - Append to a JSON array
+    #[wasm_bindgen(js_name = "jsonArrAppend")]
+    pub fn json_arr_append(
+        &mut self,
+        key: &str,
+        path: &str,
+        values: Vec<String>,
+    ) -> std::result::Result<i64, JsError> {
+        Err(WasmError::NotImplemented("JSON.ARRAPPEND".to_string()).into())
+    }
+
+    /// JSON.ARRLEN key [path] - Get the length of a JSON array
+    #[wasm_bindgen(js_name = "jsonArrLen")]
+    pub fn json_arr_len(&self, key: &str, path: &str) -> std::result::Result<i64, JsError> {
+        Err(WasmError::NotImplemented("JSON.ARRLEN".to_string()).into())
+    }
+
+    /// JSON.ARRPOP key [path [index]] - Pop an element from a JSON array
+    #[wasm_bindgen(js_name = "jsonArrPop")]
+    pub fn json_arr_pop(
+        &mut self,
+        key: &str,
+        path: &str,
+        index: Option<i64>,
+    ) -> std::result::Result<Option<String>, JsError> {
+        Err(WasmError::NotImplemented("JSON.ARRPOP".to_string()).into())
+    }
+
+    /// JSON.CLEAR key [path] - Clear JSON arrays or objects
+    #[wasm_bindgen(js_name = "jsonClear")]
+    pub fn json_clear(&mut self, key: &str, path: &str) -> std::result::Result<i64, JsError> {
+        Err(WasmError::NotImplemented("JSON.CLEAR".to_string()).into())
+    }
+
+    // ========================================================================
+    // History Enable/Disable Commands
+    // ========================================================================
+
+    /// Enable history tracking globally
+    #[wasm_bindgen(js_name = "historyEnableGlobal")]
+    pub fn history_enable_global(
+        &mut self,
+        retention: HistoryRetention,
+        retention_value: i64,
+    ) -> std::result::Result<(), JsError> {
+        Err(WasmError::NotImplemented("HISTORY.ENABLE GLOBAL".to_string()).into())
+    }
+
+    /// Enable history tracking for a specific database
+    #[wasm_bindgen(js_name = "historyEnableDb")]
+    pub fn history_enable_db(
+        &mut self,
+        db_num: i32,
+        retention: HistoryRetention,
+        retention_value: i64,
+    ) -> std::result::Result<(), JsError> {
+        Err(WasmError::NotImplemented("HISTORY.ENABLE DB".to_string()).into())
+    }
+
+    /// Enable history tracking for a specific key
+    #[wasm_bindgen(js_name = "historyEnableKey")]
+    pub fn history_enable_key(
+        &mut self,
+        key: &str,
+        retention: HistoryRetention,
+        retention_value: i64,
+    ) -> std::result::Result<(), JsError> {
+        Err(WasmError::NotImplemented("HISTORY.ENABLE KEY".to_string()).into())
+    }
+
+    /// Disable history tracking globally
+    #[wasm_bindgen(js_name = "historyDisableGlobal")]
+    pub fn history_disable_global(&mut self) -> std::result::Result<(), JsError> {
+        Err(WasmError::NotImplemented("HISTORY.DISABLE GLOBAL".to_string()).into())
+    }
+
+    /// Disable history tracking for a specific database
+    #[wasm_bindgen(js_name = "historyDisableDb")]
+    pub fn history_disable_db(&mut self, db_num: i32) -> std::result::Result<(), JsError> {
+        Err(WasmError::NotImplemented("HISTORY.DISABLE DB".to_string()).into())
+    }
+
+    /// Disable history tracking for a specific key
+    #[wasm_bindgen(js_name = "historyDisableKey")]
+    pub fn history_disable_key(&mut self, key: &str) -> std::result::Result<(), JsError> {
+        Err(WasmError::NotImplemented("HISTORY.DISABLE KEY".to_string()).into())
+    }
+
+    /// Check if history tracking is enabled for a key
+    #[wasm_bindgen(js_name = "historyIsEnabled")]
+    pub fn history_is_enabled(&self, key: &str) -> std::result::Result<bool, JsError> {
+        Err(WasmError::NotImplemented("HISTORY.ISENABLED".to_string()).into())
+    }
+
+    // ========================================================================
+    // FTS Enable/Disable Commands
+    // ========================================================================
+
+    /// Enable FTS indexing globally
+    #[wasm_bindgen(js_name = "ftsEnableGlobal")]
+    pub fn fts_enable_global(&mut self) -> std::result::Result<(), JsError> {
+        Err(WasmError::NotImplemented("FTS.ENABLE GLOBAL".to_string()).into())
+    }
+
+    /// Enable FTS indexing for a specific database
+    #[wasm_bindgen(js_name = "ftsEnableDb")]
+    pub fn fts_enable_db(&mut self, db_num: i32) -> std::result::Result<(), JsError> {
+        Err(WasmError::NotImplemented("FTS.ENABLE DB".to_string()).into())
+    }
+
+    /// Enable FTS indexing for a key pattern
+    #[wasm_bindgen(js_name = "ftsEnablePattern")]
+    pub fn fts_enable_pattern(&mut self, pattern: &str) -> std::result::Result<(), JsError> {
+        Err(WasmError::NotImplemented("FTS.ENABLE PATTERN".to_string()).into())
+    }
+
+    /// Enable FTS indexing for a specific key
+    #[wasm_bindgen(js_name = "ftsEnableKey")]
+    pub fn fts_enable_key(&mut self, key: &str) -> std::result::Result<(), JsError> {
+        Err(WasmError::NotImplemented("FTS.ENABLE KEY".to_string()).into())
+    }
+
+    /// Disable FTS indexing globally
+    #[wasm_bindgen(js_name = "ftsDisableGlobal")]
+    pub fn fts_disable_global(&mut self) -> std::result::Result<(), JsError> {
+        Err(WasmError::NotImplemented("FTS.DISABLE GLOBAL".to_string()).into())
+    }
+
+    /// Disable FTS indexing for a specific database
+    #[wasm_bindgen(js_name = "ftsDisableDb")]
+    pub fn fts_disable_db(&mut self, db_num: i32) -> std::result::Result<(), JsError> {
+        Err(WasmError::NotImplemented("FTS.DISABLE DB".to_string()).into())
+    }
+
+    /// Disable FTS indexing for a key pattern
+    #[wasm_bindgen(js_name = "ftsDisablePattern")]
+    pub fn fts_disable_pattern(&mut self, pattern: &str) -> std::result::Result<(), JsError> {
+        Err(WasmError::NotImplemented("FTS.DISABLE PATTERN".to_string()).into())
+    }
+
+    /// Disable FTS indexing for a specific key
+    #[wasm_bindgen(js_name = "ftsDisableKey")]
+    pub fn fts_disable_key(&mut self, key: &str) -> std::result::Result<(), JsError> {
+        Err(WasmError::NotImplemented("FTS.DISABLE KEY".to_string()).into())
+    }
+
+    /// Check if FTS indexing is enabled for a key
+    #[wasm_bindgen(js_name = "ftsIsEnabled")]
+    pub fn fts_is_enabled(&self, key: &str) -> std::result::Result<bool, JsError> {
+        Err(WasmError::NotImplemented("FTS.ISENABLED".to_string()).into())
     }
 }

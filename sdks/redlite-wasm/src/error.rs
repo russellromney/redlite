@@ -47,6 +47,9 @@ pub enum WasmError {
 
     #[error("{0}")]
     Other(String),
+
+    #[error("{0} not yet implemented")]
+    NotImplemented(String),
 }
 
 impl From<sqlite_wasm_rs::Error> for WasmError {

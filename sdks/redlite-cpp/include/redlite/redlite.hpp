@@ -133,6 +133,50 @@ extern "C" {
     // Server commands
     int64_t redlite_vacuum(RedliteDb* db);
     char* redlite_version();
+
+    // JSON commands (ReJSON-compatible)
+    int redlite_json_set(RedliteDb* db, const char* key, const char* path, const char* value, int nx, int xx);
+    char* redlite_json_get(RedliteDb* db, const char* key, const char** paths, size_t paths_len);
+    int64_t redlite_json_del(RedliteDb* db, const char* key, const char* path);
+    char* redlite_json_type(RedliteDb* db, const char* key, const char* path);
+    char* redlite_json_numincrby(RedliteDb* db, const char* key, const char* path, double increment);
+    int64_t redlite_json_strappend(RedliteDb* db, const char* key, const char* path, const char* value);
+    int64_t redlite_json_strlen(RedliteDb* db, const char* key, const char* path);
+    int64_t redlite_json_arrappend(RedliteDb* db, const char* key, const char* path, const char** values, size_t values_len);
+    int64_t redlite_json_arrlen(RedliteDb* db, const char* key, const char* path);
+    char* redlite_json_arrpop(RedliteDb* db, const char* key, const char* path, int64_t index);
+    int64_t redlite_json_clear(RedliteDb* db, const char* key, const char* path);
+
+    // History enable/disable commands
+    int redlite_history_enable_global(RedliteDb* db, const char* retention_type, int64_t retention_value);
+    int redlite_history_enable_database(RedliteDb* db, int db_num, const char* retention_type, int64_t retention_value);
+    int redlite_history_enable_key(RedliteDb* db, const char* key, const char* retention_type, int64_t retention_value);
+    int redlite_history_disable_global(RedliteDb* db);
+    int redlite_history_disable_database(RedliteDb* db, int db_num);
+    int redlite_history_disable_key(RedliteDb* db, const char* key);
+    int redlite_is_history_enabled(RedliteDb* db, const char* key);
+
+    // FTS enable/disable commands
+    int redlite_fts_enable_global(RedliteDb* db);
+    int redlite_fts_enable_database(RedliteDb* db, int db_num);
+    int redlite_fts_enable_pattern(RedliteDb* db, const char* pattern);
+    int redlite_fts_enable_key(RedliteDb* db, const char* key);
+    int redlite_fts_disable_global(RedliteDb* db);
+    int redlite_fts_disable_database(RedliteDb* db, int db_num);
+    int redlite_fts_disable_pattern(RedliteDb* db, const char* pattern);
+    int redlite_fts_disable_key(RedliteDb* db, const char* key);
+    int redlite_is_fts_enabled(RedliteDb* db, const char* key);
+
+    // KeyInfo command
+    struct RedliteKeyInfo {
+        char* key_type;
+        int64_t ttl;
+        int64_t created_at;
+        int64_t updated_at;
+        int valid;
+    };
+    RedliteKeyInfo redlite_keyinfo(RedliteDb* db, const char* key);
+    void redlite_free_keyinfo(RedliteKeyInfo info);
 }
 
 namespace redlite {
@@ -187,6 +231,24 @@ struct ZMember {
     std::string member;
 
     ZMember(double s, std::string_view m) : score(s), member(m) {}
+};
+
+/**
+ * Key information returned by keyinfo()
+ */
+struct KeyInfo {
+    std::string type;
+    int64_t ttl;
+    int64_t created_at;
+    int64_t updated_at;
+};
+
+/**
+ * JSON SET options
+ */
+struct JsonSetOptions {
+    bool nx = false;  // Only set if not exists
+    bool xx = false;  // Only set if exists
 };
 
 /**
@@ -1063,6 +1125,310 @@ public:
         if (!v) return "";
         std::string result(v);
         redlite_free_string(v);
+        return result;
+    }
+
+    // ==================== JSON Commands ====================
+
+    /**
+     * JSON.SET key path value [NX|XX]
+     * @return true if set, false if NX/XX condition not met
+     */
+    bool json_set(std::string_view key, std::string_view path, std::string_view value,
+                  const JsonSetOptions& opts = {}) {
+        int result = redlite_json_set(db_, std::string(key).c_str(),
+                                      std::string(path).c_str(),
+                                      std::string(value).c_str(),
+                                      opts.nx ? 1 : 0, opts.xx ? 1 : 0);
+        if (result < 0) throw Error::from_last_error();
+        return result == 1;
+    }
+
+    /**
+     * JSON.GET key [path ...]
+     * @return JSON-encoded result or empty if not found
+     */
+    std::optional<std::string> json_get(std::string_view key,
+                                        const std::vector<std::string>& paths = {"$"}) {
+        std::vector<const char*> path_ptrs;
+        path_ptrs.reserve(paths.size());
+        for (const auto& p : paths) path_ptrs.push_back(p.c_str());
+
+        char* result = redlite_json_get(db_, std::string(key).c_str(),
+                                        path_ptrs.data(), path_ptrs.size());
+        if (!result) return std::nullopt;
+        std::string str(result);
+        redlite_free_string(result);
+        return str;
+    }
+
+    /**
+     * JSON.DEL key [path]
+     * @return Number of paths deleted
+     */
+    int64_t json_del(std::string_view key, std::string_view path = "$") {
+        return redlite_json_del(db_, std::string(key).c_str(),
+                               std::string(path).c_str());
+    }
+
+    /**
+     * JSON.TYPE key [path]
+     * @return Type name or empty if not found
+     */
+    std::optional<std::string> json_type(std::string_view key, std::string_view path = "$") {
+        char* result = redlite_json_type(db_, std::string(key).c_str(),
+                                         std::string(path).c_str());
+        if (!result) return std::nullopt;
+        std::string str(result);
+        redlite_free_string(result);
+        return str;
+    }
+
+    /**
+     * JSON.NUMINCRBY key path increment
+     * @return New value as JSON string
+     */
+    std::optional<std::string> json_numincrby(std::string_view key, std::string_view path,
+                                               double increment) {
+        char* result = redlite_json_numincrby(db_, std::string(key).c_str(),
+                                              std::string(path).c_str(), increment);
+        if (!result) return std::nullopt;
+        std::string str(result);
+        redlite_free_string(result);
+        return str;
+    }
+
+    /**
+     * JSON.STRAPPEND key path value
+     * @return New length of string
+     */
+    int64_t json_strappend(std::string_view key, std::string_view path, std::string_view value) {
+        int64_t result = redlite_json_strappend(db_, std::string(key).c_str(),
+                                                std::string(path).c_str(),
+                                                std::string(value).c_str());
+        if (result < 0) throw Error::from_last_error();
+        return result;
+    }
+
+    /**
+     * JSON.STRLEN key [path]
+     * @return Length of string
+     */
+    int64_t json_strlen(std::string_view key, std::string_view path = "$") {
+        return redlite_json_strlen(db_, std::string(key).c_str(),
+                                   std::string(path).c_str());
+    }
+
+    /**
+     * JSON.ARRAPPEND key path value [value ...]
+     * @return New length of array
+     */
+    int64_t json_arrappend(std::string_view key, std::string_view path,
+                           const std::vector<std::string>& values) {
+        std::vector<const char*> value_ptrs;
+        value_ptrs.reserve(values.size());
+        for (const auto& v : values) value_ptrs.push_back(v.c_str());
+
+        int64_t result = redlite_json_arrappend(db_, std::string(key).c_str(),
+                                                std::string(path).c_str(),
+                                                value_ptrs.data(), value_ptrs.size());
+        if (result < 0) throw Error::from_last_error();
+        return result;
+    }
+
+    /**
+     * JSON.ARRLEN key [path]
+     * @return Length of array
+     */
+    int64_t json_arrlen(std::string_view key, std::string_view path = "$") {
+        return redlite_json_arrlen(db_, std::string(key).c_str(),
+                                   std::string(path).c_str());
+    }
+
+    /**
+     * JSON.ARRPOP key [path [index]]
+     * @return Popped value as JSON string
+     */
+    std::optional<std::string> json_arrpop(std::string_view key, std::string_view path = "$",
+                                            int64_t index = -1) {
+        char* result = redlite_json_arrpop(db_, std::string(key).c_str(),
+                                           std::string(path).c_str(), index);
+        if (!result) return std::nullopt;
+        std::string str(result);
+        redlite_free_string(result);
+        return str;
+    }
+
+    /**
+     * JSON.CLEAR key [path]
+     * @return Number of values cleared
+     */
+    int64_t json_clear(std::string_view key, std::string_view path = "$") {
+        return redlite_json_clear(db_, std::string(key).c_str(),
+                                  std::string(path).c_str());
+    }
+
+    // ==================== History Commands ====================
+
+    /**
+     * Enable history tracking globally
+     * @param retention_type "unlimited", "time", or "count"
+     * @param retention_value Value for time (ms) or count retention
+     */
+    void history_enable_global(std::string_view retention_type = "unlimited",
+                               int64_t retention_value = 0) {
+        int result = redlite_history_enable_global(db_, std::string(retention_type).c_str(),
+                                                   retention_value);
+        if (result < 0) throw Error::from_last_error();
+    }
+
+    /**
+     * Enable history tracking for a specific database
+     */
+    void history_enable_database(int db_num, std::string_view retention_type = "unlimited",
+                                 int64_t retention_value = 0) {
+        int result = redlite_history_enable_database(db_, db_num,
+                                                     std::string(retention_type).c_str(),
+                                                     retention_value);
+        if (result < 0) throw Error::from_last_error();
+    }
+
+    /**
+     * Enable history tracking for a specific key
+     */
+    void history_enable_key(std::string_view key, std::string_view retention_type = "unlimited",
+                            int64_t retention_value = 0) {
+        int result = redlite_history_enable_key(db_, std::string(key).c_str(),
+                                                std::string(retention_type).c_str(),
+                                                retention_value);
+        if (result < 0) throw Error::from_last_error();
+    }
+
+    /**
+     * Disable history tracking globally
+     */
+    void history_disable_global() {
+        int result = redlite_history_disable_global(db_);
+        if (result < 0) throw Error::from_last_error();
+    }
+
+    /**
+     * Disable history tracking for a specific database
+     */
+    void history_disable_database(int db_num) {
+        int result = redlite_history_disable_database(db_, db_num);
+        if (result < 0) throw Error::from_last_error();
+    }
+
+    /**
+     * Disable history tracking for a specific key
+     */
+    void history_disable_key(std::string_view key) {
+        int result = redlite_history_disable_key(db_, std::string(key).c_str());
+        if (result < 0) throw Error::from_last_error();
+    }
+
+    /**
+     * Check if history tracking is enabled for a key
+     */
+    bool is_history_enabled(std::string_view key) {
+        return redlite_is_history_enabled(db_, std::string(key).c_str()) == 1;
+    }
+
+    // ==================== FTS Commands ====================
+
+    /**
+     * Enable FTS indexing globally
+     */
+    void fts_enable_global() {
+        int result = redlite_fts_enable_global(db_);
+        if (result < 0) throw Error::from_last_error();
+    }
+
+    /**
+     * Enable FTS indexing for a specific database
+     */
+    void fts_enable_database(int db_num) {
+        int result = redlite_fts_enable_database(db_, db_num);
+        if (result < 0) throw Error::from_last_error();
+    }
+
+    /**
+     * Enable FTS indexing for keys matching a pattern
+     */
+    void fts_enable_pattern(std::string_view pattern) {
+        int result = redlite_fts_enable_pattern(db_, std::string(pattern).c_str());
+        if (result < 0) throw Error::from_last_error();
+    }
+
+    /**
+     * Enable FTS indexing for a specific key
+     */
+    void fts_enable_key(std::string_view key) {
+        int result = redlite_fts_enable_key(db_, std::string(key).c_str());
+        if (result < 0) throw Error::from_last_error();
+    }
+
+    /**
+     * Disable FTS indexing globally
+     */
+    void fts_disable_global() {
+        int result = redlite_fts_disable_global(db_);
+        if (result < 0) throw Error::from_last_error();
+    }
+
+    /**
+     * Disable FTS indexing for a specific database
+     */
+    void fts_disable_database(int db_num) {
+        int result = redlite_fts_disable_database(db_, db_num);
+        if (result < 0) throw Error::from_last_error();
+    }
+
+    /**
+     * Disable FTS indexing for keys matching a pattern
+     */
+    void fts_disable_pattern(std::string_view pattern) {
+        int result = redlite_fts_disable_pattern(db_, std::string(pattern).c_str());
+        if (result < 0) throw Error::from_last_error();
+    }
+
+    /**
+     * Disable FTS indexing for a specific key
+     */
+    void fts_disable_key(std::string_view key) {
+        int result = redlite_fts_disable_key(db_, std::string(key).c_str());
+        if (result < 0) throw Error::from_last_error();
+    }
+
+    /**
+     * Check if FTS indexing is enabled for a key
+     */
+    bool is_fts_enabled(std::string_view key) {
+        return redlite_is_fts_enabled(db_, std::string(key).c_str()) == 1;
+    }
+
+    // ==================== KeyInfo Command ====================
+
+    /**
+     * KEYINFO - Get detailed information about a key
+     * @return KeyInfo or empty if key doesn't exist
+     */
+    std::optional<KeyInfo> keyinfo(std::string_view key) {
+        RedliteKeyInfo info = redlite_keyinfo(db_, std::string(key).c_str());
+
+        if (info.valid == 0) {
+            redlite_free_keyinfo(info);
+            return std::nullopt;
+        }
+
+        KeyInfo result;
+        result.type = info.key_type ? std::string(info.key_type) : "none";
+        result.ttl = info.ttl;
+        result.created_at = info.created_at;
+        result.updated_at = info.updated_at;
+
+        redlite_free_keyinfo(info);
         return result;
     }
 

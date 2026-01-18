@@ -3,6 +3,7 @@ package com.redlite;
 import com.redlite.namespaces.FTSNamespace;
 import com.redlite.namespaces.GeoNamespace;
 import com.redlite.namespaces.HistoryNamespace;
+import com.redlite.namespaces.JSONNamespace;
 import com.redlite.namespaces.VectorNamespace;
 import org.jetbrains.annotations.Nullable;
 import redis.clients.jedis.Jedis;
@@ -47,6 +48,7 @@ public class Redlite implements Closeable, AutoCloseable {
     private final VectorNamespace vector;
     private final GeoNamespace geo;
     private final HistoryNamespace history;
+    private final JSONNamespace json;
 
     /**
      * Create a new Redlite client with an in-memory database.
@@ -93,6 +95,7 @@ public class Redlite implements Closeable, AutoCloseable {
         this.vector = new VectorNamespace(this);
         this.geo = new GeoNamespace(this);
         this.history = new HistoryNamespace(this);
+        this.json = new JSONNamespace(this);
     }
 
     /**
@@ -128,6 +131,13 @@ public class Redlite implements Closeable, AutoCloseable {
      */
     public HistoryNamespace history() {
         return history;
+    }
+
+    /**
+     * Get the JSON namespace.
+     */
+    public JSONNamespace json() {
+        return json;
     }
 
     @Override
@@ -1108,5 +1118,22 @@ public class Redlite implements Closeable, AutoCloseable {
      */
     public static String version() {
         return "0.1.0";
+    }
+
+    // =========================================================================
+    // KeyInfo Command
+    // =========================================================================
+
+    /**
+     * KEYINFO - Get detailed information about a key.
+     *
+     * @param key Key to get info for
+     * @return KeyInfo or null if key doesn't exist
+     */
+    public @Nullable KeyInfo keyinfo(String key) {
+        checkOpen();
+        // Both modes would need to execute KEYINFO command
+        // For now, this is a placeholder that throws
+        throw new RedliteException("KEYINFO not yet implemented");
     }
 }

@@ -171,6 +171,53 @@ pub const KV = struct {
     value: []const u8,
 };
 
+/// Information about a key returned by KEYINFO command.
+pub const KeyInfo = struct {
+    /// The type of the key ("string", "hash", "list", "set", "zset", "json")
+    key_type: []const u8,
+    /// Time to live in seconds (-1 if no TTL, -2 if key doesn't exist)
+    ttl: i64,
+    /// Unix timestamp in milliseconds when the key was created
+    created_at: i64,
+    /// Unix timestamp in milliseconds when the key was last updated
+    updated_at: i64,
+
+    /// Check if this key has a TTL set.
+    pub fn hasTtl(self: KeyInfo) bool {
+        return self.ttl >= 0;
+    }
+};
+
+/// Options for JSON.SET command.
+pub const JsonSetOptions = enum {
+    /// Only set if key does not exist (NX flag)
+    nx,
+    /// Only set if key exists (XX flag)
+    xx,
+
+    fn toInt(self: JsonSetOptions) c_int {
+        return switch (self) {
+            .nx => 1,
+            .xx => 2,
+        };
+    }
+};
+
+/// History retention type.
+pub const HistoryRetention = enum {
+    unlimited,
+    time,
+    count,
+
+    fn toPtr(self: HistoryRetention) [*:0]const u8 {
+        return switch (self) {
+            .unlimited => "unlimited",
+            .time => "time",
+            .count => "count",
+        };
+    }
+};
+
 /// Main database handle.
 /// Thread-safe for concurrent use.
 pub const Database = struct {
@@ -608,6 +655,70 @@ pub const Database = struct {
         return OwnedBytes{ .bytes = result };
     }
 
+    /// LPUSHX key value [value ...]
+    /// Prepend values to list only if key exists.
+    /// Returns 0 if key doesn't exist, else new list length.
+    pub fn lpushx(self: Self, key: []const u8, values: []const []const u8) Error!i64 {
+        var arena = std.heap.ArenaAllocator.init(std.heap.page_allocator);
+        defer arena.deinit();
+        const alloc = arena.allocator();
+
+        const c_values = alloc.alloc(c.RedliteBytes, values.len) catch return Error.OutOfMemory;
+        for (values, 0..) |v, i| {
+            c_values[i] = .{ .data = @constCast(v.ptr), .len = v.len };
+        }
+
+        return c.lpushx(self.handle, key.ptr, c_values.ptr, c_values.len);
+    }
+
+    /// RPUSHX key value [value ...]
+    /// Append values to list only if key exists.
+    /// Returns 0 if key doesn't exist, else new list length.
+    pub fn rpushx(self: Self, key: []const u8, values: []const []const u8) Error!i64 {
+        var arena = std.heap.ArenaAllocator.init(std.heap.page_allocator);
+        defer arena.deinit();
+        const alloc = arena.allocator();
+
+        const c_values = alloc.alloc(c.RedliteBytes, values.len) catch return Error.OutOfMemory;
+        for (values, 0..) |v, i| {
+            c_values[i] = .{ .data = @constCast(v.ptr), .len = v.len };
+        }
+
+        return c.rpushx(self.handle, key.ptr, c_values.ptr, c_values.len);
+    }
+
+    /// Direction for LMOVE command
+    pub const LMoveDirection = enum {
+        left,
+        right,
+
+        fn toInt(self: LMoveDirection) c_int {
+            return switch (self) {
+                .left => 0,
+                .right => 1,
+            };
+        }
+    };
+
+    /// LMOVE source destination LEFT|RIGHT LEFT|RIGHT
+    /// Atomically move element from source to destination.
+    /// Returns the moved element, or null if source is empty.
+    pub fn lmove(self: Self, source: []const u8, destination: []const u8, wherefrom: LMoveDirection, whereto: LMoveDirection) ?OwnedBytes {
+        const result = c.lmove(self.handle, source.ptr, destination.ptr, wherefrom.toInt(), whereto.toInt());
+        if (result.data == null) {
+            return null;
+        }
+        return OwnedBytes{ .bytes = result };
+    }
+
+    /// LPOS key element [RANK rank] [COUNT count] [MAXLEN maxlen]
+    /// Find position(s) of element in list.
+    /// Returns array of positions (as bytes, parse as needed).
+    pub fn lpos(self: Self, key: []const u8, element: []const u8, rank: i64, count: usize, maxlen: usize) OwnedBytesArray {
+        const result = c.lpos(self.handle, key.ptr, element.ptr, element.len, rank, count, maxlen);
+        return OwnedBytesArray{ .arr = result };
+    }
+
     // ============== Set Commands ==============
 
     /// SADD key member [member ...]
@@ -740,6 +851,80 @@ pub const Database = struct {
         return OwnedBytesArray{ .arr = result };
     }
 
+    /// Aggregate function for ZINTERSTORE/ZUNIONSTORE
+    pub const ZAggregateFunction = enum {
+        sum,
+        min,
+        max,
+
+        fn toPtr(self: ?ZAggregateFunction) ?[*:0]const u8 {
+            if (self == null) return null;
+            return switch (self.?) {
+                .sum => "SUM",
+                .min => "MIN",
+                .max => "MAX",
+            };
+        }
+    };
+
+    /// ZINTERSTORE destination numkeys key [key ...] [WEIGHTS weight ...] [AGGREGATE SUM|MIN|MAX]
+    /// Intersect sorted sets and store result in destination.
+    /// Returns the number of elements in the resulting sorted set.
+    pub fn zinterstore(self: Self, destination: []const u8, key_list: []const [:0]const u8, weights: ?[]const f64, aggregate: ?ZAggregateFunction) Error!i64 {
+        const ptrs = @as([*]const [*c]const u8, @ptrCast(key_list.ptr));
+
+        var weights_ptr: ?[*]const f64 = null;
+        var weights_len: usize = 0;
+        if (weights) |w| {
+            weights_ptr = w.ptr;
+            weights_len = w.len;
+        }
+
+        const result = c.zinterstore(
+            self.handle,
+            destination.ptr,
+            ptrs,
+            key_list.len,
+            weights_ptr,
+            weights_len,
+            ZAggregateFunction.toPtr(aggregate),
+        );
+
+        if (result < 0) {
+            return Error.OperationFailed;
+        }
+        return result;
+    }
+
+    /// ZUNIONSTORE destination numkeys key [key ...] [WEIGHTS weight ...] [AGGREGATE SUM|MIN|MAX]
+    /// Union sorted sets and store result in destination.
+    /// Returns the number of elements in the resulting sorted set.
+    pub fn zunionstore(self: Self, destination: []const u8, key_list: []const [:0]const u8, weights: ?[]const f64, aggregate: ?ZAggregateFunction) Error!i64 {
+        const ptrs = @as([*]const [*c]const u8, @ptrCast(key_list.ptr));
+
+        var weights_ptr: ?[*]const f64 = null;
+        var weights_len: usize = 0;
+        if (weights) |w| {
+            weights_ptr = w.ptr;
+            weights_len = w.len;
+        }
+
+        const result = c.zunionstore(
+            self.handle,
+            destination.ptr,
+            ptrs,
+            key_list.len,
+            weights_ptr,
+            weights_len,
+            ZAggregateFunction.toPtr(aggregate),
+        );
+
+        if (result < 0) {
+            return Error.OperationFailed;
+        }
+        return result;
+    }
+
     // ============== Server Commands ==============
 
     /// VACUUM - Compact the database
@@ -758,6 +943,272 @@ pub const Database = struct {
         const owned = try allocator.alloc(u8, span.len);
         @memcpy(owned, span);
         return owned;
+    }
+
+    // ============== KeyInfo Command ==============
+
+    /// KEYINFO key - Get detailed information about a key.
+    /// Returns type, TTL, created_at, and updated_at timestamps.
+    pub fn keyinfo(self: Self, key: []const u8, allocator: std.mem.Allocator) Error!?KeyInfo {
+        _ = self;
+        _ = key;
+        _ = allocator;
+        // Not yet implemented - would call c.keyinfo
+        return Error.OperationFailed;
+    }
+
+    // ============== JSON Commands ==============
+
+    /// JSON.SET key path value [NX|XX]
+    /// Set a JSON value at the specified path.
+    pub fn jsonSet(self: Self, key: []const u8, path: [:0]const u8, value: []const u8, options: ?JsonSetOptions) Error!bool {
+        _ = self;
+        _ = key;
+        _ = path;
+        _ = value;
+        _ = options;
+        // Not yet implemented - would call c.json_set
+        return Error.OperationFailed;
+    }
+
+    /// JSON.GET key [path ...]
+    /// Get JSON values at the specified paths.
+    pub fn jsonGet(self: Self, key: []const u8, paths: []const [:0]const u8) Error!?OwnedBytes {
+        _ = self;
+        _ = key;
+        _ = paths;
+        // Not yet implemented - would call c.json_get
+        return Error.OperationFailed;
+    }
+
+    /// JSON.DEL key [path]
+    /// Delete JSON values at the specified path.
+    pub fn jsonDel(self: Self, key: []const u8, path: [:0]const u8) Error!i64 {
+        _ = self;
+        _ = key;
+        _ = path;
+        // Not yet implemented - would call c.json_del
+        return Error.OperationFailed;
+    }
+
+    /// JSON.TYPE key [path]
+    /// Get the type of JSON value at the specified path.
+    pub fn jsonType(self: Self, key: []const u8, path: [:0]const u8, allocator: std.mem.Allocator) Error!?[]u8 {
+        _ = self;
+        _ = key;
+        _ = path;
+        _ = allocator;
+        // Not yet implemented - would call c.json_type
+        return Error.OperationFailed;
+    }
+
+    /// JSON.NUMINCRBY key path increment
+    /// Increment a JSON number by the specified amount.
+    pub fn jsonNumIncrBy(self: Self, key: []const u8, path: [:0]const u8, increment: f64, allocator: std.mem.Allocator) Error!?[]u8 {
+        _ = self;
+        _ = key;
+        _ = path;
+        _ = increment;
+        _ = allocator;
+        // Not yet implemented - would call c.json_numincrby
+        return Error.OperationFailed;
+    }
+
+    /// JSON.STRAPPEND key path value
+    /// Append to a JSON string.
+    pub fn jsonStrAppend(self: Self, key: []const u8, path: [:0]const u8, value: []const u8) Error!i64 {
+        _ = self;
+        _ = key;
+        _ = path;
+        _ = value;
+        // Not yet implemented - would call c.json_strappend
+        return Error.OperationFailed;
+    }
+
+    /// JSON.STRLEN key [path]
+    /// Get the length of a JSON string.
+    pub fn jsonStrLen(self: Self, key: []const u8, path: [:0]const u8) Error!i64 {
+        _ = self;
+        _ = key;
+        _ = path;
+        // Not yet implemented - would call c.json_strlen
+        return Error.OperationFailed;
+    }
+
+    /// JSON.ARRAPPEND key path value [value ...]
+    /// Append values to a JSON array.
+    pub fn jsonArrAppend(self: Self, key: []const u8, path: [:0]const u8, values: []const []const u8) Error!i64 {
+        _ = self;
+        _ = key;
+        _ = path;
+        _ = values;
+        // Not yet implemented - would call c.json_arrappend
+        return Error.OperationFailed;
+    }
+
+    /// JSON.ARRLEN key [path]
+    /// Get the length of a JSON array.
+    pub fn jsonArrLen(self: Self, key: []const u8, path: [:0]const u8) Error!i64 {
+        _ = self;
+        _ = key;
+        _ = path;
+        // Not yet implemented - would call c.json_arrlen
+        return Error.OperationFailed;
+    }
+
+    /// JSON.ARRPOP key [path [index]]
+    /// Pop an element from a JSON array.
+    pub fn jsonArrPop(self: Self, key: []const u8, path: [:0]const u8, index: i64) Error!?OwnedBytes {
+        _ = self;
+        _ = key;
+        _ = path;
+        _ = index;
+        // Not yet implemented - would call c.json_arrpop
+        return Error.OperationFailed;
+    }
+
+    /// JSON.CLEAR key [path]
+    /// Clear JSON arrays or objects.
+    pub fn jsonClear(self: Self, key: []const u8, path: [:0]const u8) Error!i64 {
+        _ = self;
+        _ = key;
+        _ = path;
+        // Not yet implemented - would call c.json_clear
+        return Error.OperationFailed;
+    }
+
+    // ============== History Commands ==============
+
+    /// Enable history tracking globally.
+    pub fn historyEnableGlobal(self: Self, retention: HistoryRetention, retention_value: i64) Error!void {
+        _ = self;
+        _ = retention;
+        _ = retention_value;
+        // Not yet implemented - would call c.history_enable_global
+        return Error.OperationFailed;
+    }
+
+    /// Enable history tracking for a specific database.
+    pub fn historyEnableDb(self: Self, db_num: i32, retention: HistoryRetention, retention_value: i64) Error!void {
+        _ = self;
+        _ = db_num;
+        _ = retention;
+        _ = retention_value;
+        // Not yet implemented - would call c.history_enable_db
+        return Error.OperationFailed;
+    }
+
+    /// Enable history tracking for a specific key.
+    pub fn historyEnableKey(self: Self, key: []const u8, retention: HistoryRetention, retention_value: i64) Error!void {
+        _ = self;
+        _ = key;
+        _ = retention;
+        _ = retention_value;
+        // Not yet implemented - would call c.history_enable_key
+        return Error.OperationFailed;
+    }
+
+    /// Disable history tracking globally.
+    pub fn historyDisableGlobal(self: Self) Error!void {
+        _ = self;
+        // Not yet implemented - would call c.history_disable_global
+        return Error.OperationFailed;
+    }
+
+    /// Disable history tracking for a specific database.
+    pub fn historyDisableDb(self: Self, db_num: i32) Error!void {
+        _ = self;
+        _ = db_num;
+        // Not yet implemented - would call c.history_disable_db
+        return Error.OperationFailed;
+    }
+
+    /// Disable history tracking for a specific key.
+    pub fn historyDisableKey(self: Self, key: []const u8) Error!void {
+        _ = self;
+        _ = key;
+        // Not yet implemented - would call c.history_disable_key
+        return Error.OperationFailed;
+    }
+
+    /// Check if history tracking is enabled for a key.
+    pub fn historyIsEnabled(self: Self, key: []const u8) Error!bool {
+        _ = self;
+        _ = key;
+        // Not yet implemented - would call c.history_is_enabled
+        return Error.OperationFailed;
+    }
+
+    // ============== FTS Commands ==============
+
+    /// Enable FTS indexing globally.
+    pub fn ftsEnableGlobal(self: Self) Error!void {
+        _ = self;
+        // Not yet implemented - would call c.fts_enable_global
+        return Error.OperationFailed;
+    }
+
+    /// Enable FTS indexing for a specific database.
+    pub fn ftsEnableDb(self: Self, db_num: i32) Error!void {
+        _ = self;
+        _ = db_num;
+        // Not yet implemented - would call c.fts_enable_db
+        return Error.OperationFailed;
+    }
+
+    /// Enable FTS indexing for a key pattern.
+    pub fn ftsEnablePattern(self: Self, pattern: [:0]const u8) Error!void {
+        _ = self;
+        _ = pattern;
+        // Not yet implemented - would call c.fts_enable_pattern
+        return Error.OperationFailed;
+    }
+
+    /// Enable FTS indexing for a specific key.
+    pub fn ftsEnableKey(self: Self, key: []const u8) Error!void {
+        _ = self;
+        _ = key;
+        // Not yet implemented - would call c.fts_enable_key
+        return Error.OperationFailed;
+    }
+
+    /// Disable FTS indexing globally.
+    pub fn ftsDisableGlobal(self: Self) Error!void {
+        _ = self;
+        // Not yet implemented - would call c.fts_disable_global
+        return Error.OperationFailed;
+    }
+
+    /// Disable FTS indexing for a specific database.
+    pub fn ftsDisableDb(self: Self, db_num: i32) Error!void {
+        _ = self;
+        _ = db_num;
+        // Not yet implemented - would call c.fts_disable_db
+        return Error.OperationFailed;
+    }
+
+    /// Disable FTS indexing for a key pattern.
+    pub fn ftsDisablePattern(self: Self, pattern: [:0]const u8) Error!void {
+        _ = self;
+        _ = pattern;
+        // Not yet implemented - would call c.fts_disable_pattern
+        return Error.OperationFailed;
+    }
+
+    /// Disable FTS indexing for a specific key.
+    pub fn ftsDisableKey(self: Self, key: []const u8) Error!void {
+        _ = self;
+        _ = key;
+        // Not yet implemented - would call c.fts_disable_key
+        return Error.OperationFailed;
+    }
+
+    /// Check if FTS indexing is enabled for a key.
+    pub fn ftsIsEnabled(self: Self, key: []const u8) Error!bool {
+        _ = self;
+        _ = key;
+        // Not yet implemented - would call c.fts_is_enabled
+        return Error.OperationFailed;
     }
 };
 

@@ -78,6 +78,15 @@ impl From<Option<redlite::KeyType>> for KeyType {
     }
 }
 
+/// Key information returned by keyinfo()
+#[frb(dart_metadata = ("freezed"))]
+pub struct KeyInfo {
+    pub key_type: KeyType,
+    pub ttl: i64,
+    pub created_at: i64,
+    pub updated_at: i64,
+}
+
 /// Redlite embedded database - Redis API with SQLite durability.
 ///
 /// Provides direct access to the Redlite database without network overhead.
@@ -716,5 +725,246 @@ impl Db {
     /// Run SQLite VACUUM to reclaim space.
     pub fn vacuum(&self) -> Result<i64, RedliteError> {
         self.inner.vacuum().map(|n| n as i64).map_err(Into::into)
+    }
+
+    // =========================================================================
+    // JSON Commands (ReJSON-compatible)
+    // =========================================================================
+
+    /// Set a JSON value at the given path.
+    /// Use "$" for root path.
+    pub fn json_set(
+        &self,
+        key: String,
+        path: String,
+        value: String,
+        nx: bool,
+        xx: bool,
+    ) -> Result<bool, RedliteError> {
+        self.inner
+            .json_set(&key, &path, &value, nx, xx)
+            .map_err(Into::into)
+    }
+
+    /// Get JSON values at the given paths.
+    pub fn json_get(&self, key: String, paths: Vec<String>) -> Result<Option<String>, RedliteError> {
+        let path_refs: Vec<&str> = paths.iter().map(|p| p.as_str()).collect();
+        self.inner.json_get(&key, &path_refs).map_err(Into::into)
+    }
+
+    /// Delete JSON value at the given path.
+    pub fn json_del(&self, key: String, path: String) -> Result<i64, RedliteError> {
+        self.inner.json_del(&key, &path).map_err(Into::into)
+    }
+
+    /// Get the type of JSON value at the given path.
+    pub fn json_type(&self, key: String, path: String) -> Result<Option<String>, RedliteError> {
+        self.inner.json_type(&key, &path).map_err(Into::into)
+    }
+
+    /// Increment a numeric JSON value.
+    pub fn json_numincrby(
+        &self,
+        key: String,
+        path: String,
+        increment: f64,
+    ) -> Result<Option<String>, RedliteError> {
+        self.inner
+            .json_numincrby(&key, &path, increment)
+            .map_err(Into::into)
+    }
+
+    /// Append to a string JSON value.
+    pub fn json_strappend(
+        &self,
+        key: String,
+        path: String,
+        value: String,
+    ) -> Result<i64, RedliteError> {
+        self.inner
+            .json_strappend(&key, &path, &value)
+            .map_err(Into::into)
+    }
+
+    /// Get length of a string JSON value.
+    pub fn json_strlen(&self, key: String, path: String) -> Result<i64, RedliteError> {
+        self.inner.json_strlen(&key, &path).map_err(Into::into)
+    }
+
+    /// Append values to a JSON array.
+    pub fn json_arrappend(
+        &self,
+        key: String,
+        path: String,
+        values: Vec<String>,
+    ) -> Result<i64, RedliteError> {
+        let value_refs: Vec<&str> = values.iter().map(|v| v.as_str()).collect();
+        self.inner
+            .json_arrappend(&key, &path, &value_refs)
+            .map_err(Into::into)
+    }
+
+    /// Get length of a JSON array.
+    pub fn json_arrlen(&self, key: String, path: String) -> Result<i64, RedliteError> {
+        self.inner.json_arrlen(&key, &path).map_err(Into::into)
+    }
+
+    /// Pop an element from a JSON array.
+    pub fn json_arrpop(
+        &self,
+        key: String,
+        path: String,
+        index: i64,
+    ) -> Result<Option<String>, RedliteError> {
+        self.inner
+            .json_arrpop(&key, &path, index)
+            .map_err(Into::into)
+    }
+
+    /// Clear container JSON values (arrays/objects become empty).
+    pub fn json_clear(&self, key: String, path: String) -> Result<i64, RedliteError> {
+        self.inner.json_clear(&key, &path).map_err(Into::into)
+    }
+
+    // =========================================================================
+    // History Commands
+    // =========================================================================
+
+    /// Enable history tracking globally.
+    /// retention_type: "unlimited", "time", or "count"
+    pub fn history_enable_global(
+        &self,
+        retention_type: String,
+        retention_value: i64,
+    ) -> Result<(), RedliteError> {
+        self.inner
+            .history_enable_global(&retention_type, retention_value as u64)
+            .map_err(Into::into)
+    }
+
+    /// Enable history tracking for a specific database.
+    pub fn history_enable_database(
+        &self,
+        db_num: i64,
+        retention_type: String,
+        retention_value: i64,
+    ) -> Result<(), RedliteError> {
+        self.inner
+            .history_enable_database(db_num as u32, &retention_type, retention_value as u64)
+            .map_err(Into::into)
+    }
+
+    /// Enable history tracking for a specific key.
+    pub fn history_enable_key(
+        &self,
+        key: String,
+        retention_type: String,
+        retention_value: i64,
+    ) -> Result<(), RedliteError> {
+        self.inner
+            .history_enable_key(&key, &retention_type, retention_value as u64)
+            .map_err(Into::into)
+    }
+
+    /// Disable history tracking globally.
+    pub fn history_disable_global(&self) -> Result<(), RedliteError> {
+        self.inner.history_disable_global().map_err(Into::into)
+    }
+
+    /// Disable history tracking for a specific database.
+    pub fn history_disable_database(&self, db_num: i64) -> Result<(), RedliteError> {
+        self.inner
+            .history_disable_database(db_num as u32)
+            .map_err(Into::into)
+    }
+
+    /// Disable history tracking for a specific key.
+    pub fn history_disable_key(&self, key: String) -> Result<(), RedliteError> {
+        self.inner.history_disable_key(&key).map_err(Into::into)
+    }
+
+    /// Check if history tracking is enabled for a key.
+    pub fn is_history_enabled(&self, key: String) -> Result<bool, RedliteError> {
+        self.inner.is_history_enabled(&key).map_err(Into::into)
+    }
+
+    // =========================================================================
+    // FTS (Full-Text Search) Commands
+    // =========================================================================
+
+    /// Enable FTS indexing globally.
+    pub fn fts_enable_global(&self) -> Result<(), RedliteError> {
+        self.inner.fts_enable_global().map_err(Into::into)
+    }
+
+    /// Enable FTS indexing for a specific database.
+    pub fn fts_enable_database(&self, db_num: i64) -> Result<(), RedliteError> {
+        self.inner
+            .fts_enable_database(db_num as u32)
+            .map_err(Into::into)
+    }
+
+    /// Enable FTS indexing for keys matching a pattern.
+    pub fn fts_enable_pattern(&self, pattern: String) -> Result<(), RedliteError> {
+        self.inner.fts_enable_pattern(&pattern).map_err(Into::into)
+    }
+
+    /// Enable FTS indexing for a specific key.
+    pub fn fts_enable_key(&self, key: String) -> Result<(), RedliteError> {
+        self.inner.fts_enable_key(&key).map_err(Into::into)
+    }
+
+    /// Disable FTS indexing globally.
+    pub fn fts_disable_global(&self) -> Result<(), RedliteError> {
+        self.inner.fts_disable_global().map_err(Into::into)
+    }
+
+    /// Disable FTS indexing for a specific database.
+    pub fn fts_disable_database(&self, db_num: i64) -> Result<(), RedliteError> {
+        self.inner
+            .fts_disable_database(db_num as u32)
+            .map_err(Into::into)
+    }
+
+    /// Disable FTS indexing for keys matching a pattern.
+    pub fn fts_disable_pattern(&self, pattern: String) -> Result<(), RedliteError> {
+        self.inner
+            .fts_disable_pattern(&pattern)
+            .map_err(Into::into)
+    }
+
+    /// Disable FTS indexing for a specific key.
+    pub fn fts_disable_key(&self, key: String) -> Result<(), RedliteError> {
+        self.inner.fts_disable_key(&key).map_err(Into::into)
+    }
+
+    /// Check if FTS indexing is enabled for a key.
+    pub fn is_fts_enabled(&self, key: String) -> Result<bool, RedliteError> {
+        self.inner.is_fts_enabled(&key).map_err(Into::into)
+    }
+
+    // =========================================================================
+    // KeyInfo Command
+    // =========================================================================
+
+    /// Get detailed information about a key.
+    /// Returns None if the key doesn't exist.
+    pub fn keyinfo(&self, key: String) -> Result<Option<KeyInfo>, RedliteError> {
+        self.inner
+            .keyinfo(&key)
+            .map(|opt| opt.map(|info| KeyInfo {
+                key_type: info.key_type.map(|kt| match kt {
+                    redlite::KeyType::String => KeyType::String,
+                    redlite::KeyType::List => KeyType::List,
+                    redlite::KeyType::Set => KeyType::Set,
+                    redlite::KeyType::Hash => KeyType::Hash,
+                    redlite::KeyType::ZSet => KeyType::ZSet,
+                    redlite::KeyType::Stream => KeyType::Stream,
+                }).unwrap_or(KeyType::None),
+                ttl: info.ttl,
+                created_at: info.created_at,
+                updated_at: info.updated_at,
+            }))
+            .map_err(Into::into)
     }
 }

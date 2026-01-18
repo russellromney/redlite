@@ -176,6 +176,24 @@ module Redlite
     # MSET key value [key value ...]
     attach_function :redlite_mset, [:pointer, :pointer, :size_t], :int
 
+    # SETNX key value - set only if not exists
+    attach_function :redlite_setnx, [:pointer, :string, :pointer, :size_t], :int
+
+    # GETEX key [EX seconds] [PX milliseconds] [EXAT timestamp] [PXAT ms-timestamp] [PERSIST]
+    attach_function :redlite_getex, [:pointer, :string, :int64, :int64, :int64, :int64, :int], RedliteBytes.by_value
+
+    # GETBIT key offset
+    attach_function :redlite_getbit, [:pointer, :string, :uint64], :int64
+
+    # SETBIT key offset value
+    attach_function :redlite_setbit, [:pointer, :string, :uint64, :int], :int64
+
+    # BITCOUNT key [start end]
+    attach_function :redlite_bitcount, [:pointer, :string, :int64, :int64, :int], :int64
+
+    # BITOP operation destkey key [key ...]
+    attach_function :redlite_bitop, [:pointer, :string, :string, :pointer, :size_t], :int64
+
     # =========================================================================
     # Key Commands
     # =========================================================================
@@ -262,6 +280,12 @@ module Redlite
     # HMGET key field [field ...]
     attach_function :redlite_hmget, [:pointer, :string, :pointer, :size_t], RedliteBytesArray.by_value
 
+    # HSETNX key field value
+    attach_function :redlite_hsetnx, [:pointer, :string, :string, :pointer, :size_t], :int
+
+    # HINCRBYFLOAT key field increment
+    attach_function :redlite_hincrbyfloat, [:pointer, :string, :string, :double], :pointer
+
     # =========================================================================
     # List Commands
     # =========================================================================
@@ -287,6 +311,32 @@ module Redlite
     # LINDEX key index
     attach_function :redlite_lindex, [:pointer, :string, :int64], RedliteBytes.by_value
 
+    # LPUSHX key value [value ...] - push only if list exists
+    attach_function :redlite_lpushx, [:pointer, :string, :pointer, :size_t], :int64
+
+    # RPUSHX key value [value ...] - push only if list exists
+    attach_function :redlite_rpushx, [:pointer, :string, :pointer, :size_t], :int64
+
+    # LMOVE source destination LEFT|RIGHT LEFT|RIGHT
+    # wherefrom: 0 for LEFT, 1 for RIGHT
+    # whereto: 0 for LEFT, 1 for RIGHT
+    attach_function :redlite_lmove, [:pointer, :string, :string, :int, :int], RedliteBytes.by_value
+
+    # LPOS key element [RANK rank] [COUNT count] [MAXLEN maxlen]
+    attach_function :redlite_lpos, [:pointer, :string, :pointer, :size_t, :int64, :size_t, :size_t], RedliteBytesArray.by_value
+
+    # LSET key index element
+    attach_function :redlite_lset, [:pointer, :string, :int64, :pointer, :size_t], :int
+
+    # LTRIM key start stop
+    attach_function :redlite_ltrim, [:pointer, :string, :int64, :int64], :int
+
+    # LREM key count element
+    attach_function :redlite_lrem, [:pointer, :string, :int64, :pointer, :size_t], :int64
+
+    # LINSERT key BEFORE|AFTER pivot element
+    attach_function :redlite_linsert, [:pointer, :string, :int, :pointer, :size_t, :pointer, :size_t], :int64
+
     # =========================================================================
     # Set Commands
     # =========================================================================
@@ -305,6 +355,33 @@ module Redlite
 
     # SCARD key
     attach_function :redlite_scard, [:pointer, :string], :int64
+
+    # SPOP key [count]
+    attach_function :redlite_spop, [:pointer, :string, :size_t], RedliteBytesArray.by_value
+
+    # SRANDMEMBER key [count]
+    attach_function :redlite_srandmember, [:pointer, :string, :int64], RedliteBytesArray.by_value
+
+    # SDIFF key [key ...]
+    attach_function :redlite_sdiff, [:pointer, :pointer, :size_t], RedliteBytesArray.by_value
+
+    # SINTER key [key ...]
+    attach_function :redlite_sinter, [:pointer, :pointer, :size_t], RedliteBytesArray.by_value
+
+    # SUNION key [key ...]
+    attach_function :redlite_sunion, [:pointer, :pointer, :size_t], RedliteBytesArray.by_value
+
+    # SDIFFSTORE destination key [key ...]
+    attach_function :redlite_sdiffstore, [:pointer, :string, :pointer, :size_t], :int64
+
+    # SINTERSTORE destination key [key ...]
+    attach_function :redlite_sinterstore, [:pointer, :string, :pointer, :size_t], :int64
+
+    # SUNIONSTORE destination key [key ...]
+    attach_function :redlite_sunionstore, [:pointer, :string, :pointer, :size_t], :int64
+
+    # SMOVE source destination member
+    attach_function :redlite_smove, [:pointer, :string, :string, :pointer, :size_t], :int
 
     # =========================================================================
     # Sorted Set Commands
@@ -333,6 +410,139 @@ module Redlite
 
     # ZREVRANGE key start stop [withscores]
     attach_function :redlite_zrevrange, [:pointer, :string, :int64, :int64, :int], RedliteBytesArray.by_value
+
+    # ZRANK key member
+    attach_function :redlite_zrank, [:pointer, :string, :pointer, :size_t], :int64
+
+    # ZREVRANK key member
+    attach_function :redlite_zrevrank, [:pointer, :string, :pointer, :size_t], :int64
+
+    # ZRANGEBYSCORE key min max [LIMIT offset count]
+    attach_function :redlite_zrangebyscore, [:pointer, :string, :double, :double, :int64, :size_t], RedliteBytesArray.by_value
+
+    # ZREMRANGEBYRANK key start stop
+    attach_function :redlite_zremrangebyrank, [:pointer, :string, :int64, :int64], :int64
+
+    # ZREMRANGEBYSCORE key min max
+    attach_function :redlite_zremrangebyscore, [:pointer, :string, :double, :double], :int64
+
+    # ZINTERSTORE destination numkeys key [key ...] [WEIGHTS weight ...] [AGGREGATE SUM|MIN|MAX]
+    attach_function :redlite_zinterstore, [:pointer, :string, :pointer, :size_t, :pointer, :size_t, :string], :int64
+
+    # ZUNIONSTORE destination numkeys key [key ...] [WEIGHTS weight ...] [AGGREGATE SUM|MIN|MAX]
+    attach_function :redlite_zunionstore, [:pointer, :string, :pointer, :size_t, :pointer, :size_t, :string], :int64
+
+    # =========================================================================
+    # JSON Commands
+    # =========================================================================
+
+    # JSON.SET key path value [NX] [XX]
+    attach_function :redlite_json_set, [:pointer, :string, :string, :string, :int, :int], :int
+
+    # JSON.GET key path - returns string (caller must free)
+    attach_function :redlite_json_get, [:pointer, :string, :pointer, :size_t], :pointer
+
+    # JSON.DEL key [path]
+    attach_function :redlite_json_del, [:pointer, :string, :string], :int64
+
+    # JSON.TYPE key [path]
+    attach_function :redlite_json_type, [:pointer, :string, :string], :pointer
+
+    # JSON.NUMINCRBY key path increment - returns string (caller must free)
+    attach_function :redlite_json_numincrby, [:pointer, :string, :string, :double], :pointer
+
+    # JSON.STRAPPEND key path value
+    attach_function :redlite_json_strappend, [:pointer, :string, :string, :string], :int64
+
+    # JSON.STRLEN key [path]
+    attach_function :redlite_json_strlen, [:pointer, :string, :string], :int64
+
+    # JSON.ARRAPPEND key path value [value ...]
+    attach_function :redlite_json_arrappend, [:pointer, :string, :string, :pointer, :size_t], :int64
+
+    # JSON.ARRLEN key [path]
+    attach_function :redlite_json_arrlen, [:pointer, :string, :string], :int64
+
+    # JSON.ARRPOP key [path [index]]
+    attach_function :redlite_json_arrpop, [:pointer, :string, :string, :int64], :pointer
+
+    # JSON.CLEAR key [path]
+    attach_function :redlite_json_clear, [:pointer, :string, :string], :int64
+
+    # =========================================================================
+    # History Enable/Disable Commands
+    # =========================================================================
+
+    # HISTORY.ENABLE GLOBAL [retention_type retention_value]
+    attach_function :redlite_history_enable_global, [:pointer, :string, :int64], :int
+
+    # HISTORY.ENABLE DATABASE db_num [retention_type retention_value]
+    attach_function :redlite_history_enable_database, [:pointer, :int, :string, :int64], :int
+
+    # HISTORY.ENABLE KEY key [retention_type retention_value]
+    attach_function :redlite_history_enable_key, [:pointer, :string, :string, :int64], :int
+
+    # HISTORY.DISABLE GLOBAL
+    attach_function :redlite_history_disable_global, [:pointer], :int
+
+    # HISTORY.DISABLE DATABASE db_num
+    attach_function :redlite_history_disable_database, [:pointer, :int], :int
+
+    # HISTORY.DISABLE KEY key
+    attach_function :redlite_history_disable_key, [:pointer, :string], :int
+
+    # Check if history is enabled for a key
+    attach_function :redlite_is_history_enabled, [:pointer, :string], :int
+
+    # =========================================================================
+    # FTS Enable/Disable Commands
+    # =========================================================================
+
+    # FTS.ENABLE GLOBAL
+    attach_function :redlite_fts_enable_global, [:pointer], :int
+
+    # FTS.ENABLE DATABASE db_num
+    attach_function :redlite_fts_enable_database, [:pointer, :int], :int
+
+    # FTS.ENABLE PATTERN pattern
+    attach_function :redlite_fts_enable_pattern, [:pointer, :string], :int
+
+    # FTS.ENABLE KEY key
+    attach_function :redlite_fts_enable_key, [:pointer, :string], :int
+
+    # FTS.DISABLE GLOBAL
+    attach_function :redlite_fts_disable_global, [:pointer], :int
+
+    # FTS.DISABLE DATABASE db_num
+    attach_function :redlite_fts_disable_database, [:pointer, :int], :int
+
+    # FTS.DISABLE PATTERN pattern
+    attach_function :redlite_fts_disable_pattern, [:pointer, :string], :int
+
+    # FTS.DISABLE KEY key
+    attach_function :redlite_fts_disable_key, [:pointer, :string], :int
+
+    # Check if FTS is enabled for a key
+    attach_function :redlite_is_fts_enabled, [:pointer, :string], :int
+
+    # =========================================================================
+    # KeyInfo Command
+    # =========================================================================
+
+    # KeyInfo struct
+    class RedliteKeyInfo < ::FFI::Struct
+      layout :key_type, :pointer,
+             :ttl, :int64,
+             :created_at, :int64,
+             :updated_at, :int64,
+             :valid, :int
+    end
+
+    # KEYINFO key
+    attach_function :redlite_keyinfo, [:pointer, :string], RedliteKeyInfo.by_value
+
+    # Free keyinfo struct
+    attach_function :redlite_free_keyinfo, [RedliteKeyInfo.by_value], :void
 
     # =========================================================================
     # Server Commands

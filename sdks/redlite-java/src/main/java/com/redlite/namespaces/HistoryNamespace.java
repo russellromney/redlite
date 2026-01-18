@@ -1,6 +1,7 @@
 package com.redlite.namespaces;
 
 import com.redlite.Redlite;
+import com.redlite.RedliteException;
 import org.jetbrains.annotations.Nullable;
 
 import java.util.Collections;
@@ -17,27 +18,131 @@ public class HistoryNamespace {
         this.client = client;
     }
 
+    // =========================================================================
+    // History Enable/Disable Commands
+    // =========================================================================
+
+    /**
+     * Enable history tracking globally.
+     *
+     * @param retentionType  "unlimited", "time", or "count"
+     * @param retentionValue Value for time (ms) or count retention
+     */
+    public void enableGlobal(String retentionType, long retentionValue) {
+        throw new RedliteException("History commands not yet implemented");
+    }
+
+    /**
+     * Enable history tracking globally with unlimited retention.
+     */
+    public void enableGlobal() {
+        enableGlobal("unlimited", 0);
+    }
+
+    /**
+     * Enable history tracking for a specific database.
+     *
+     * @param dbNum          Database number
+     * @param retentionType  "unlimited", "time", or "count"
+     * @param retentionValue Value for time (ms) or count retention
+     */
+    public void enableDatabase(int dbNum, String retentionType, long retentionValue) {
+        throw new RedliteException("History commands not yet implemented");
+    }
+
+    /**
+     * Enable history tracking for a specific database with unlimited retention.
+     */
+    public void enableDatabase(int dbNum) {
+        enableDatabase(dbNum, "unlimited", 0);
+    }
+
+    /**
+     * Enable history tracking for a specific key.
+     *
+     * @param key            Key to enable history for
+     * @param retentionType  "unlimited", "time", or "count"
+     * @param retentionValue Value for time (ms) or count retention
+     */
+    public void enableKey(String key, String retentionType, long retentionValue) {
+        throw new RedliteException("History commands not yet implemented");
+    }
+
+    /**
+     * Enable history tracking for a specific key with unlimited retention.
+     */
+    public void enableKey(String key) {
+        enableKey(key, "unlimited", 0);
+    }
+
+    /**
+     * Disable history tracking globally.
+     */
+    public void disableGlobal() {
+        throw new RedliteException("History commands not yet implemented");
+    }
+
+    /**
+     * Disable history tracking for a specific database.
+     *
+     * @param dbNum Database number
+     */
+    public void disableDatabase(int dbNum) {
+        throw new RedliteException("History commands not yet implemented");
+    }
+
+    /**
+     * Disable history tracking for a specific key.
+     *
+     * @param key Key to disable history for
+     */
+    public void disableKey(String key) {
+        throw new RedliteException("History commands not yet implemented");
+    }
+
+    /**
+     * Check if history tracking is enabled for a key.
+     *
+     * @param key Key to check
+     * @return true if history is enabled
+     */
+    public boolean isEnabled(String key) {
+        throw new RedliteException("History commands not yet implemented");
+    }
+
+    // =========================================================================
+    // Legacy API (deprecated, use enable/disable methods above)
+    // =========================================================================
+
     /**
      * Enable history tracking for a key pattern.
+     *
+     * @deprecated Use enableGlobal(), enableDatabase(), or enableKey() instead
      */
+    @Deprecated
     public boolean enable(String pattern, int maxVersions) {
-        // Would execute HISTORY.ENABLE command
-        return true;
+        throw new RedliteException("History commands not yet implemented");
     }
 
     /**
      * Enable history tracking for all keys.
+     *
+     * @deprecated Use enableGlobal() instead
      */
+    @Deprecated
     public boolean enable() {
-        return enable("*", 100);
+        enableGlobal();
+        return true;
     }
 
     /**
      * Disable history tracking for a key pattern.
+     *
+     * @deprecated Use disableGlobal(), disableDatabase(), or disableKey() instead
      */
+    @Deprecated
     public boolean disable(String pattern) {
-        // Would execute HISTORY.DISABLE command
-        return true;
+        throw new RedliteException("History commands not yet implemented");
     }
 
     /**

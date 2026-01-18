@@ -13,7 +13,7 @@ path = "rust/lib.rs"
 [dependencies]
 pyo3 = { version = "0.22", features = ["extension-module"] }
 # Reference the main redlite crate
-redlite = { path = "../../crates/redlite" }
+redlite = { path = "../../crates/redlite", features = ["geo"] }
 
 [build-dependencies]
 pyo3-build-config = "0.22"

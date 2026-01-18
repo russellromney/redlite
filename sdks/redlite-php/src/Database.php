@@ -146,11 +146,15 @@ RedliteBytesArray redlite_hmget(RedliteDb *db, const char *key, const char **fie
 // List commands
 int64_t redlite_lpush(RedliteDb *db, const char *key, const RedliteBytes *values, size_t values_len);
 int64_t redlite_rpush(RedliteDb *db, const char *key, const RedliteBytes *values, size_t values_len);
+int64_t redlite_lpushx(RedliteDb *db, const char *key, const RedliteBytes *values, size_t values_len);
+int64_t redlite_rpushx(RedliteDb *db, const char *key, const RedliteBytes *values, size_t values_len);
 RedliteBytesArray redlite_lpop(RedliteDb *db, const char *key, size_t count);
 RedliteBytesArray redlite_rpop(RedliteDb *db, const char *key, size_t count);
 int64_t redlite_llen(RedliteDb *db, const char *key);
 RedliteBytesArray redlite_lrange(RedliteDb *db, const char *key, int64_t start, int64_t stop);
 RedliteBytes redlite_lindex(RedliteDb *db, const char *key, int64_t index);
+RedliteBytes redlite_lmove(RedliteDb *db, const char *source, const char *destination, int wherefrom, int whereto);
+RedliteBytesArray redlite_lpos(RedliteDb *db, const char *key, const uint8_t *element, size_t element_len, int64_t rank, size_t count, size_t maxlen);
 
 // Set commands
 int64_t redlite_sadd(RedliteDb *db, const char *key, const RedliteBytes *members, size_t members_len);
@@ -168,9 +172,55 @@ int64_t redlite_zcount(RedliteDb *db, const char *key, double min, double max);
 double redlite_zincrby(RedliteDb *db, const char *key, double increment, const uint8_t *member, size_t member_len);
 RedliteBytesArray redlite_zrange(RedliteDb *db, const char *key, int64_t start, int64_t stop, int with_scores);
 RedliteBytesArray redlite_zrevrange(RedliteDb *db, const char *key, int64_t start, int64_t stop, int with_scores);
+int64_t redlite_zinterstore(RedliteDb *db, const char *destination, const char **keys, size_t keys_len, const double *weights, size_t weights_len, const char *aggregate);
+int64_t redlite_zunionstore(RedliteDb *db, const char *destination, const char **keys, size_t keys_len, const double *weights, size_t weights_len, const char *aggregate);
 
 // Utility
 int64_t redlite_vacuum(RedliteDb *db);
+
+// JSON commands
+int redlite_json_set(RedliteDb *db, const char *key, const char *path, const char *value, int nx, int xx);
+char *redlite_json_get(RedliteDb *db, const char *key, const char **paths, size_t paths_len);
+int64_t redlite_json_del(RedliteDb *db, const char *key, const char *path);
+char *redlite_json_type(RedliteDb *db, const char *key, const char *path);
+char *redlite_json_numincrby(RedliteDb *db, const char *key, const char *path, double increment);
+int64_t redlite_json_strappend(RedliteDb *db, const char *key, const char *path, const char *value);
+int64_t redlite_json_strlen(RedliteDb *db, const char *key, const char *path);
+int64_t redlite_json_arrappend(RedliteDb *db, const char *key, const char *path, const char **values, size_t values_len);
+int64_t redlite_json_arrlen(RedliteDb *db, const char *key, const char *path);
+char *redlite_json_arrpop(RedliteDb *db, const char *key, const char *path, int64_t index);
+int64_t redlite_json_clear(RedliteDb *db, const char *key, const char *path);
+
+// History enable/disable
+int redlite_history_enable_global(RedliteDb *db, const char *retention_type, int64_t retention_value);
+int redlite_history_enable_database(RedliteDb *db, int db_num, const char *retention_type, int64_t retention_value);
+int redlite_history_enable_key(RedliteDb *db, const char *key, const char *retention_type, int64_t retention_value);
+int redlite_history_disable_global(RedliteDb *db);
+int redlite_history_disable_database(RedliteDb *db, int db_num);
+int redlite_history_disable_key(RedliteDb *db, const char *key);
+int redlite_is_history_enabled(RedliteDb *db, const char *key);
+
+// FTS enable/disable
+int redlite_fts_enable_global(RedliteDb *db);
+int redlite_fts_enable_database(RedliteDb *db, int db_num);
+int redlite_fts_enable_pattern(RedliteDb *db, const char *pattern);
+int redlite_fts_enable_key(RedliteDb *db, const char *key);
+int redlite_fts_disable_global(RedliteDb *db);
+int redlite_fts_disable_database(RedliteDb *db, int db_num);
+int redlite_fts_disable_pattern(RedliteDb *db, const char *pattern);
+int redlite_fts_disable_key(RedliteDb *db, const char *key);
+int redlite_is_fts_enabled(RedliteDb *db, const char *key);
+
+// KeyInfo
+typedef struct RedliteKeyInfo {
+    char *key_type;
+    int64_t ttl;
+    int64_t created_at;
+    int64_t updated_at;
+    int valid;
+} RedliteKeyInfo;
+RedliteKeyInfo redlite_keyinfo(RedliteDb *db, const char *key);
+void redlite_free_keyinfo(RedliteKeyInfo info);
 HEADER;
     }
 
@@ -1026,6 +1076,104 @@ HEADER;
         return $value;
     }
 
+    /**
+     * Prepend values to a list only if the key exists.
+     *
+     * @param string[] $values
+     */
+    public function lpushx(string $key, array $values): int
+    {
+        $this->ensureOpen();
+        $ffi = self::getFFI();
+
+        $count = count($values);
+        if ($count === 0) {
+            return 0;
+        }
+
+        $valuesArray = $ffi->new("RedliteBytes[{$count}]");
+        foreach ($values as $i => $value) {
+            $valuesArray[$i]->data = $value;
+            $valuesArray[$i]->len = strlen($value);
+        }
+
+        return $ffi->redlite_lpushx($this->handle, $key, $valuesArray, $count);
+    }
+
+    /**
+     * Append values to a list only if the key exists.
+     *
+     * @param string[] $values
+     */
+    public function rpushx(string $key, array $values): int
+    {
+        $this->ensureOpen();
+        $ffi = self::getFFI();
+
+        $count = count($values);
+        if ($count === 0) {
+            return 0;
+        }
+
+        $valuesArray = $ffi->new("RedliteBytes[{$count}]");
+        foreach ($values as $i => $value) {
+            $valuesArray[$i]->data = $value;
+            $valuesArray[$i]->len = strlen($value);
+        }
+
+        return $ffi->redlite_rpushx($this->handle, $key, $valuesArray, $count);
+    }
+
+    /**
+     * Atomically move an element from source list to destination list.
+     *
+     * @param string $wherefrom "LEFT" or "RIGHT"
+     * @param string $whereto "LEFT" or "RIGHT"
+     */
+    public function lmove(string $source, string $destination, string $wherefrom, string $whereto): ?string
+    {
+        $this->ensureOpen();
+        $ffi = self::getFFI();
+
+        $fromLeft = strtoupper($wherefrom) === 'LEFT' ? 0 : 1;
+        $toLeft = strtoupper($whereto) === 'LEFT' ? 0 : 1;
+
+        $result = $ffi->redlite_lmove($this->handle, $source, $destination, $fromLeft, $toLeft);
+
+        if ($result->data === null) {
+            return null;
+        }
+
+        $value = FFI::string($result->data, $result->len);
+        $ffi->redlite_free_bytes($result);
+        return $value;
+    }
+
+    /**
+     * Find the position(s) of an element in a list.
+     *
+     * @return int[]
+     */
+    public function lpos(string $key, string $element, int $rank = 0, int $count = 0, int $maxlen = 0): array
+    {
+        $this->ensureOpen();
+        $ffi = self::getFFI();
+
+        $result = $ffi->redlite_lpos($this->handle, $key, $element, strlen($element), $rank, $count, $maxlen);
+
+        $positions = [];
+        for ($i = 0; $i < $result->len; $i++) {
+            $item = $result->items[$i];
+            if ($item->data !== null) {
+                $posStr = FFI::string($item->data, $item->len);
+                $positions[] = (int) $posStr;
+            }
+        }
+
+        $ffi->redlite_free_bytes_array($result);
+        return $positions;
+    }
+
     // -------------------------------------------------------------------------
     // Set commands
     // -------------------------------------------------------------------------
@@ -1274,6 +1422,98 @@ HEADER;
         return $values;
     }
 
+    /**
+     * Intersect sorted sets and store the result in a new key.
+     *
+     * @param string[] $keys Source keys
+     * @param float[]|null $weights Optional weights for each key
+     * @param string|null $aggregate "SUM", "MIN", or "MAX"
+     */
+    public function zinterstore(string $destination, array $keys, ?array $weights = null, ?string $aggregate = null): int
+    {
+        $this->ensureOpen();
+        $ffi = self::getFFI();
+
+        $keysCount = count($keys);
+        if ($keysCount === 0) {
+            return 0;
+        }
+
+        // Build keys array
+        $keysArray = $ffi->new("char*[{$keysCount}]");
+        foreach ($keys as $i => $key) {
+            $keysArray[$i] = $key;
+        }
+
+        // Build weights array if provided
+        $weightsPtr = null;
+        $weightsLen = 0;
+        if ($weights !== null && count($weights) > 0) {
+            $weightsLen = count($weights);
+            $weightsArray = $ffi->new("double[{$weightsLen}]");
+            foreach ($weights as $i => $weight) {
+                $weightsArray[$i] = (float) $weight;
+            }
+            $weightsPtr = $weightsArray;
+        }
+
+        return $ffi->redlite_zinterstore(
+            $this->handle,
+            $destination,
+            $keysArray,
+            $keysCount,
+            $weightsPtr,
+            $weightsLen,
+            $aggregate
+        );
+    }
+
+    /**
+     * Union sorted sets and store the result in a new key.
+     *
+     * @param string[] $keys Source keys
+     * @param float[]|null $weights Optional weights for each key
+     * @param string|null $aggregate "SUM", "MIN", or "MAX"
+     */
+    public function zunionstore(string $destination, array $keys, ?array $weights = null, ?string $aggregate = null): int
+    {
+        $this->ensureOpen();
+        $ffi = self::getFFI();
+
+        $keysCount = count($keys);
+        if ($keysCount === 0) {
+            return 0;
+        }
+
+        // Build keys array
+        $keysArray = $ffi->new("char*[{$keysCount}]");
+        foreach ($keys as $i => $key) {
+            $keysArray[$i] = $key;
+        }
+
+        // Build weights array if provided
+        $weightsPtr = null;
+        $weightsLen = 0;
+        if ($weights !== null && count($weights) > 0) {
+            $weightsLen = count($weights);
+            $weightsArray = $ffi->new("double[{$weightsLen}]");
+            foreach ($weights as $i => $weight) {
+                $weightsArray[$i] = (float) $weight;
+            }
+            $weightsPtr = $weightsArray;
+        }
+
+        return $ffi->redlite_zunionstore(
+            $this->handle,
+            $destination,
+            $keysArray,
+            $keysCount,
+            $weightsPtr,
+            $weightsLen,
+            $aggregate
+        );
+    }
+
     // -------------------------------------------------------------------------
     // Utility commands
     // -------------------------------------------------------------------------
@@ -1284,5 +1524,435 @@ HEADER;
         $ffi = self::getFFI();
 
         return $ffi->redlite_vacuum($this->handle);
+    }
+
+    // -------------------------------------------------------------------------
+    // JSON commands (ReJSON-compatible)
+    // -------------------------------------------------------------------------
+
+    /**
+     * Set a JSON value at a path.
+     *
+     * @param bool $nx Only set if key does not exist
+     * @param bool $xx Only set if key already exists
+     */
+    public function jsonSet(string $key, string $path, string $value, bool $nx = false, bool $xx = false): bool
+    {
+        $this->ensureOpen();
+        $ffi = self::getFFI();
+
+        $result = $ffi->redlite_json_set($this->handle, $key, $path, $value, $nx ? 1 : 0, $xx ? 1 : 0);
+        return $result === 0;
+    }
+
+    /**
+     * Get JSON value(s) at path(s).
+     *
+     * @param string[] $paths Paths to get (defaults to "$" if empty)
+     */
+    public function jsonGet(string $key, array $paths = []): ?string
+    {
+        $this->ensureOpen();
+        $ffi = self::getFFI();
+
+        if (empty($paths)) {
+            $paths = ['$'];
+        }
+
+        $count = count($paths);
+        $pathsArray = $ffi->new("char*[{$count}]");
+        foreach ($paths as $i => $path) {
+            $pathsArray[$i] = $path;
+        }
+
+        $ptr = $ffi->redlite_json_get($this->handle, $key, $pathsArray, $count);
+
+        if ($ptr === null) {
+            return null;
+        }
+
+        $result = FFI::string($ptr);
+        $ffi->redlite_free_string($ptr);
+        return $result;
+    }
+
+    /**
+     * Delete JSON value at path.
+     *
+     * @return int Number of paths deleted
+     */
+    public function jsonDel(string $key, ?string $path = null): int
+    {
+        $this->ensureOpen();
+        $ffi = self::getFFI();
+
+        return $ffi->redlite_json_del($this->handle, $key, $path ?? '$');
+    }
+
+    /**
+     * Get the type of JSON value at path.
+     */
+    public function jsonType(string $key, ?string $path = null): ?string
+    {
+        $this->ensureOpen();
+        $ffi = self::getFFI();
+
+        $ptr = $ffi->redlite_json_type($this->handle, $key, $path ?? '$');
+
+        if ($ptr === null) {
+            return null;
+        }
+
+        $result = FFI::string($ptr);
+        $ffi->redlite_free_string($ptr);
+        return $result;
+    }
+
+    /**
+     * Increment numeric value at path.
+     *
+     * @return string|null New value as string
+     */
+    public function jsonNumIncrBy(string $key, string $path, float $increment): ?string
+    {
+        $this->ensureOpen();
+        $ffi = self::getFFI();
+
+        $ptr = $ffi->redlite_json_numincrby($this->handle, $key, $path, $increment);
+
+        if ($ptr === null) {
+            return null;
+        }
+
+        $result = FFI::string($ptr);
+        $ffi->redlite_free_string($ptr);
+        return $result;
+    }
+
+    /**
+     * Append to JSON string at path.
+     *
+     * @return int New string length
+     */
+    public function jsonStrAppend(string $key, string $path, string $value): int
+    {
+        $this->ensureOpen();
+        $ffi = self::getFFI();
+
+        return $ffi->redlite_json_strappend($this->handle, $key, $path, $value);
+    }
+
+    /**
+     * Get length of JSON string at path.
+     */
+    public function jsonStrLen(string $key, ?string $path = null): int
+    {
+        $this->ensureOpen();
+        $ffi = self::getFFI();
+
+        return $ffi->redlite_json_strlen($this->handle, $key, $path ?? '$');
+    }
+
+    /**
+     * Append values to JSON array.
+     *
+     * @param string[] $values JSON-encoded values to append
+     * @return int New array length
+     */
+    public function jsonArrAppend(string $key, string $path, array $values): int
+    {
+        $this->ensureOpen();
+        $ffi = self::getFFI();
+
+        $count = count($values);
+        if ($count === 0) {
+            return 0;
+        }
+
+        $valuesArray = $ffi->new("char*[{$count}]");
+        foreach ($values as $i => $value) {
+            $valuesArray[$i] = $value;
+        }
+
+        return $ffi->redlite_json_arrappend($this->handle, $key, $path, $valuesArray, $count);
+    }
+
+    /**
+     * Get length of JSON array at path.
+     */
+    public function jsonArrLen(string $key, ?string $path = null): int
+    {
+        $this->ensureOpen();
+        $ffi = self::getFFI();
+
+        return $ffi->redlite_json_arrlen($this->handle, $key, $path ?? '$');
+    }
+
+    /**
+     * Pop element from JSON array.
+     *
+     * @param int $index Index to pop from (-1 = last element)
+     * @return string|null Popped element as JSON string
+     */
+    public function jsonArrPop(string $key, ?string $path = null, int $index = -1): ?string
+    {
+        $this->ensureOpen();
+        $ffi = self::getFFI();
+
+        $ptr = $ffi->redlite_json_arrpop($this->handle, $key, $path ?? '$', $index);
+
+        if ($ptr === null) {
+            return null;
+        }
+
+        $result = FFI::string($ptr);
+        $ffi->redlite_free_string($ptr);
+        return $result;
+    }
+
+    /**
+     * Clear container values (arrays/objects).
+     *
+     * @return int Number of containers cleared
+     */
+    public function jsonClear(string $key, ?string $path = null): int
+    {
+        $this->ensureOpen();
+        $ffi = self::getFFI();
+
+        return $ffi->redlite_json_clear($this->handle, $key, $path ?? '$');
+    }
+
+    // -------------------------------------------------------------------------
+    // History commands
+    // -------------------------------------------------------------------------
+
+    /**
+     * Enable history tracking globally.
+     *
+     * @param string $retentionType "unlimited", "time", or "count"
+     * @param int $retentionValue Value for time (ms) or count retention
+     */
+    public function historyEnableGlobal(string $retentionType = 'unlimited', int $retentionValue = 0): bool
+    {
+        $this->ensureOpen();
+        $ffi = self::getFFI();
+
+        $result = $ffi->redlite_history_enable_global($this->handle, $retentionType, $retentionValue);
+        return $result === 0;
+    }
+
+    /**
+     * Enable history tracking for a specific database.
+     */
+    public function historyEnableDatabase(int $dbNum, string $retentionType = 'unlimited', int $retentionValue = 0): bool
+    {
+        $this->ensureOpen();
+        $ffi = self::getFFI();
+
+        $result = $ffi->redlite_history_enable_database($this->handle, $dbNum, $retentionType, $retentionValue);
+        return $result === 0;
+    }
+
+    /**
+     * Enable history tracking for a specific key.
+     */
+    public function historyEnableKey(string $key, string $retentionType = 'unlimited', int $retentionValue = 0): bool
+    {
+        $this->ensureOpen();
+        $ffi = self::getFFI();
+
+        $result = $ffi->redlite_history_enable_key($this->handle, $key, $retentionType, $retentionValue);
+        return $result === 0;
+    }
+
+    /**
+     * Disable history tracking globally.
+     */
+    public function historyDisableGlobal(): bool
+    {
+        $this->ensureOpen();
+        $ffi = self::getFFI();
+
+        $result = $ffi->redlite_history_disable_global($this->handle);
+        return $result === 0;
+    }
+
+    /**
+     * Disable history tracking for a specific database.
+     */
+    public function historyDisableDatabase(int $dbNum): bool
+    {
+        $this->ensureOpen();
+        $ffi = self::getFFI();
+
+        $result = $ffi->redlite_history_disable_database($this->handle, $dbNum);
+        return $result === 0;
+    }
+
+    /**
+     * Disable history tracking for a specific key.
+     */
+    public function historyDisableKey(string $key): bool
+    {
+        $this->ensureOpen();
+        $ffi = self::getFFI();
+
+        $result = $ffi->redlite_history_disable_key($this->handle, $key);
+        return $result === 0;
+    }
+
+    /**
+     * Check if history tracking is enabled for a key.
+     */
+    public function isHistoryEnabled(string $key): bool
+    {
+        $this->ensureOpen();
+        $ffi = self::getFFI();
+
+        return $ffi->redlite_is_history_enabled($this->handle, $key) === 1;
+    }
+
+    // -------------------------------------------------------------------------
+    // FTS (Full-Text Search) commands
+    // -------------------------------------------------------------------------
+
+    /**
+     * Enable full-text search globally.
+     */
+    public function ftsEnableGlobal(): bool
+    {
+        $this->ensureOpen();
+        $ffi = self::getFFI();
+
+        $result = $ffi->redlite_fts_enable_global($this->handle);
+        return $result === 0;
+    }
+
+    /**
+     * Enable full-text search for a specific database.
+     */
+    public function ftsEnableDatabase(int $dbNum): bool
+    {
+        $this->ensureOpen();
+        $ffi = self::getFFI();
+
+        $result = $ffi->redlite_fts_enable_database($this->handle, $dbNum);
+        return $result === 0;
+    }
+
+    /**
+     * Enable full-text search for keys matching a pattern.
+     */
+    public function ftsEnablePattern(string $pattern): bool
+    {
+        $this->ensureOpen();
+        $ffi = self::getFFI();
+
+        $result = $ffi->redlite_fts_enable_pattern($this->handle, $pattern);
+        return $result === 0;
+    }
+
+    /**
+     * Enable full-text search for a specific key.
+     */
+    public function ftsEnableKey(string $key): bool
+    {
+        $this->ensureOpen();
+        $ffi = self::getFFI();
+
+        $result = $ffi->redlite_fts_enable_key($this->handle, $key);
+        return $result === 0;
+    }
+
+    /**
+     * Disable full-text search globally.
+     */
+    public function ftsDisableGlobal(): bool
+    {
+        $this->ensureOpen();
+        $ffi = self::getFFI();
+
+        $result = $ffi->redlite_fts_disable_global($this->handle);
+        return $result === 0;
+    }
+
+    /**
+     * Disable full-text search for a specific database.
+     */
+    public function ftsDisableDatabase(int $dbNum): bool
+    {
+        $this->ensureOpen();
+        $ffi = self::getFFI();
+
+        $result = $ffi->redlite_fts_disable_database($this->handle, $dbNum);
+        return $result === 0;
+    }
+
+    /**
+     * Disable full-text search for keys matching a pattern.
+     */
+    public function ftsDisablePattern(string $pattern): bool
+    {
+        $this->ensureOpen();
+        $ffi = self::getFFI();
+
+        $result = $ffi->redlite_fts_disable_pattern($this->handle, $pattern);
+        return $result === 0;
+    }
+
+    /**
+     * Disable full-text search for a specific key.
+     */
+    public function ftsDisableKey(string $key): bool
+    {
+        $this->ensureOpen();
+        $ffi = self::getFFI();
+
+        $result = $ffi->redlite_fts_disable_key($this->handle, $key);
+        return $result === 0;
+    }
+
+    /**
+     * Check if full-text search is enabled for a key.
+     */
+    public function isFtsEnabled(string $key): bool
+    {
+        $this->ensureOpen();
+        $ffi = self::getFFI();
+
+        return $ffi->redlite_is_fts_enabled($this->handle, $key) === 1;
+    }
+
+    // -------------------------------------------------------------------------
+    // KeyInfo command
+    // -------------------------------------------------------------------------
+
+    /**
+     * Get detailed information about a key.
+     *
+     * @return array{type: string, ttl: int, created_at: int, updated_at: int}|null
+     */
+    public function keyinfo(string $key): ?array
+    {
+        $this->ensureOpen();
+        $ffi = self::getFFI();
+
+        $info = $ffi->redlite_keyinfo($this->handle, $key);
+
+        if ($info->valid === 0) {
+            $ffi->redlite_free_keyinfo($info);
+            return null;
+        }
+
+        $result = [
+            'type' => FFI::string($info->key_type),
+            'ttl' => $info->ttl,
+            'created_at' => $info->created_at,
+            'updated_at' => $info->updated_at,
+        ];
+
+        $ffi->redlite_free_keyinfo($info);
+        return $result;
     }
 }

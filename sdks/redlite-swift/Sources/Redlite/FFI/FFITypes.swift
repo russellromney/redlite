@@ -137,3 +137,29 @@ public struct ZMember: Sendable, Equatable {
         String(data: member, encoding: .utf8)
     }
 }
+
+/// Key information returned by keyinfo()
+public struct KeyInfo: Sendable, Equatable {
+    public let keyType: String
+    public let ttl: Int64
+    public let createdAt: Int64
+    public let updatedAt: Int64
+
+    public init(keyType: String, ttl: Int64, createdAt: Int64, updatedAt: Int64) {
+        self.keyType = keyType
+        self.ttl = ttl
+        self.createdAt = createdAt
+        self.updatedAt = updatedAt
+    }
+}
+
+/// JSON SET options
+public struct JsonSetOptions: Sendable {
+    public var nx: Bool = false  // Only set if not exists
+    public var xx: Bool = false  // Only set if exists
+
+    public init(nx: Bool = false, xx: Bool = false) {
+        self.nx = nx
+        self.xx = xx
+    }
+}

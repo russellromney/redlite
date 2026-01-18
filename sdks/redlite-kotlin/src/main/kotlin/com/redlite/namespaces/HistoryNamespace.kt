@@ -1,18 +1,96 @@
 package com.redlite.namespaces
 
 import com.redlite.Redlite
+import com.redlite.RedliteException
 
 /**
  * Version history namespace for Redlite HISTORY.* commands.
  */
 class HistoryNamespace(private val client: Redlite) {
 
+    // =========================================================================
+    // History Enable/Disable Commands
+    // =========================================================================
+
+    /**
+     * Enable history tracking globally.
+     *
+     * @param retentionType "unlimited", "time", or "count"
+     * @param retentionValue Value for time (ms) or count retention
+     */
+    fun enableGlobal(retentionType: String = "unlimited", retentionValue: Long = 0) {
+        throw RedliteException("History commands not yet implemented")
+    }
+
+    /**
+     * Enable history tracking for a specific database.
+     *
+     * @param dbNum Database number
+     * @param retentionType "unlimited", "time", or "count"
+     * @param retentionValue Value for time (ms) or count retention
+     */
+    fun enableDatabase(dbNum: Int, retentionType: String = "unlimited", retentionValue: Long = 0) {
+        throw RedliteException("History commands not yet implemented")
+    }
+
+    /**
+     * Enable history tracking for a specific key.
+     *
+     * @param key Key to enable history for
+     * @param retentionType "unlimited", "time", or "count"
+     * @param retentionValue Value for time (ms) or count retention
+     */
+    fun enableKey(key: String, retentionType: String = "unlimited", retentionValue: Long = 0) {
+        throw RedliteException("History commands not yet implemented")
+    }
+
+    /**
+     * Disable history tracking globally.
+     */
+    fun disableGlobal() {
+        throw RedliteException("History commands not yet implemented")
+    }
+
+    /**
+     * Disable history tracking for a specific database.
+     *
+     * @param dbNum Database number
+     */
+    fun disableDatabase(dbNum: Int) {
+        throw RedliteException("History commands not yet implemented")
+    }
+
+    /**
+     * Disable history tracking for a specific key.
+     *
+     * @param key Key to disable history for
+     */
+    fun disableKey(key: String) {
+        throw RedliteException("History commands not yet implemented")
+    }
+
+    /**
+     * Check if history tracking is enabled for a key.
+     *
+     * @param key Key to check
+     * @return true if history is enabled
+     */
+    fun isEnabled(key: String): Boolean {
+        throw RedliteException("History commands not yet implemented")
+    }
+
+    // =========================================================================
+    // Legacy API (deprecated, use enable/disable methods above)
+    // =========================================================================
+
     /**
      * Enable history tracking for a key pattern.
      *
      * @param pattern Key pattern (e.g., "user:*")
      * @param maxVersions Maximum versions to keep per key
+     * @deprecated Use enableGlobal(), enableDatabase(), or enableKey() instead
      */
+    @Deprecated("Use enableGlobal(), enableDatabase(), or enableKey() instead")
     fun enable(pattern: String = "*", maxVersions: Int = 100): Boolean {
         client.execute("HISTORY.ENABLE", pattern, maxVersions.toString())
         return true
@@ -20,11 +98,18 @@ class HistoryNamespace(private val client: Redlite) {
 
     /**
      * Disable history tracking for a key pattern.
+     *
+     * @deprecated Use disableGlobal(), disableDatabase(), or disableKey() instead
      */
+    @Deprecated("Use disableGlobal(), disableDatabase(), or disableKey() instead")
     fun disable(pattern: String = "*"): Boolean {
         client.execute("HISTORY.DISABLE", pattern)
         return true
     }
+
+    // =========================================================================
+    // History Query Commands
+    // =========================================================================
 
     /**
      * Get version history of a key.

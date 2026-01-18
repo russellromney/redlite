@@ -116,6 +116,19 @@ internal struct RedliteZMemberNative
 }
 
 /// <summary>
+/// Native type for key information
+/// </summary>
+[StructLayout(LayoutKind.Sequential)]
+internal struct RedliteKeyInfoNative
+{
+    public int Valid;
+    public IntPtr KeyType;
+    public long Ttl;
+    public long CreatedAt;
+    public long UpdatedAt;
+}
+
+/// <summary>
 /// P/Invoke declarations for Redlite C FFI
 /// </summary>
 internal static partial class NativeMethods
@@ -540,4 +553,164 @@ internal static partial class NativeMethods
 
     [DllImport(LibraryName, CallingConvention = CallingConvention.Cdecl)]
     public static extern IntPtr redlite_version();
+
+    // JSON commands (ReJSON-compatible)
+    [DllImport(LibraryName, CallingConvention = CallingConvention.Cdecl)]
+    public static extern int redlite_json_set(
+        IntPtr db,
+        [MarshalAs(UnmanagedType.LPUTF8Str)] string key,
+        [MarshalAs(UnmanagedType.LPUTF8Str)] string path,
+        [MarshalAs(UnmanagedType.LPUTF8Str)] string value,
+        int nx,
+        int xx);
+
+    [DllImport(LibraryName, CallingConvention = CallingConvention.Cdecl)]
+    public static extern IntPtr redlite_json_get(
+        IntPtr db,
+        [MarshalAs(UnmanagedType.LPUTF8Str)] string key,
+        IntPtr paths,
+        nuint pathsLen);
+
+    [DllImport(LibraryName, CallingConvention = CallingConvention.Cdecl)]
+    public static extern long redlite_json_del(
+        IntPtr db,
+        [MarshalAs(UnmanagedType.LPUTF8Str)] string key,
+        [MarshalAs(UnmanagedType.LPUTF8Str)] string path);
+
+    [DllImport(LibraryName, CallingConvention = CallingConvention.Cdecl)]
+    public static extern IntPtr redlite_json_type(
+        IntPtr db,
+        [MarshalAs(UnmanagedType.LPUTF8Str)] string key,
+        [MarshalAs(UnmanagedType.LPUTF8Str)] string path);
+
+    [DllImport(LibraryName, CallingConvention = CallingConvention.Cdecl)]
+    public static extern IntPtr redlite_json_numincrby(
+        IntPtr db,
+        [MarshalAs(UnmanagedType.LPUTF8Str)] string key,
+        [MarshalAs(UnmanagedType.LPUTF8Str)] string path,
+        double increment);
+
+    [DllImport(LibraryName, CallingConvention = CallingConvention.Cdecl)]
+    public static extern long redlite_json_strappend(
+        IntPtr db,
+        [MarshalAs(UnmanagedType.LPUTF8Str)] string key,
+        [MarshalAs(UnmanagedType.LPUTF8Str)] string path,
+        [MarshalAs(UnmanagedType.LPUTF8Str)] string value);
+
+    [DllImport(LibraryName, CallingConvention = CallingConvention.Cdecl)]
+    public static extern long redlite_json_strlen(
+        IntPtr db,
+        [MarshalAs(UnmanagedType.LPUTF8Str)] string key,
+        [MarshalAs(UnmanagedType.LPUTF8Str)] string path);
+
+    [DllImport(LibraryName, CallingConvention = CallingConvention.Cdecl)]
+    public static extern long redlite_json_arrappend(
+        IntPtr db,
+        [MarshalAs(UnmanagedType.LPUTF8Str)] string key,
+        [MarshalAs(UnmanagedType.LPUTF8Str)] string path,
+        IntPtr values,
+        nuint valuesLen);
+
+    [DllImport(LibraryName, CallingConvention = CallingConvention.Cdecl)]
+    public static extern long redlite_json_arrlen(
+        IntPtr db,
+        [MarshalAs(UnmanagedType.LPUTF8Str)] string key,
+        [MarshalAs(UnmanagedType.LPUTF8Str)] string path);
+
+    [DllImport(LibraryName, CallingConvention = CallingConvention.Cdecl)]
+    public static extern IntPtr redlite_json_arrpop(
+        IntPtr db,
+        [MarshalAs(UnmanagedType.LPUTF8Str)] string key,
+        [MarshalAs(UnmanagedType.LPUTF8Str)] string path,
+        long index);
+
+    [DllImport(LibraryName, CallingConvention = CallingConvention.Cdecl)]
+    public static extern long redlite_json_clear(
+        IntPtr db,
+        [MarshalAs(UnmanagedType.LPUTF8Str)] string key,
+        [MarshalAs(UnmanagedType.LPUTF8Str)] string path);
+
+    // History commands
+    [DllImport(LibraryName, CallingConvention = CallingConvention.Cdecl)]
+    public static extern int redlite_history_enable_global(
+        IntPtr db,
+        [MarshalAs(UnmanagedType.LPUTF8Str)] string retentionType,
+        long retentionValue);
+
+    [DllImport(LibraryName, CallingConvention = CallingConvention.Cdecl)]
+    public static extern int redlite_history_enable_database(
+        IntPtr db,
+        int dbNum,
+        [MarshalAs(UnmanagedType.LPUTF8Str)] string retentionType,
+        long retentionValue);
+
+    [DllImport(LibraryName, CallingConvention = CallingConvention.Cdecl)]
+    public static extern int redlite_history_enable_key(
+        IntPtr db,
+        [MarshalAs(UnmanagedType.LPUTF8Str)] string key,
+        [MarshalAs(UnmanagedType.LPUTF8Str)] string retentionType,
+        long retentionValue);
+
+    [DllImport(LibraryName, CallingConvention = CallingConvention.Cdecl)]
+    public static extern int redlite_history_disable_global(IntPtr db);
+
+    [DllImport(LibraryName, CallingConvention = CallingConvention.Cdecl)]
+    public static extern int redlite_history_disable_database(IntPtr db, int dbNum);
+
+    [DllImport(LibraryName, CallingConvention = CallingConvention.Cdecl)]
+    public static extern int redlite_history_disable_key(
+        IntPtr db,
+        [MarshalAs(UnmanagedType.LPUTF8Str)] string key);
+
+    [DllImport(LibraryName, CallingConvention = CallingConvention.Cdecl)]
+    public static extern int redlite_is_history_enabled(
+        IntPtr db,
+        [MarshalAs(UnmanagedType.LPUTF8Str)] string key);
+
+    // FTS (Full-Text Search) commands
+    [DllImport(LibraryName, CallingConvention = CallingConvention.Cdecl)]
+    public static extern int redlite_fts_enable_global(IntPtr db);
+
+    [DllImport(LibraryName, CallingConvention = CallingConvention.Cdecl)]
+    public static extern int redlite_fts_enable_database(IntPtr db, int dbNum);
+
+    [DllImport(LibraryName, CallingConvention = CallingConvention.Cdecl)]
+    public static extern int redlite_fts_enable_pattern(
+        IntPtr db,
+        [MarshalAs(UnmanagedType.LPUTF8Str)] string pattern);
+
+    [DllImport(LibraryName, CallingConvention = CallingConvention.Cdecl)]
+    public static extern int redlite_fts_enable_key(
+        IntPtr db,
+        [MarshalAs(UnmanagedType.LPUTF8Str)] string key);
+
+    [DllImport(LibraryName, CallingConvention = CallingConvention.Cdecl)]
+    public static extern int redlite_fts_disable_global(IntPtr db);
+
+    [DllImport(LibraryName, CallingConvention = CallingConvention.Cdecl)]
+    public static extern int redlite_fts_disable_database(IntPtr db, int dbNum);
+
+    [DllImport(LibraryName, CallingConvention = CallingConvention.Cdecl)]
+    public static extern int redlite_fts_disable_pattern(
+        IntPtr db,
+        [MarshalAs(UnmanagedType.LPUTF8Str)] string pattern);
+
+    [DllImport(LibraryName, CallingConvention = CallingConvention.Cdecl)]
+    public static extern int redlite_fts_disable_key(
+        IntPtr db,
+        [MarshalAs(UnmanagedType.LPUTF8Str)] string key);
+
+    [DllImport(LibraryName, CallingConvention = CallingConvention.Cdecl)]
+    public static extern int redlite_is_fts_enabled(
+        IntPtr db,
+        [MarshalAs(UnmanagedType.LPUTF8Str)] string key);
+
+    // KeyInfo command
+    [DllImport(LibraryName, CallingConvention = CallingConvention.Cdecl)]
+    public static extern RedliteKeyInfoNative redlite_keyinfo(
+        IntPtr db,
+        [MarshalAs(UnmanagedType.LPUTF8Str)] string key);
+
+    [DllImport(LibraryName, CallingConvention = CallingConvention.Cdecl)]
+    public static extern void redlite_free_keyinfo(RedliteKeyInfoNative info);
 }

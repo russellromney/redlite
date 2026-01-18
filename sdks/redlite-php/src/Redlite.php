@@ -608,6 +608,47 @@ class Redlite
         return $this->db->lindex($key, $index);
     }
 
+    /**
+     * Prepend values to a list only if the key exists.
+     *
+     * @param string ...$values
+     */
+    public function lpushx(string $key, string ...$values): int
+    {
+        return $this->db->lpushx($key, $values);
+    }
+
+    /**
+     * Append values to a list only if the key exists.
+     *
+     * @param string ...$values
+     */
+    public function rpushx(string $key, string ...$values): int
+    {
+        return $this->db->rpushx($key, $values);
+    }
+
+    /**
+     * Atomically move an element from source list to destination list.
+     *
+     * @param string $wherefrom "LEFT" or "RIGHT"
+     * @param string $whereto "LEFT" or "RIGHT"
+     */
+    public function lmove(string $source, string $destination, string $wherefrom, string $whereto): ?string
+    {
+        return $this->db->lmove($source, $destination, $wherefrom, $whereto);
+    }
+
+    /**
+     * Find the position(s) of an element in a list.
+     *
+     * @return int[]
+     */
+    public function lpos(string $key, string $element, int $rank = 0, int $count = 0, int $maxlen = 0): array
+    {
+        return $this->db->lpos($key, $element, $rank, $count, $maxlen);
+    }
+
     // -------------------------------------------------------------------------
     // Set commands
     // -------------------------------------------------------------------------
@@ -734,6 +775,30 @@ class Redlite
         return $this->db->zrevrange($key, $start, $stop, $withscores);
     }
 
+    /**
+     * Intersect sorted sets and store the result in a new key.
+     *
+     * @param string[] $keys Source keys
+     * @param float[]|null $weights Optional weights for each key
+     * @param string|null $aggregate "SUM", "MIN", or "MAX"
+     */
+    public function zinterstore(string $destination, array $keys, ?array $weights = null, ?string $aggregate = null): int
+    {
+        return $this->db->zinterstore($destination, $keys, $weights, $aggregate);
+    }
+
+    /**
+     * Union sorted sets and store the result in a new key.
+     *
+     * @param string[] $keys Source keys
+     * @param float[]|null $weights Optional weights for each key
+     * @param string|null $aggregate "SUM", "MIN", or "MAX"
+     */
+    public function zunionstore(string $destination, array $keys, ?array $weights = null, ?string $aggregate = null): int
+    {
+        return $this->db->zunionstore($destination, $keys, $weights, $aggregate);
+    }
+
     // -------------------------------------------------------------------------
     // Utility commands
     // -------------------------------------------------------------------------
@@ -744,5 +809,269 @@ class Redlite
     public function vacuum(): int
     {
         return $this->db->vacuum();
+    }
+
+    // -------------------------------------------------------------------------
+    // JSON commands (ReJSON-compatible)
+    // -------------------------------------------------------------------------
+
+    /**
+     * Set a JSON value at a path.
+     *
+     * @param bool $nx Only set if key does not exist
+     * @param bool $xx Only set if key already exists
+     */
+    public function jsonSet(string $key, string $path, string $value, bool $nx = false, bool $xx = false): bool
+    {
+        return $this->db->jsonSet($key, $path, $value, $nx, $xx);
+    }
+
+    /**
+     * Get JSON value(s) at path(s).
+     *
+     * @param string ...$paths Paths to get (defaults to "$" if empty)
+     */
+    public function jsonGet(string $key, string ...$paths): ?string
+    {
+        return $this->db->jsonGet($key, $paths);
+    }
+
+    /**
+     * Delete JSON value at path.
+     *
+     * @return int Number of paths deleted
+     */
+    public function jsonDel(string $key, ?string $path = null): int
+    {
+        return $this->db->jsonDel($key, $path);
+    }
+
+    /**
+     * Get the type of JSON value at path.
+     */
+    public function jsonType(string $key, ?string $path = null): ?string
+    {
+        return $this->db->jsonType($key, $path);
+    }
+
+    /**
+     * Increment numeric value at path.
+     *
+     * @return string|null New value as string
+     */
+    public function jsonNumIncrBy(string $key, string $path, float $increment): ?string
+    {
+        return $this->db->jsonNumIncrBy($key, $path, $increment);
+    }
+
+    /**
+     * Append to JSON string at path.
+     *
+     * @return int New string length
+     */
+    public function jsonStrAppend(string $key, string $path, string $value): int
+    {
+        return $this->db->jsonStrAppend($key, $path, $value);
+    }
+
+    /**
+     * Get length of JSON string at path.
+     */
+    public function jsonStrLen(string $key, ?string $path = null): int
+    {
+        return $this->db->jsonStrLen($key, $path);
+    }
+
+    /**
+     * Append values to JSON array.
+     *
+     * @param string[] $values JSON-encoded values to append
+     * @return int New array length
+     */
+    public function jsonArrAppend(string $key, string $path, array $values): int
+    {
+        return $this->db->jsonArrAppend($key, $path, $values);
+    }
+
+    /**
+     * Get length of JSON array at path.
+     */
+    public function jsonArrLen(string $key, ?string $path = null): int
+    {
+        return $this->db->jsonArrLen($key, $path);
+    }
+
+    /**
+     * Pop element from JSON array.
+     *
+     * @param int $index Index to pop from (-1 = last element)
+     * @return string|null Popped element as JSON string
+     */
+    public function jsonArrPop(string $key, ?string $path = null, int $index = -1): ?string
+    {
+        return $this->db->jsonArrPop($key, $path, $index);
+    }
+
+    /**
+     * Clear container values (arrays/objects).
+     *
+     * @return int Number of containers cleared
+     */
+    public function jsonClear(string $key, ?string $path = null): int
+    {
+        return $this->db->jsonClear($key, $path);
+    }
+
+    // -------------------------------------------------------------------------
+    // History commands
+    // -------------------------------------------------------------------------
+
+    /**
+     * Enable history tracking globally.
+     *
+     * @param string $retentionType "unlimited", "time", or "count"
+     * @param int $retentionValue Value for time (ms) or count retention
+     */
+    public function historyEnableGlobal(string $retentionType = 'unlimited', int $retentionValue = 0): bool
+    {
+        return $this->db->historyEnableGlobal($retentionType, $retentionValue);
+    }
+
+    /**
+     * Enable history tracking for a specific database.
+     */
+    public function historyEnableDatabase(int $dbNum, string $retentionType = 'unlimited', int $retentionValue = 0): bool
+    {
+        return $this->db->historyEnableDatabase($dbNum, $retentionType, $retentionValue);
+    }
+
+    /**
+     * Enable history tracking for a specific key.
+     */
+    public function historyEnableKey(string $key, string $retentionType = 'unlimited', int $retentionValue = 0): bool
+    {
+        return $this->db->historyEnableKey($key, $retentionType, $retentionValue);
+    }
+
+    /**
+     * Disable history tracking globally.
+     */
+    public function historyDisableGlobal(): bool
+    {
+        return $this->db->historyDisableGlobal();
+    }
+
+    /**
+     * Disable history tracking for a specific database.
+     */
+    public function historyDisableDatabase(int $dbNum): bool
+    {
+        return $this->db->historyDisableDatabase($dbNum);
+    }
+
+    /**
+     * Disable history tracking for a specific key.
+     */
+    public function historyDisableKey(string $key): bool
+    {
+        return $this->db->historyDisableKey($key);
+    }
+
+    /**
+     * Check if history tracking is enabled for a key.
+     */
+    public function isHistoryEnabled(string $key): bool
+    {
+        return $this->db->isHistoryEnabled($key);
+    }
+
+    // -------------------------------------------------------------------------
+    // FTS (Full-Text Search) commands
+    // -------------------------------------------------------------------------
+
+    /**
+     * Enable full-text search globally.
+     */
+    public function ftsEnableGlobal(): bool
+    {
+        return $this->db->ftsEnableGlobal();
+    }
+
+    /**
+     * Enable full-text search for a specific database.
+     */
+    public function ftsEnableDatabase(int $dbNum): bool
+    {
+        return $this->db->ftsEnableDatabase($dbNum);
+    }
+
+    /**
+     * Enable full-text search for keys matching a pattern.
+     */
+    public function ftsEnablePattern(string $pattern): bool
+    {
+        return $this->db->ftsEnablePattern($pattern);
+    }
+
+    /**
+     * Enable full-text search for a specific key.
+     */
+    public function ftsEnableKey(string $key): bool
+    {
+        return $this->db->ftsEnableKey($key);
+    }
+
+    /**
+     * Disable full-text search globally.
+     */
+    public function ftsDisableGlobal(): bool
+    {
+        return $this->db->ftsDisableGlobal();
+    }
+
+    /**
+     * Disable full-text search for a specific database.
+     */
+    public function ftsDisableDatabase(int $dbNum): bool
+    {
+        return $this->db->ftsDisableDatabase($dbNum);
+    }
+
+    /**
+     * Disable full-text search for keys matching a pattern.
+     */
+    public function ftsDisablePattern(string $pattern): bool
+    {
+        return $this->db->ftsDisablePattern($pattern);
+    }
+
+    /**
+     * Disable full-text search for a specific key.
+     */
+    public function ftsDisableKey(string $key): bool
+    {
+        return $this->db->ftsDisableKey($key);
+    }
+
+    /**
+     * Check if full-text search is enabled for a key.
+     */
+    public function isFtsEnabled(string $key): bool
+    {
+        return $this->db->isFtsEnabled($key);
+    }
+
+    // -------------------------------------------------------------------------
+    // KeyInfo command
+    // -------------------------------------------------------------------------
+
+    /**
+     * Get detailed information about a key.
+     *
+     * @return array{type: string, ttl: int, created_at: int, updated_at: int}|null
+     */
+    public function keyinfo(string $key): ?array
+    {
+        return $this->db->keyinfo($key);
     }
 }
