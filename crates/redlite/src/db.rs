@@ -3949,6 +3949,152 @@ impl Db {
         Err(KvError::NotFound)
     }
 
+    /// JSON.STRAPPEND key [path] value - append string to JSON string at path
+    /// Returns the new length of the string
+    pub fn json_strappend(&self, key: &str, path: Option<&str>, value: &str) -> Result<i64> {
+        // Value must be a JSON string (with quotes)
+        let append_str: String = serde_json::from_str(value)
+            .map_err(|_| KvError::SyntaxError)?;
+
+        let conn = self.core.conn.lock().unwrap_or_else(|e| e.into_inner());
+        let now = Self::now_ms();
+
+        let key_id = match self.get_json_key_id(&conn, key)? {
+            Some(kid) => kid,
+            None => return Err(KvError::NotFound),
+        };
+
+        let doc_bytes: Vec<u8> = conn
+            .query_row(
+                "SELECT value FROM json_docs WHERE key_id = ?1",
+                params![key_id],
+                |row| row.get(0),
+            )
+            .optional()?
+            .ok_or(KvError::NotFound)?;
+
+        let mut doc: JsonValue = serde_json::from_slice(&doc_bytes)
+            .map_err(|_| KvError::SyntaxError)?;
+
+        let normalized = path.map(Self::normalize_json_path).unwrap_or_else(|| "$".to_string());
+        let new_len = Self::strappend_at_path(&mut doc, &normalized, &append_str)?;
+
+        let updated_bytes = serde_json::to_vec(&doc).map_err(|_| KvError::SyntaxError)?;
+        conn.execute(
+            "UPDATE json_docs SET value = ?1 WHERE key_id = ?2",
+            params![updated_bytes, key_id],
+        )?;
+
+        conn.execute(
+            "UPDATE keys SET updated_at = ?1, version = version + 1 WHERE id = ?2",
+            params![now, key_id],
+        )?;
+
+        Ok(new_len)
+    }
+
+    /// Helper to append string at path
+    fn strappend_at_path(doc: &mut JsonValue, path: &str, append: &str) -> Result<i64> {
+        if path == "$" {
+            if let JsonValue::String(s) = doc {
+                s.push_str(append);
+                return Ok(s.len() as i64);
+            }
+            return Err(KvError::WrongType);
+        }
+
+        let parts: Vec<&str> = path.trim_start_matches("$.").split('.').collect();
+        let mut current = doc;
+
+        for (i, part) in parts.iter().enumerate() {
+            let is_last = i == parts.len() - 1;
+
+            if let Some(bracket_pos) = part.find('[') {
+                let field_name = &part[..bracket_pos];
+                let index_str = &part[bracket_pos + 1..part.len() - 1];
+                let index: usize = index_str.parse().map_err(|_| KvError::SyntaxError)?;
+
+                if !field_name.is_empty() {
+                    current = current
+                        .as_object_mut()
+                        .ok_or(KvError::WrongType)?
+                        .get_mut(field_name)
+                        .ok_or(KvError::NotFound)?;
+                }
+
+                let arr = current.as_array_mut().ok_or(KvError::WrongType)?;
+                current = arr.get_mut(index).ok_or(KvError::NotFound)?;
+
+                if is_last {
+                    return Self::strappend_at_path(current, "$", append);
+                }
+            } else {
+                current = current
+                    .as_object_mut()
+                    .ok_or(KvError::WrongType)?
+                    .get_mut(*part)
+                    .ok_or(KvError::NotFound)?;
+
+                if is_last {
+                    return Self::strappend_at_path(current, "$", append);
+                }
+            }
+        }
+
+        Err(KvError::NotFound)
+    }
+
+    /// JSON.STRLEN key [path] - get length of JSON string at path
+    /// Returns the string length, or None if key/path doesn't exist
+    pub fn json_strlen(&self, key: &str, path: Option<&str>) -> Result<Option<i64>> {
+        let conn = self.core.conn.lock().unwrap_or_else(|e| e.into_inner());
+
+        let key_id = match self.get_json_key_id(&conn, key)? {
+            Some(kid) => kid,
+            None => return Ok(None),
+        };
+
+        let doc_bytes: Vec<u8> = conn
+            .query_row(
+                "SELECT value FROM json_docs WHERE key_id = ?1",
+                params![key_id],
+                |row| row.get(0),
+            )
+            .optional()?
+            .ok_or(KvError::NotFound)?;
+
+        let doc: JsonValue = serde_json::from_slice(&doc_bytes)
+            .map_err(|_| KvError::SyntaxError)?;
+
+        // Track access
+        self.track_access(key_id);
+
+        let normalized = path.map(Self::normalize_json_path).unwrap_or_else(|| "$".to_string());
+
+        if normalized == "$" {
+            if let JsonValue::String(s) = &doc {
+                return Ok(Some(s.len() as i64));
+            }
+            return Err(KvError::WrongType);
+        }
+
+        let json_path = Self::parse_json_path(&normalized)?;
+        let results = json_path.query(&doc);
+
+        if results.is_empty() {
+            return Ok(None);
+        }
+
+        if let Some(first) = results.iter().next() {
+            if let JsonValue::String(s) = first {
+                return Ok(Some(s.len() as i64));
+            }
+            return Err(KvError::WrongType);
+        }
+
+        Ok(None)
+    }
+
     /// HSET key field value [field value ...] - set hash field(s), returns number of new fields
     pub fn hset(&self, key: &str, pairs: &[(&str, &[u8])]) -> Result<i64> {
         if pairs.is_empty() {
@@ -25240,6 +25386,147 @@ mod tests {
 
         let result = db.json_numincrby("obj", "$.stats.score", 50.0).unwrap();
         assert_eq!(result, "150");
+    }
+
+    // ========================================================================
+    // JSON Phase 4: String Command Tests
+    // ========================================================================
+
+    #[test]
+    fn test_json_strappend_basic() {
+        let db = Db::open_memory().unwrap();
+
+        assert!(db.json_set("str", "$", r#""Hello""#, false, false).unwrap());
+
+        let new_len = db.json_strappend("str", None, r#"" World""#).unwrap();
+        assert_eq!(new_len, 11); // "Hello World" = 11 chars
+
+        assert_eq!(db.json_get("str", &[]).unwrap().unwrap(), r#""Hello World""#);
+    }
+
+    #[test]
+    fn test_json_strappend_with_path() {
+        let db = Db::open_memory().unwrap();
+
+        assert!(db.json_set("obj", "$", r#"{"greeting":"Hello"}"#, false, false).unwrap());
+
+        let new_len = db.json_strappend("obj", Some("$.greeting"), r#"" World""#).unwrap();
+        assert_eq!(new_len, 11);
+
+        assert_eq!(db.json_get("obj", &["$.greeting"]).unwrap().unwrap(), r#""Hello World""#);
+    }
+
+    #[test]
+    fn test_json_strappend_nested() {
+        let db = Db::open_memory().unwrap();
+
+        assert!(db.json_set("obj", "$", r#"{"user":{"name":"Alice"}}"#, false, false).unwrap());
+
+        let new_len = db.json_strappend("obj", Some("$.user.name"), r#"" Smith""#).unwrap();
+        assert_eq!(new_len, 11); // "Alice Smith"
+
+        assert_eq!(db.json_get("obj", &["$.user.name"]).unwrap().unwrap(), r#""Alice Smith""#);
+    }
+
+    #[test]
+    fn test_json_strappend_empty_string() {
+        let db = Db::open_memory().unwrap();
+
+        assert!(db.json_set("str", "$", r#""""#, false, false).unwrap());
+
+        let new_len = db.json_strappend("str", None, r#""appended""#).unwrap();
+        assert_eq!(new_len, 8);
+
+        assert_eq!(db.json_get("str", &[]).unwrap().unwrap(), r#""appended""#);
+    }
+
+    #[test]
+    fn test_json_strappend_non_string() {
+        let db = Db::open_memory().unwrap();
+
+        assert!(db.json_set("num", "$", "42", false, false).unwrap());
+
+        let result = db.json_strappend("num", None, r#""text""#);
+        assert!(result.is_err()); // Can't append to a number
+    }
+
+    #[test]
+    fn test_json_strappend_nonexistent_key() {
+        let db = Db::open_memory().unwrap();
+
+        let result = db.json_strappend("nonexistent", None, r#""text""#);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_json_strlen_basic() {
+        let db = Db::open_memory().unwrap();
+
+        assert!(db.json_set("str", "$", r#""Hello World""#, false, false).unwrap());
+
+        let len = db.json_strlen("str", None).unwrap().unwrap();
+        assert_eq!(len, 11);
+    }
+
+    #[test]
+    fn test_json_strlen_with_path() {
+        let db = Db::open_memory().unwrap();
+
+        assert!(db.json_set("obj", "$", r#"{"name":"Alice","city":"NYC"}"#, false, false).unwrap());
+
+        let name_len = db.json_strlen("obj", Some("$.name")).unwrap().unwrap();
+        assert_eq!(name_len, 5); // "Alice"
+
+        let city_len = db.json_strlen("obj", Some("$.city")).unwrap().unwrap();
+        assert_eq!(city_len, 3); // "NYC"
+    }
+
+    #[test]
+    fn test_json_strlen_empty_string() {
+        let db = Db::open_memory().unwrap();
+
+        assert!(db.json_set("empty", "$", r#""""#, false, false).unwrap());
+
+        let len = db.json_strlen("empty", None).unwrap().unwrap();
+        assert_eq!(len, 0);
+    }
+
+    #[test]
+    fn test_json_strlen_nested() {
+        let db = Db::open_memory().unwrap();
+
+        assert!(db.json_set("obj", "$", r#"{"user":{"bio":"Software developer"}}"#, false, false).unwrap());
+
+        let len = db.json_strlen("obj", Some("$.user.bio")).unwrap().unwrap();
+        assert_eq!(len, 18); // "Software developer"
+    }
+
+    #[test]
+    fn test_json_strlen_non_string() {
+        let db = Db::open_memory().unwrap();
+
+        assert!(db.json_set("num", "$", "42", false, false).unwrap());
+
+        let result = db.json_strlen("num", None);
+        assert!(result.is_err()); // Can't get length of a number
+    }
+
+    #[test]
+    fn test_json_strlen_nonexistent_key() {
+        let db = Db::open_memory().unwrap();
+
+        let len = db.json_strlen("nonexistent", None).unwrap();
+        assert!(len.is_none());
+    }
+
+    #[test]
+    fn test_json_strlen_nonexistent_path() {
+        let db = Db::open_memory().unwrap();
+
+        assert!(db.json_set("obj", "$", r#"{"a":"test"}"#, false, false).unwrap());
+
+        let len = db.json_strlen("obj", Some("$.b")).unwrap();
+        assert!(len.is_none());
     }
 
 }

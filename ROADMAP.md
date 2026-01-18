@@ -65,9 +65,9 @@ See [CHANGELOG.md](./CHANGELOG.md) for completed features.
 - [x] JSON.TOGGLE - toggle booleans
 - [x] JSON.NUMINCRBY - increment numbers
 
-#### Phase 4: String Commands
-- [ ] JSON.STRAPPEND - append to strings
-- [ ] JSON.STRLEN - get string length
+#### Phase 4: String Commands - COMPLETE
+- [x] JSON.STRAPPEND - append to strings
+- [x] JSON.STRLEN - get string length
 
 #### Phase 5: Array Commands
 - [ ] JSON.ARRAPPEND - append to array
