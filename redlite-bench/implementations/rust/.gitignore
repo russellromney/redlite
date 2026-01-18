@@ -1,1 +1,6 @@
 /target/
+
+# Pre-generated benchmark databases (stored in Tigris, not git)
+/databases/*.db
+/databases/*.db-wal
+/databases/*.db-shm
