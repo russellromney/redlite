@@ -5,7 +5,7 @@ edition = "2021"
 
 [dependencies]
 tokio = { version = "1", features = ["full"] }
-redis = { version = "0.24", features = ["aio", "json", "tokio-comp"] }
+redis = { version = "0.24", features = ["aio", "json", "tokio-comp", "connection-manager"] }
 async-trait = "0.1"
 serde = { version = "1.0", features = ["derive"] }
 serde_yaml = "0.9"
@@ -22,7 +22,13 @@ tdigest = "0.2"
 clap = { version = "4.0", features = ["derive"] }
 
 # Redlite embedded support
-redlite = { path = "../../../" }
+redlite = { path = "../../../crates/redlite" }
+rusqlite = { version = "0.35", features = ["bundled"] }
+
+[features]
+default = []
+encryption = ["redlite/encryption"]
+compression = ["redlite/compression"]
 
 [dev-dependencies]
 criterion = "0.5"

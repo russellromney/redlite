@@ -33,6 +33,30 @@ impl RedliteEmbeddedClient {
         })
     }
 
+    /// Create an encrypted Redlite database using SQLCipher.
+    /// Requires building with `--features encryption` (and `--no-default-features` to avoid bundled SQLite conflict).
+    #[cfg(feature = "encryption")]
+    pub fn new_encrypted(path: &str, key: &str) -> ClientResult<Self> {
+        let db = Db::open_encrypted(path, key)
+            .map_err(|e| ClientError::Connection(format!("Encryption error: {}", e)))?;
+        Ok(RedliteEmbeddedClient {
+            db: Arc::new(db),
+            db_path: Some(PathBuf::from(path)),
+        })
+    }
+
+    /// Create a compressed Redlite database using sqlite-zstd extension.
+    /// Requires building with `--features compression` and providing path to libsqlite_zstd.so.
+    #[cfg(feature = "compression")]
+    pub fn new_compressed(path: &str, extension_path: &str) -> ClientResult<Self> {
+        let db = Db::open_with_compression(path, extension_path)
+            .map_err(|e| ClientError::Connection(format!("Compression error: {}", e)))?;
+        Ok(RedliteEmbeddedClient {
+            db: Arc::new(db),
+            db_path: Some(PathBuf::from(path)),
+        })
+    }
+
     /// Wrap an existing Db instance (no path available for size measurement)
     pub fn from_db(db: Arc<Db>) -> Self {
         RedliteEmbeddedClient { db, db_path: None }
