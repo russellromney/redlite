@@ -34,26 +34,18 @@ fn init_sqlite_vec() {
 #[cfg(not(feature = "vectors"))]
 fn init_sqlite_vec() {}
 
-/// Load sqlite-zstd extension for transparent compression (per-connection)
-/// When compression feature is enabled, this is a no-op by default.
-/// Use Db::open_with_compression() to specify the extension path.
-#[cfg(not(feature = "compression"))]
-fn load_compression(_conn: &Connection, _extension_path: Option<&str>) -> Result<()> {
-    Ok(())
-}
+/// Initialize compressed VFS for transparent page-level compression.
+/// VFS-level compression works with all SQLite features (search, UPSERT, etc).
+#[cfg(feature = "compression")]
+static INIT_COMPRESSED_VFS: std::sync::Once = std::sync::Once::new();
 
 #[cfg(feature = "compression")]
-fn load_compression(conn: &Connection, extension_path: Option<&str>) -> Result<()> {
-    if let Some(path) = extension_path {
-        // Enable extension loading
-        unsafe {
-            conn.load_extension_enable()?;
-            conn.load_extension(path, None)
-                .map_err(|e| KvError::Other(format!("Failed to load sqlite-zstd extension from {}: {}", path, e)))?;
-            conn.load_extension_disable()?;
-        }
-    }
-    Ok(())
+fn init_compressed_vfs(base_dir: &std::path::Path) {
+    INIT_COMPRESSED_VFS.call_once(|| {
+        let vfs = sqlite_compress_vfs::CompressedVfs::new(base_dir, 3);
+        sqlite_compress_vfs::register("compressed", vfs)
+            .expect("Failed to register compressed VFS");
+    });
 }
 
 /// Default autovacuum interval in milliseconds (60 seconds)
@@ -260,9 +252,6 @@ impl Db {
 
         let conn = Connection::open(path)?;
 
-        // Load sqlite-zstd extension if compression feature enabled
-        load_compression(&conn, None)?;
-
         // Enable WAL mode and optimize pragmas for performance
         conn.execute_batch(
             "PRAGMA journal_mode = WAL;
@@ -339,9 +328,6 @@ impl Db {
 
         let conn = Connection::open(path)?;
 
-        // Load sqlite-zstd extension if compression feature enabled
-        load_compression(&conn, None)?;
-
         // Base pragmas (WAL mode, etc.)
         conn.execute_batch(
             "PRAGMA journal_mode = WAL;
@@ -398,32 +384,36 @@ impl Db {
         Ok(db)
     }
 
-    /// Open a database with transparent compression via sqlite-zstd extension.
+    /// Open a database with transparent VFS-level compression.
     ///
-    /// Requires the `compression` feature and a path to the sqlite-zstd extension file.
-    /// You can build the extension from <https://github.com/phiresky/sqlite-zstd>:
-    /// ```bash
-    /// cargo build --release --features build_extension
-    /// # produces target/release/libsqlite_zstd.so (or .dylib on macOS)
-    /// ```
+    /// Uses page-level compression that works with all SQLite features
+    /// including FTS5 search, UPSERT, and WAL mode.
+    ///
+    /// Compressor is selected at compile time via sqlite-compress-vfs features:
+    /// - `zstd` (default): Best compression ratio
+    /// - `lz4`: Fastest compression/decompression
+    /// - `snappy`: Very fast, moderate compression
     ///
     /// # Example
     /// ```ignore
     /// use redlite::Db;
     ///
-    /// let db = Db::open_with_compression(
-    ///     "mydata.db",
-    ///     "/path/to/libsqlite_zstd.so"
-    /// ).unwrap();
+    /// let db = Db::open_compressed("/path/to/data.db").unwrap();
     /// ```
     #[cfg(feature = "compression")]
-    pub fn open_with_compression(path: &str, extension_path: &str) -> Result<Self> {
+    pub fn open_compressed(path: &str) -> Result<Self> {
+        use std::path::Path;
         init_sqlite_vec();
 
-        let conn = Connection::open(path)?;
+        let db_path = Path::new(path);
+        let base_dir = db_path.parent().unwrap_or(Path::new(".")).to_path_buf();
+        init_compressed_vfs(&base_dir);
 
-        // Load sqlite-zstd extension
-        load_compression(&conn, Some(extension_path))?;
+        let conn = Connection::open_with_flags_and_vfs(
+            db_path,
+            rusqlite::OpenFlags::SQLITE_OPEN_READ_WRITE | rusqlite::OpenFlags::SQLITE_OPEN_CREATE,
+            "compressed",
+        )?;
 
         // Enable WAL mode and optimize pragmas for performance
         conn.execute_batch(
@@ -436,9 +426,9 @@ impl Db {
              PRAGMA temp_store = MEMORY;",
         )?;
 
-        let is_memory_db = path == ":memory:";
-        let persist_access_tracking = is_memory_db;
-        let access_flush_interval_ms = if is_memory_db { 5_000 } else { 300_000 };
+        let is_memory_db = false; // Compressed mode requires a file
+        let persist_access_tracking = false;
+        let access_flush_interval_ms = 300_000;
 
         let core = Arc::new(DbCore {
             conn: Mutex::new(conn),

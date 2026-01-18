@@ -1,7 +1,9 @@
+pub mod access_pattern;
 pub mod benchmark;
 pub mod client;
 pub mod concurrency;
 pub mod error;
+pub mod matrix;
 pub mod scenarios;
 pub mod dispatcher;
 pub mod output;
@@ -19,3 +21,4 @@ pub use scenarios::{
 pub use dispatcher::execute_operation;
 pub use benchmark_runner::{MultiScenarioRunner, ScenarioComparison, ScenarioResult};
 pub use report_generator::{BenchmarkReport, ReportGenerator, ReportFormat};
+pub use matrix::{load_matrix_spec, MatrixRunner};

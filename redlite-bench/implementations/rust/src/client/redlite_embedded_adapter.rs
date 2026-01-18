@@ -45,11 +45,12 @@ impl RedliteEmbeddedClient {
         })
     }
 
-    /// Create a compressed Redlite database using sqlite-zstd extension.
-    /// Requires building with `--features compression` and providing path to libsqlite_zstd.so.
+    /// Create a compressed Redlite database using VFS-level compression.
+    /// Requires building with `--features compression`.
+    /// Compressor is selected at compile time via sqlite-compress-vfs features.
     #[cfg(feature = "compression")]
-    pub fn new_compressed(path: &str, extension_path: &str) -> ClientResult<Self> {
-        let db = Db::open_with_compression(path, extension_path)
+    pub fn new_compressed(path: &str) -> ClientResult<Self> {
+        let db = Db::open_compressed(path)
             .map_err(|e| ClientError::Connection(format!("Compression error: {}", e)))?;
         Ok(RedliteEmbeddedClient {
             db: Arc::new(db),

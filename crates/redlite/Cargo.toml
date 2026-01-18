@@ -25,7 +25,7 @@ turso = ["dep:turso"]
 vectors = ["dep:sqlite-vec"]
 geo = []  # R*Tree is built into SQLite, this just enables geo commands
 bundled = ["rusqlite/bundled"]  # Bundle SQLite (default)
-compression = []  # Enable compression via loadable extension (provide .so path)
+compression = ["dep:sqlite-compress-vfs"]  # Enable VFS-level compression (zstd default, lz4/snappy via feature)
 encryption = ["rusqlite/bundled-sqlcipher"]  # Use SQLCipher for encryption (mutually exclusive with bundled)
 full = ["vectors", "geo"]
 
@@ -34,6 +34,7 @@ full = ["vectors", "geo"]
 # bundled and encryption are mutually exclusive
 rusqlite = { version = "0.35", features = ["load_extension", "functions"] }
 sqlite-vec = { version = "0.1", optional = true }
+sqlite-compress-vfs = { path = "/Users/russellromney/Documents/Github/personal-website/sqlite-compress-vfs", optional = true }
 turso = { version = "0.1", optional = true }
 tokio = { version = "1", features = ["full", "rt-multi-thread"] }
 bytes = "1"

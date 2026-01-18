@@ -68,9 +68,9 @@ enum Commands {
         #[arg(long)]
         encryption_key: Option<String>,
 
-        /// Path to sqlite-zstd extension for compression (requires --features compression build)
+        /// Enable VFS-level compression (requires --features compression build)
         #[arg(long)]
-        compression_extension: Option<String>,
+        compression: bool,
 
         /// Number of iterations per operation
         #[arg(short, long, default_value = "100000")]
@@ -505,7 +505,7 @@ async fn main() -> anyhow::Result<()> {
             memory,
             path,
             encryption_key,
-            compression_extension,
+            compression,
             iterations,
             dataset_size,
             concurrency,
@@ -519,14 +519,14 @@ async fn main() -> anyhow::Result<()> {
             // Determine backend name based on options
             let backend_name = if encryption_key.is_some() {
                 "Redlite (encrypted)"
-            } else if compression_extension.is_some() {
+            } else if compression {
                 "Redlite (compressed)"
             } else {
                 "Redlite (embedded)"
             };
 
             let client = if memory {
-                if encryption_key.is_some() || compression_extension.is_some() {
+                if encryption_key.is_some() || compression {
                     anyhow::bail!("Encryption and compression require a file-backed database (use --path)");
                 }
                 println!("Using in-memory Redlite database...");
@@ -543,16 +543,15 @@ async fn main() -> anyhow::Result<()> {
                     let _ = key;
                     anyhow::bail!("Encryption support not compiled. Build with: cargo build --features encryption --no-default-features");
                 }
-            } else if let Some(ref ext_path) = compression_extension {
+            } else if compression {
                 #[cfg(feature = "compression")]
                 {
                     let p = path.as_ref().ok_or_else(|| anyhow::anyhow!("--path required for compression"))?;
-                    println!("Using compressed Redlite database at {} (extension: {})...", p, ext_path);
-                    RedliteEmbeddedClient::new_compressed(p, ext_path)?
+                    println!("Using compressed Redlite database at {}...", p);
+                    RedliteEmbeddedClient::new_compressed(p)?
                 }
                 #[cfg(not(feature = "compression"))]
                 {
-                    let _ = ext_path;
                     anyhow::bail!("Compression support not compiled. Build with: cargo build --features compression");
                 }
             } else if let Some(p) = path {
