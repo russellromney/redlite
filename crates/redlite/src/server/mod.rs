@@ -615,6 +615,12 @@ async fn execute_command(
         "JSON.NUMINCRBY" => cmd_json_numincrby(db, cmd_args),
         "JSON.STRAPPEND" => cmd_json_strappend(db, cmd_args),
         "JSON.STRLEN" => cmd_json_strlen(db, cmd_args),
+        "JSON.ARRAPPEND" => cmd_json_arrappend(db, cmd_args),
+        "JSON.ARRINDEX" => cmd_json_arrindex(db, cmd_args),
+        "JSON.ARRINSERT" => cmd_json_arrinsert(db, cmd_args),
+        "JSON.ARRLEN" => cmd_json_arrlen(db, cmd_args),
+        "JSON.ARRPOP" => cmd_json_arrpop(db, cmd_args),
+        "JSON.ARRTRIM" => cmd_json_arrtrim(db, cmd_args),
         // RediSearch-compatible commands (Session 23)
         "FT.CREATE" => cmd_ft_create(db, cmd_args),
         "FT.DROPINDEX" => cmd_ft_dropindex(db, cmd_args),
@@ -5136,6 +5142,245 @@ fn cmd_json_strlen(db: &Db, args: &[Vec<u8>]) -> RespValue {
     }
 }
 
+/// JSON.ARRAPPEND key path value [value ...]
+fn cmd_json_arrappend(db: &Db, args: &[Vec<u8>]) -> RespValue {
+    if args.len() < 3 {
+        return RespValue::error("wrong number of arguments for 'JSON.ARRAPPEND' command");
+    }
+
+    let key = match std::str::from_utf8(&args[0]) {
+        Ok(k) => k,
+        Err(_) => return RespValue::error("invalid key"),
+    };
+
+    let path = match std::str::from_utf8(&args[1]) {
+        Ok(p) => p,
+        Err(_) => return RespValue::error("invalid path"),
+    };
+
+    let values: Vec<&str> = args[2..]
+        .iter()
+        .filter_map(|v| std::str::from_utf8(v).ok())
+        .collect();
+
+    if values.len() != args.len() - 2 {
+        return RespValue::error("invalid value");
+    }
+
+    match db.json_arrappend(key, path, &values) {
+        Ok(new_len) => RespValue::Integer(new_len),
+        Err(KvError::NotFound) => RespValue::null(),
+        Err(KvError::WrongType) => RespValue::wrong_type(),
+        Err(KvError::SyntaxError) => RespValue::error("ERR invalid JSON value"),
+        Err(e) => RespValue::error(e.to_string()),
+    }
+}
+
+/// JSON.ARRINDEX key path value [start [stop]]
+fn cmd_json_arrindex(db: &Db, args: &[Vec<u8>]) -> RespValue {
+    if args.len() < 3 || args.len() > 5 {
+        return RespValue::error("wrong number of arguments for 'JSON.ARRINDEX' command");
+    }
+
+    let key = match std::str::from_utf8(&args[0]) {
+        Ok(k) => k,
+        Err(_) => return RespValue::error("invalid key"),
+    };
+
+    let path = match std::str::from_utf8(&args[1]) {
+        Ok(p) => p,
+        Err(_) => return RespValue::error("invalid path"),
+    };
+
+    let value = match std::str::from_utf8(&args[2]) {
+        Ok(v) => v,
+        Err(_) => return RespValue::error("invalid value"),
+    };
+
+    let start = if args.len() >= 4 {
+        match std::str::from_utf8(&args[3]) {
+            Ok(s) => match s.parse::<i64>() {
+                Ok(n) => Some(n),
+                Err(_) => return RespValue::error("ERR invalid start index"),
+            },
+            Err(_) => return RespValue::error("ERR invalid start index"),
+        }
+    } else {
+        None
+    };
+
+    let stop = if args.len() >= 5 {
+        match std::str::from_utf8(&args[4]) {
+            Ok(s) => match s.parse::<i64>() {
+                Ok(n) => Some(n),
+                Err(_) => return RespValue::error("ERR invalid stop index"),
+            },
+            Err(_) => return RespValue::error("ERR invalid stop index"),
+        }
+    } else {
+        None
+    };
+
+    match db.json_arrindex(key, path, value, start, stop) {
+        Ok(idx) => RespValue::Integer(idx),
+        Err(KvError::NotFound) => RespValue::null(),
+        Err(KvError::WrongType) => RespValue::wrong_type(),
+        Err(KvError::SyntaxError) => RespValue::error("ERR invalid JSON value"),
+        Err(e) => RespValue::error(e.to_string()),
+    }
+}
+
+/// JSON.ARRINSERT key path index value [value ...]
+fn cmd_json_arrinsert(db: &Db, args: &[Vec<u8>]) -> RespValue {
+    if args.len() < 4 {
+        return RespValue::error("wrong number of arguments for 'JSON.ARRINSERT' command");
+    }
+
+    let key = match std::str::from_utf8(&args[0]) {
+        Ok(k) => k,
+        Err(_) => return RespValue::error("invalid key"),
+    };
+
+    let path = match std::str::from_utf8(&args[1]) {
+        Ok(p) => p,
+        Err(_) => return RespValue::error("invalid path"),
+    };
+
+    let index = match std::str::from_utf8(&args[2]) {
+        Ok(s) => match s.parse::<i64>() {
+            Ok(n) => n,
+            Err(_) => return RespValue::error("ERR invalid index"),
+        },
+        Err(_) => return RespValue::error("ERR invalid index"),
+    };
+
+    let values: Vec<&str> = args[3..]
+        .iter()
+        .filter_map(|v| std::str::from_utf8(v).ok())
+        .collect();
+
+    if values.len() != args.len() - 3 {
+        return RespValue::error("invalid value");
+    }
+
+    match db.json_arrinsert(key, path, index, &values) {
+        Ok(new_len) => RespValue::Integer(new_len),
+        Err(KvError::NotFound) => RespValue::null(),
+        Err(KvError::WrongType) => RespValue::wrong_type(),
+        Err(KvError::SyntaxError) => RespValue::error("ERR invalid JSON value"),
+        Err(e) => RespValue::error(e.to_string()),
+    }
+}
+
+/// JSON.ARRLEN key [path]
+fn cmd_json_arrlen(db: &Db, args: &[Vec<u8>]) -> RespValue {
+    if args.is_empty() || args.len() > 2 {
+        return RespValue::error("wrong number of arguments for 'JSON.ARRLEN' command");
+    }
+
+    let key = match std::str::from_utf8(&args[0]) {
+        Ok(k) => k,
+        Err(_) => return RespValue::error("invalid key"),
+    };
+
+    let path = if args.len() == 2 {
+        match std::str::from_utf8(&args[1]) {
+            Ok(p) => Some(p),
+            Err(_) => return RespValue::error("invalid path"),
+        }
+    } else {
+        None
+    };
+
+    match db.json_arrlen(key, path) {
+        Ok(Some(len)) => RespValue::Integer(len),
+        Ok(None) => RespValue::null(),
+        Err(KvError::WrongType) => RespValue::wrong_type(),
+        Err(e) => RespValue::error(e.to_string()),
+    }
+}
+
+/// JSON.ARRPOP key [path [index]]
+fn cmd_json_arrpop(db: &Db, args: &[Vec<u8>]) -> RespValue {
+    if args.is_empty() || args.len() > 3 {
+        return RespValue::error("wrong number of arguments for 'JSON.ARRPOP' command");
+    }
+
+    let key = match std::str::from_utf8(&args[0]) {
+        Ok(k) => k,
+        Err(_) => return RespValue::error("invalid key"),
+    };
+
+    let path = if args.len() >= 2 {
+        match std::str::from_utf8(&args[1]) {
+            Ok(p) => Some(p),
+            Err(_) => return RespValue::error("invalid path"),
+        }
+    } else {
+        None
+    };
+
+    let index = if args.len() >= 3 {
+        match std::str::from_utf8(&args[2]) {
+            Ok(s) => match s.parse::<i64>() {
+                Ok(n) => Some(n),
+                Err(_) => return RespValue::error("ERR invalid index"),
+            },
+            Err(_) => return RespValue::error("ERR invalid index"),
+        }
+    } else {
+        None
+    };
+
+    match db.json_arrpop(key, path, index) {
+        Ok(Some(val)) => RespValue::from_string(val),
+        Ok(None) => RespValue::null(),
+        Err(KvError::NotFound) => RespValue::null(),
+        Err(KvError::WrongType) => RespValue::wrong_type(),
+        Err(e) => RespValue::error(e.to_string()),
+    }
+}
+
+/// JSON.ARRTRIM key path start stop
+fn cmd_json_arrtrim(db: &Db, args: &[Vec<u8>]) -> RespValue {
+    if args.len() != 4 {
+        return RespValue::error("wrong number of arguments for 'JSON.ARRTRIM' command");
+    }
+
+    let key = match std::str::from_utf8(&args[0]) {
+        Ok(k) => k,
+        Err(_) => return RespValue::error("invalid key"),
+    };
+
+    let path = match std::str::from_utf8(&args[1]) {
+        Ok(p) => p,
+        Err(_) => return RespValue::error("invalid path"),
+    };
+
+    let start = match std::str::from_utf8(&args[2]) {
+        Ok(s) => match s.parse::<i64>() {
+            Ok(n) => n,
+            Err(_) => return RespValue::error("ERR invalid start index"),
+        },
+        Err(_) => return RespValue::error("ERR invalid start index"),
+    };
+
+    let stop = match std::str::from_utf8(&args[3]) {
+        Ok(s) => match s.parse::<i64>() {
+            Ok(n) => n,
+            Err(_) => return RespValue::error("ERR invalid stop index"),
+        },
+        Err(_) => return RespValue::error("ERR invalid stop index"),
+    };
+
+    match db.json_arrtrim(key, path, start, stop) {
+        Ok(new_len) => RespValue::Integer(new_len),
+        Err(KvError::NotFound) => RespValue::null(),
+        Err(KvError::WrongType) => RespValue::wrong_type(),
+        Err(e) => RespValue::error(e.to_string()),
+    }
+}
+
 // --- Session 23: RediSearch-compatible FT.* command handlers ---
 
 use crate::types::{FtField, FtFieldType, FtOnType, FtSearchOptions};
@@ -8970,6 +9215,12 @@ async fn execute_command_in_transaction(db: &mut Db, args: &[Vec<u8>]) -> RespVa
         "JSON.NUMINCRBY" => cmd_json_numincrby(db, cmd_args),
         "JSON.STRAPPEND" => cmd_json_strappend(db, cmd_args),
         "JSON.STRLEN" => cmd_json_strlen(db, cmd_args),
+        "JSON.ARRAPPEND" => cmd_json_arrappend(db, cmd_args),
+        "JSON.ARRINDEX" => cmd_json_arrindex(db, cmd_args),
+        "JSON.ARRINSERT" => cmd_json_arrinsert(db, cmd_args),
+        "JSON.ARRLEN" => cmd_json_arrlen(db, cmd_args),
+        "JSON.ARRPOP" => cmd_json_arrpop(db, cmd_args),
+        "JSON.ARRTRIM" => cmd_json_arrtrim(db, cmd_args),
         // RediSearch-compatible commands (Session 23)
         "FT.CREATE" => cmd_ft_create(db, cmd_args),
         "FT.DROPINDEX" => cmd_ft_dropindex(db, cmd_args),

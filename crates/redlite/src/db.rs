@@ -4095,6 +4095,592 @@ impl Db {
         Ok(None)
     }
 
+    /// JSON.ARRAPPEND key path value [value ...] - append values to array at path
+    /// Returns the new length of the array
+    pub fn json_arrappend(&self, key: &str, path: &str, values: &[&str]) -> Result<i64> {
+        if values.is_empty() {
+            return Err(KvError::SyntaxError);
+        }
+
+        // Parse all values as JSON first
+        let parsed_values: Vec<JsonValue> = values
+            .iter()
+            .map(|v| serde_json::from_str(v).map_err(|_| KvError::SyntaxError))
+            .collect::<Result<Vec<_>>>()?;
+
+        let conn = self.core.conn.lock().unwrap_or_else(|e| e.into_inner());
+        let now = Self::now_ms();
+
+        let key_id = match self.get_json_key_id(&conn, key)? {
+            Some(kid) => kid,
+            None => return Err(KvError::NotFound),
+        };
+
+        let doc_bytes: Vec<u8> = conn
+            .query_row(
+                "SELECT value FROM json_docs WHERE key_id = ?1",
+                params![key_id],
+                |row| row.get(0),
+            )
+            .optional()?
+            .ok_or(KvError::NotFound)?;
+
+        let mut doc: JsonValue = serde_json::from_slice(&doc_bytes)
+            .map_err(|_| KvError::SyntaxError)?;
+
+        let normalized = Self::normalize_json_path(path);
+        let new_len = Self::arrappend_at_path(&mut doc, &normalized, &parsed_values)?;
+
+        let updated_bytes = serde_json::to_vec(&doc).map_err(|_| KvError::SyntaxError)?;
+        conn.execute(
+            "UPDATE json_docs SET value = ?1 WHERE key_id = ?2",
+            params![updated_bytes, key_id],
+        )?;
+
+        conn.execute(
+            "UPDATE keys SET updated_at = ?1, version = version + 1 WHERE id = ?2",
+            params![now, key_id],
+        )?;
+
+        Ok(new_len)
+    }
+
+    /// Helper to append values to array at path
+    fn arrappend_at_path(doc: &mut JsonValue, path: &str, values: &[JsonValue]) -> Result<i64> {
+        if path == "$" {
+            if let JsonValue::Array(arr) = doc {
+                arr.extend(values.iter().cloned());
+                return Ok(arr.len() as i64);
+            }
+            return Err(KvError::WrongType);
+        }
+
+        let parts: Vec<&str> = path.trim_start_matches("$.").split('.').collect();
+        let mut current = doc;
+
+        for (i, part) in parts.iter().enumerate() {
+            let is_last = i == parts.len() - 1;
+
+            if let Some(bracket_pos) = part.find('[') {
+                let field_name = &part[..bracket_pos];
+                let index_str = &part[bracket_pos + 1..part.len() - 1];
+                let index: usize = index_str.parse().map_err(|_| KvError::SyntaxError)?;
+
+                if !field_name.is_empty() {
+                    current = current
+                        .as_object_mut()
+                        .ok_or(KvError::WrongType)?
+                        .get_mut(field_name)
+                        .ok_or(KvError::NotFound)?;
+                }
+
+                let arr = current.as_array_mut().ok_or(KvError::WrongType)?;
+                current = arr.get_mut(index).ok_or(KvError::NotFound)?;
+
+                if is_last {
+                    return Self::arrappend_at_path(current, "$", values);
+                }
+            } else {
+                current = current
+                    .as_object_mut()
+                    .ok_or(KvError::WrongType)?
+                    .get_mut(*part)
+                    .ok_or(KvError::NotFound)?;
+
+                if is_last {
+                    return Self::arrappend_at_path(current, "$", values);
+                }
+            }
+        }
+
+        Err(KvError::NotFound)
+    }
+
+    /// JSON.ARRINDEX key path value [start [stop]] - find index of value in array
+    /// Returns the index of the first occurrence, or -1 if not found
+    pub fn json_arrindex(
+        &self,
+        key: &str,
+        path: &str,
+        value: &str,
+        start: Option<i64>,
+        stop: Option<i64>,
+    ) -> Result<i64> {
+        let search_value: JsonValue = serde_json::from_str(value)
+            .map_err(|_| KvError::SyntaxError)?;
+
+        let conn = self.core.conn.lock().unwrap_or_else(|e| e.into_inner());
+
+        let key_id = match self.get_json_key_id(&conn, key)? {
+            Some(kid) => kid,
+            None => return Err(KvError::NotFound),
+        };
+
+        let doc_bytes: Vec<u8> = conn
+            .query_row(
+                "SELECT value FROM json_docs WHERE key_id = ?1",
+                params![key_id],
+                |row| row.get(0),
+            )
+            .optional()?
+            .ok_or(KvError::NotFound)?;
+
+        let doc: JsonValue = serde_json::from_slice(&doc_bytes)
+            .map_err(|_| KvError::SyntaxError)?;
+
+        self.track_access(key_id);
+
+        let normalized = Self::normalize_json_path(path);
+
+        if normalized == "$" {
+            if let JsonValue::Array(arr) = &doc {
+                return Ok(Self::find_in_array(arr, &search_value, start, stop));
+            }
+            return Err(KvError::WrongType);
+        }
+
+        let json_path = Self::parse_json_path(&normalized)?;
+        let results = json_path.query(&doc);
+
+        if results.is_empty() {
+            return Err(KvError::NotFound);
+        }
+
+        if let Some(first) = results.iter().next() {
+            if let JsonValue::Array(arr) = first {
+                return Ok(Self::find_in_array(arr, &search_value, start, stop));
+            }
+            return Err(KvError::WrongType);
+        }
+
+        Err(KvError::NotFound)
+    }
+
+    /// Helper to find value in array with start/stop bounds
+    fn find_in_array(arr: &[JsonValue], value: &JsonValue, start: Option<i64>, stop: Option<i64>) -> i64 {
+        let len = arr.len() as i64;
+        if len == 0 {
+            return -1;
+        }
+
+        // Normalize start index (negative means from end)
+        let start_idx = match start {
+            Some(s) if s < 0 => (len + s).max(0) as usize,
+            Some(s) => s.min(len) as usize,
+            None => 0,
+        };
+
+        // Normalize stop index (exclusive, 0 or negative means to end)
+        let stop_idx = match stop {
+            Some(s) if s <= 0 => len as usize,
+            Some(s) => s.min(len) as usize,
+            None => len as usize,
+        };
+
+        if start_idx >= stop_idx || start_idx >= arr.len() {
+            return -1;
+        }
+
+        for (i, item) in arr[start_idx..stop_idx].iter().enumerate() {
+            if item == value {
+                return (start_idx + i) as i64;
+            }
+        }
+
+        -1
+    }
+
+    /// JSON.ARRINSERT key path index value [value ...] - insert values at index
+    /// Returns the new length of the array
+    pub fn json_arrinsert(&self, key: &str, path: &str, index: i64, values: &[&str]) -> Result<i64> {
+        if values.is_empty() {
+            return Err(KvError::SyntaxError);
+        }
+
+        // Parse all values as JSON first
+        let parsed_values: Vec<JsonValue> = values
+            .iter()
+            .map(|v| serde_json::from_str(v).map_err(|_| KvError::SyntaxError))
+            .collect::<Result<Vec<_>>>()?;
+
+        let conn = self.core.conn.lock().unwrap_or_else(|e| e.into_inner());
+        let now = Self::now_ms();
+
+        let key_id = match self.get_json_key_id(&conn, key)? {
+            Some(kid) => kid,
+            None => return Err(KvError::NotFound),
+        };
+
+        let doc_bytes: Vec<u8> = conn
+            .query_row(
+                "SELECT value FROM json_docs WHERE key_id = ?1",
+                params![key_id],
+                |row| row.get(0),
+            )
+            .optional()?
+            .ok_or(KvError::NotFound)?;
+
+        let mut doc: JsonValue = serde_json::from_slice(&doc_bytes)
+            .map_err(|_| KvError::SyntaxError)?;
+
+        let normalized = Self::normalize_json_path(path);
+        let new_len = Self::arrinsert_at_path(&mut doc, &normalized, index, &parsed_values)?;
+
+        let updated_bytes = serde_json::to_vec(&doc).map_err(|_| KvError::SyntaxError)?;
+        conn.execute(
+            "UPDATE json_docs SET value = ?1 WHERE key_id = ?2",
+            params![updated_bytes, key_id],
+        )?;
+
+        conn.execute(
+            "UPDATE keys SET updated_at = ?1, version = version + 1 WHERE id = ?2",
+            params![now, key_id],
+        )?;
+
+        Ok(new_len)
+    }
+
+    /// Helper to insert values at index in array
+    fn arrinsert_at_path(doc: &mut JsonValue, path: &str, index: i64, values: &[JsonValue]) -> Result<i64> {
+        if path == "$" {
+            if let JsonValue::Array(arr) = doc {
+                let len = arr.len() as i64;
+                // Normalize index (negative means from end, -1 = before last element)
+                let insert_idx = if index < 0 {
+                    (len + index).max(0) as usize
+                } else {
+                    index.min(len) as usize
+                };
+
+                // Insert in reverse order to maintain order
+                for (i, val) in values.iter().enumerate() {
+                    arr.insert(insert_idx + i, val.clone());
+                }
+                return Ok(arr.len() as i64);
+            }
+            return Err(KvError::WrongType);
+        }
+
+        let parts: Vec<&str> = path.trim_start_matches("$.").split('.').collect();
+        let mut current = doc;
+
+        for (i, part) in parts.iter().enumerate() {
+            let is_last = i == parts.len() - 1;
+
+            if let Some(bracket_pos) = part.find('[') {
+                let field_name = &part[..bracket_pos];
+                let index_str = &part[bracket_pos + 1..part.len() - 1];
+                let arr_index: usize = index_str.parse().map_err(|_| KvError::SyntaxError)?;
+
+                if !field_name.is_empty() {
+                    current = current
+                        .as_object_mut()
+                        .ok_or(KvError::WrongType)?
+                        .get_mut(field_name)
+                        .ok_or(KvError::NotFound)?;
+                }
+
+                let arr = current.as_array_mut().ok_or(KvError::WrongType)?;
+                current = arr.get_mut(arr_index).ok_or(KvError::NotFound)?;
+
+                if is_last {
+                    return Self::arrinsert_at_path(current, "$", index, values);
+                }
+            } else {
+                current = current
+                    .as_object_mut()
+                    .ok_or(KvError::WrongType)?
+                    .get_mut(*part)
+                    .ok_or(KvError::NotFound)?;
+
+                if is_last {
+                    return Self::arrinsert_at_path(current, "$", index, values);
+                }
+            }
+        }
+
+        Err(KvError::NotFound)
+    }
+
+    /// JSON.ARRLEN key [path] - get array length
+    /// Returns the array length, or None if key/path doesn't exist
+    pub fn json_arrlen(&self, key: &str, path: Option<&str>) -> Result<Option<i64>> {
+        let conn = self.core.conn.lock().unwrap_or_else(|e| e.into_inner());
+
+        let key_id = match self.get_json_key_id(&conn, key)? {
+            Some(kid) => kid,
+            None => return Ok(None),
+        };
+
+        let doc_bytes: Vec<u8> = conn
+            .query_row(
+                "SELECT value FROM json_docs WHERE key_id = ?1",
+                params![key_id],
+                |row| row.get(0),
+            )
+            .optional()?
+            .ok_or(KvError::NotFound)?;
+
+        let doc: JsonValue = serde_json::from_slice(&doc_bytes)
+            .map_err(|_| KvError::SyntaxError)?;
+
+        self.track_access(key_id);
+
+        let normalized = path.map(Self::normalize_json_path).unwrap_or_else(|| "$".to_string());
+
+        if normalized == "$" {
+            if let JsonValue::Array(arr) = &doc {
+                return Ok(Some(arr.len() as i64));
+            }
+            return Err(KvError::WrongType);
+        }
+
+        let json_path = Self::parse_json_path(&normalized)?;
+        let results = json_path.query(&doc);
+
+        if results.is_empty() {
+            return Ok(None);
+        }
+
+        if let Some(first) = results.iter().next() {
+            if let JsonValue::Array(arr) = first {
+                return Ok(Some(arr.len() as i64));
+            }
+            return Err(KvError::WrongType);
+        }
+
+        Ok(None)
+    }
+
+    /// JSON.ARRPOP key [path [index]] - pop element from array
+    /// Returns the popped element as JSON string, or None if empty/not found
+    pub fn json_arrpop(&self, key: &str, path: Option<&str>, index: Option<i64>) -> Result<Option<String>> {
+        let conn = self.core.conn.lock().unwrap_or_else(|e| e.into_inner());
+        let now = Self::now_ms();
+
+        let key_id = match self.get_json_key_id(&conn, key)? {
+            Some(kid) => kid,
+            None => return Err(KvError::NotFound),
+        };
+
+        let doc_bytes: Vec<u8> = conn
+            .query_row(
+                "SELECT value FROM json_docs WHERE key_id = ?1",
+                params![key_id],
+                |row| row.get(0),
+            )
+            .optional()?
+            .ok_or(KvError::NotFound)?;
+
+        let mut doc: JsonValue = serde_json::from_slice(&doc_bytes)
+            .map_err(|_| KvError::SyntaxError)?;
+
+        let normalized = path.map(Self::normalize_json_path).unwrap_or_else(|| "$".to_string());
+        let pop_idx = index.unwrap_or(-1); // Default to last element
+
+        let popped = Self::arrpop_at_path(&mut doc, &normalized, pop_idx)?;
+
+        if popped.is_some() {
+            let updated_bytes = serde_json::to_vec(&doc).map_err(|_| KvError::SyntaxError)?;
+            conn.execute(
+                "UPDATE json_docs SET value = ?1 WHERE key_id = ?2",
+                params![updated_bytes, key_id],
+            )?;
+
+            conn.execute(
+                "UPDATE keys SET updated_at = ?1, version = version + 1 WHERE id = ?2",
+                params![now, key_id],
+            )?;
+        }
+
+        Ok(popped)
+    }
+
+    /// Helper to pop element from array at path
+    fn arrpop_at_path(doc: &mut JsonValue, path: &str, index: i64) -> Result<Option<String>> {
+        if path == "$" {
+            if let JsonValue::Array(arr) = doc {
+                if arr.is_empty() {
+                    return Ok(None);
+                }
+                let len = arr.len() as i64;
+                // Normalize index (negative means from end)
+                let pop_idx = if index < 0 {
+                    (len + index).max(0) as usize
+                } else {
+                    index.min(len - 1) as usize
+                };
+
+                if pop_idx >= arr.len() {
+                    return Ok(None);
+                }
+
+                let removed = arr.remove(pop_idx);
+                return Ok(Some(serde_json::to_string(&removed).unwrap_or_default()));
+            }
+            return Err(KvError::WrongType);
+        }
+
+        let parts: Vec<&str> = path.trim_start_matches("$.").split('.').collect();
+        let mut current = doc;
+
+        for (i, part) in parts.iter().enumerate() {
+            let is_last = i == parts.len() - 1;
+
+            if let Some(bracket_pos) = part.find('[') {
+                let field_name = &part[..bracket_pos];
+                let index_str = &part[bracket_pos + 1..part.len() - 1];
+                let arr_index: usize = index_str.parse().map_err(|_| KvError::SyntaxError)?;
+
+                if !field_name.is_empty() {
+                    current = current
+                        .as_object_mut()
+                        .ok_or(KvError::WrongType)?
+                        .get_mut(field_name)
+                        .ok_or(KvError::NotFound)?;
+                }
+
+                let arr = current.as_array_mut().ok_or(KvError::WrongType)?;
+                current = arr.get_mut(arr_index).ok_or(KvError::NotFound)?;
+
+                if is_last {
+                    return Self::arrpop_at_path(current, "$", index);
+                }
+            } else {
+                current = current
+                    .as_object_mut()
+                    .ok_or(KvError::WrongType)?
+                    .get_mut(*part)
+                    .ok_or(KvError::NotFound)?;
+
+                if is_last {
+                    return Self::arrpop_at_path(current, "$", index);
+                }
+            }
+        }
+
+        Err(KvError::NotFound)
+    }
+
+    /// JSON.ARRTRIM key path start stop - trim array to [start, stop] range (inclusive)
+    /// Returns the new length of the array
+    pub fn json_arrtrim(&self, key: &str, path: &str, start: i64, stop: i64) -> Result<i64> {
+        let conn = self.core.conn.lock().unwrap_or_else(|e| e.into_inner());
+        let now = Self::now_ms();
+
+        let key_id = match self.get_json_key_id(&conn, key)? {
+            Some(kid) => kid,
+            None => return Err(KvError::NotFound),
+        };
+
+        let doc_bytes: Vec<u8> = conn
+            .query_row(
+                "SELECT value FROM json_docs WHERE key_id = ?1",
+                params![key_id],
+                |row| row.get(0),
+            )
+            .optional()?
+            .ok_or(KvError::NotFound)?;
+
+        let mut doc: JsonValue = serde_json::from_slice(&doc_bytes)
+            .map_err(|_| KvError::SyntaxError)?;
+
+        let normalized = Self::normalize_json_path(path);
+        let new_len = Self::arrtrim_at_path(&mut doc, &normalized, start, stop)?;
+
+        let updated_bytes = serde_json::to_vec(&doc).map_err(|_| KvError::SyntaxError)?;
+        conn.execute(
+            "UPDATE json_docs SET value = ?1 WHERE key_id = ?2",
+            params![updated_bytes, key_id],
+        )?;
+
+        conn.execute(
+            "UPDATE keys SET updated_at = ?1, version = version + 1 WHERE id = ?2",
+            params![now, key_id],
+        )?;
+
+        Ok(new_len)
+    }
+
+    /// Helper to trim array at path
+    fn arrtrim_at_path(doc: &mut JsonValue, path: &str, start: i64, stop: i64) -> Result<i64> {
+        if path == "$" {
+            if let JsonValue::Array(arr) = doc {
+                let len = arr.len() as i64;
+                if len == 0 {
+                    return Ok(0);
+                }
+
+                // Normalize indices (negative means from end)
+                let start_idx = if start < 0 {
+                    (len + start).max(0) as usize
+                } else {
+                    start.min(len) as usize
+                };
+
+                let stop_idx = if stop < 0 {
+                    (len + stop + 1).max(0) as usize
+                } else {
+                    (stop + 1).min(len) as usize
+                };
+
+                // If start > stop or out of bounds, empty the array
+                if start_idx >= stop_idx || start_idx >= arr.len() {
+                    arr.clear();
+                    return Ok(0);
+                }
+
+                // Keep only elements in range [start_idx, stop_idx)
+                let kept: Vec<JsonValue> = arr.drain(start_idx..stop_idx).collect();
+                arr.clear();
+                arr.extend(kept);
+
+                return Ok(arr.len() as i64);
+            }
+            return Err(KvError::WrongType);
+        }
+
+        let parts: Vec<&str> = path.trim_start_matches("$.").split('.').collect();
+        let mut current = doc;
+
+        for (i, part) in parts.iter().enumerate() {
+            let is_last = i == parts.len() - 1;
+
+            if let Some(bracket_pos) = part.find('[') {
+                let field_name = &part[..bracket_pos];
+                let index_str = &part[bracket_pos + 1..part.len() - 1];
+                let arr_index: usize = index_str.parse().map_err(|_| KvError::SyntaxError)?;
+
+                if !field_name.is_empty() {
+                    current = current
+                        .as_object_mut()
+                        .ok_or(KvError::WrongType)?
+                        .get_mut(field_name)
+                        .ok_or(KvError::NotFound)?;
+                }
+
+                let arr = current.as_array_mut().ok_or(KvError::WrongType)?;
+                current = arr.get_mut(arr_index).ok_or(KvError::NotFound)?;
+
+                if is_last {
+                    return Self::arrtrim_at_path(current, "$", start, stop);
+                }
+            } else {
+                current = current
+                    .as_object_mut()
+                    .ok_or(KvError::WrongType)?
+                    .get_mut(*part)
+                    .ok_or(KvError::NotFound)?;
+
+                if is_last {
+                    return Self::arrtrim_at_path(current, "$", start, stop);
+                }
+            }
+        }
+
+        Err(KvError::NotFound)
+    }
+
     /// HSET key field value [field value ...] - set hash field(s), returns number of new fields
     pub fn hset(&self, key: &str, pairs: &[(&str, &[u8])]) -> Result<i64> {
         if pairs.is_empty() {
@@ -25527,6 +26113,323 @@ mod tests {
 
         let len = db.json_strlen("obj", Some("$.b")).unwrap();
         assert!(len.is_none());
+    }
+
+    // --- JSON Array Command Tests ---
+
+    #[test]
+    fn test_json_arrappend_basic() {
+        let db = Db::open_memory().unwrap();
+
+        assert!(db.json_set("arr", "$", r#"[1,2,3]"#, false, false).unwrap());
+        let new_len = db.json_arrappend("arr", "$", &["4", "5"]).unwrap();
+        assert_eq!(new_len, 5);
+
+        let result = db.json_get("arr", &["$"]).unwrap().unwrap();
+        assert_eq!(result, "[1,2,3,4,5]");
+    }
+
+    #[test]
+    fn test_json_arrappend_with_path() {
+        let db = Db::open_memory().unwrap();
+
+        assert!(db.json_set("obj", "$", r#"{"items":[1,2]}"#, false, false).unwrap());
+        let new_len = db.json_arrappend("obj", "$.items", &["3"]).unwrap();
+        assert_eq!(new_len, 3);
+
+        let result = db.json_get("obj", &["$.items"]).unwrap().unwrap();
+        assert_eq!(result, "[1,2,3]");
+    }
+
+    #[test]
+    fn test_json_arrappend_non_array() {
+        let db = Db::open_memory().unwrap();
+
+        assert!(db.json_set("str", "$", r#""hello""#, false, false).unwrap());
+        let result = db.json_arrappend("str", "$", &["1"]);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_json_arrappend_nonexistent_key() {
+        let db = Db::open_memory().unwrap();
+
+        let result = db.json_arrappend("nonexistent", "$", &["1"]);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_json_arrindex_basic() {
+        let db = Db::open_memory().unwrap();
+
+        assert!(db.json_set("arr", "$", r#"[1,2,3,2,4]"#, false, false).unwrap());
+
+        let idx = db.json_arrindex("arr", "$", "2", None, None).unwrap();
+        assert_eq!(idx, 1);
+
+        let idx = db.json_arrindex("arr", "$", "5", None, None).unwrap();
+        assert_eq!(idx, -1);
+    }
+
+    #[test]
+    fn test_json_arrindex_with_bounds() {
+        let db = Db::open_memory().unwrap();
+
+        assert!(db.json_set("arr", "$", r#"[1,2,3,2,4]"#, false, false).unwrap());
+
+        // Find second occurrence of 2 by starting after first
+        let idx = db.json_arrindex("arr", "$", "2", Some(2), None).unwrap();
+        assert_eq!(idx, 3);
+
+        // No match within range
+        let idx = db.json_arrindex("arr", "$", "2", Some(0), Some(1)).unwrap();
+        assert_eq!(idx, -1);
+    }
+
+    #[test]
+    fn test_json_arrindex_with_path() {
+        let db = Db::open_memory().unwrap();
+
+        assert!(db.json_set("obj", "$", r#"{"nums":[10,20,30]}"#, false, false).unwrap());
+        let idx = db.json_arrindex("obj", "$.nums", "20", None, None).unwrap();
+        assert_eq!(idx, 1);
+    }
+
+    #[test]
+    fn test_json_arrindex_non_array() {
+        let db = Db::open_memory().unwrap();
+
+        assert!(db.json_set("str", "$", r#""hello""#, false, false).unwrap());
+        let result = db.json_arrindex("str", "$", r#""h""#, None, None);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_json_arrinsert_basic() {
+        let db = Db::open_memory().unwrap();
+
+        assert!(db.json_set("arr", "$", r#"[1,2,3]"#, false, false).unwrap());
+        let new_len = db.json_arrinsert("arr", "$", 1, &["10", "20"]).unwrap();
+        assert_eq!(new_len, 5);
+
+        let result = db.json_get("arr", &["$"]).unwrap().unwrap();
+        assert_eq!(result, "[1,10,20,2,3]");
+    }
+
+    #[test]
+    fn test_json_arrinsert_negative_index() {
+        let db = Db::open_memory().unwrap();
+
+        assert!(db.json_set("arr", "$", r#"[1,2,3]"#, false, false).unwrap());
+        let new_len = db.json_arrinsert("arr", "$", -1, &["99"]).unwrap();
+        assert_eq!(new_len, 4);
+
+        let result = db.json_get("arr", &["$"]).unwrap().unwrap();
+        assert_eq!(result, "[1,2,99,3]");
+    }
+
+    #[test]
+    fn test_json_arrinsert_with_path() {
+        let db = Db::open_memory().unwrap();
+
+        assert!(db.json_set("obj", "$", r#"{"items":["a","c"]}"#, false, false).unwrap());
+        let new_len = db.json_arrinsert("obj", "$.items", 1, &[r#""b""#]).unwrap();
+        assert_eq!(new_len, 3);
+
+        let result = db.json_get("obj", &["$.items"]).unwrap().unwrap();
+        assert_eq!(result, r#"["a","b","c"]"#);
+    }
+
+    #[test]
+    fn test_json_arrinsert_non_array() {
+        let db = Db::open_memory().unwrap();
+
+        assert!(db.json_set("num", "$", "42", false, false).unwrap());
+        let result = db.json_arrinsert("num", "$", 0, &["1"]);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_json_arrlen_basic() {
+        let db = Db::open_memory().unwrap();
+
+        assert!(db.json_set("arr", "$", r#"[1,2,3,4,5]"#, false, false).unwrap());
+        let len = db.json_arrlen("arr", None).unwrap().unwrap();
+        assert_eq!(len, 5);
+    }
+
+    #[test]
+    fn test_json_arrlen_with_path() {
+        let db = Db::open_memory().unwrap();
+
+        assert!(db.json_set("obj", "$", r#"{"items":["a","b","c"]}"#, false, false).unwrap());
+        let len = db.json_arrlen("obj", Some("$.items")).unwrap().unwrap();
+        assert_eq!(len, 3);
+    }
+
+    #[test]
+    fn test_json_arrlen_empty_array() {
+        let db = Db::open_memory().unwrap();
+
+        assert!(db.json_set("arr", "$", r#"[]"#, false, false).unwrap());
+        let len = db.json_arrlen("arr", None).unwrap().unwrap();
+        assert_eq!(len, 0);
+    }
+
+    #[test]
+    fn test_json_arrlen_non_array() {
+        let db = Db::open_memory().unwrap();
+
+        assert!(db.json_set("str", "$", r#""hello""#, false, false).unwrap());
+        let result = db.json_arrlen("str", None);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_json_arrlen_nonexistent_key() {
+        let db = Db::open_memory().unwrap();
+
+        let len = db.json_arrlen("nonexistent", None).unwrap();
+        assert!(len.is_none());
+    }
+
+    #[test]
+    fn test_json_arrpop_basic() {
+        let db = Db::open_memory().unwrap();
+
+        assert!(db.json_set("arr", "$", r#"[1,2,3]"#, false, false).unwrap());
+
+        // Pop last element (default)
+        let popped = db.json_arrpop("arr", None, None).unwrap().unwrap();
+        assert_eq!(popped, "3");
+
+        let result = db.json_get("arr", &["$"]).unwrap().unwrap();
+        assert_eq!(result, "[1,2]");
+    }
+
+    #[test]
+    fn test_json_arrpop_with_index() {
+        let db = Db::open_memory().unwrap();
+
+        assert!(db.json_set("arr", "$", r#"[1,2,3,4]"#, false, false).unwrap());
+
+        // Pop first element
+        let popped = db.json_arrpop("arr", Some("$"), Some(0)).unwrap().unwrap();
+        assert_eq!(popped, "1");
+
+        let result = db.json_get("arr", &["$"]).unwrap().unwrap();
+        assert_eq!(result, "[2,3,4]");
+    }
+
+    #[test]
+    fn test_json_arrpop_negative_index() {
+        let db = Db::open_memory().unwrap();
+
+        assert!(db.json_set("arr", "$", r#"[1,2,3,4]"#, false, false).unwrap());
+
+        // Pop second-to-last element
+        let popped = db.json_arrpop("arr", Some("$"), Some(-2)).unwrap().unwrap();
+        assert_eq!(popped, "3");
+
+        let result = db.json_get("arr", &["$"]).unwrap().unwrap();
+        assert_eq!(result, "[1,2,4]");
+    }
+
+    #[test]
+    fn test_json_arrpop_with_path() {
+        let db = Db::open_memory().unwrap();
+
+        assert!(db.json_set("obj", "$", r#"{"items":[10,20,30]}"#, false, false).unwrap());
+        let popped = db.json_arrpop("obj", Some("$.items"), None).unwrap().unwrap();
+        assert_eq!(popped, "30");
+
+        let result = db.json_get("obj", &["$.items"]).unwrap().unwrap();
+        assert_eq!(result, "[10,20]");
+    }
+
+    #[test]
+    fn test_json_arrpop_empty_array() {
+        let db = Db::open_memory().unwrap();
+
+        assert!(db.json_set("arr", "$", r#"[]"#, false, false).unwrap());
+        let popped = db.json_arrpop("arr", None, None).unwrap();
+        assert!(popped.is_none());
+    }
+
+    #[test]
+    fn test_json_arrpop_non_array() {
+        let db = Db::open_memory().unwrap();
+
+        assert!(db.json_set("str", "$", r#""hello""#, false, false).unwrap());
+        let result = db.json_arrpop("str", None, None);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_json_arrtrim_basic() {
+        let db = Db::open_memory().unwrap();
+
+        assert!(db.json_set("arr", "$", r#"[0,1,2,3,4,5]"#, false, false).unwrap());
+        let new_len = db.json_arrtrim("arr", "$", 1, 3).unwrap();
+        assert_eq!(new_len, 3);
+
+        let result = db.json_get("arr", &["$"]).unwrap().unwrap();
+        assert_eq!(result, "[1,2,3]");
+    }
+
+    #[test]
+    fn test_json_arrtrim_negative_indices() {
+        let db = Db::open_memory().unwrap();
+
+        assert!(db.json_set("arr", "$", r#"[0,1,2,3,4,5]"#, false, false).unwrap());
+        // Keep last 3 elements (indices -3 to -1)
+        let new_len = db.json_arrtrim("arr", "$", -3, -1).unwrap();
+        assert_eq!(new_len, 3);
+
+        let result = db.json_get("arr", &["$"]).unwrap().unwrap();
+        assert_eq!(result, "[3,4,5]");
+    }
+
+    #[test]
+    fn test_json_arrtrim_with_path() {
+        let db = Db::open_memory().unwrap();
+
+        assert!(db.json_set("obj", "$", r#"{"nums":[0,1,2,3,4]}"#, false, false).unwrap());
+        let new_len = db.json_arrtrim("obj", "$.nums", 1, 2).unwrap();
+        assert_eq!(new_len, 2);
+
+        let result = db.json_get("obj", &["$.nums"]).unwrap().unwrap();
+        assert_eq!(result, "[1,2]");
+    }
+
+    #[test]
+    fn test_json_arrtrim_out_of_bounds() {
+        let db = Db::open_memory().unwrap();
+
+        assert!(db.json_set("arr", "$", r#"[1,2,3]"#, false, false).unwrap());
+        // start > stop should empty the array
+        let new_len = db.json_arrtrim("arr", "$", 5, 10).unwrap();
+        assert_eq!(new_len, 0);
+
+        let result = db.json_get("arr", &["$"]).unwrap().unwrap();
+        assert_eq!(result, "[]");
+    }
+
+    #[test]
+    fn test_json_arrtrim_non_array() {
+        let db = Db::open_memory().unwrap();
+
+        assert!(db.json_set("str", "$", r#""hello""#, false, false).unwrap());
+        let result = db.json_arrtrim("str", "$", 0, 2);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_json_arrtrim_nonexistent_key() {
+        let db = Db::open_memory().unwrap();
+
+        let result = db.json_arrtrim("nonexistent", "$", 0, 1);
+        assert!(result.is_err());
     }
 
 }

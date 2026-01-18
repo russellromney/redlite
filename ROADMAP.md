@@ -69,13 +69,13 @@ See [CHANGELOG.md](./CHANGELOG.md) for completed features.
 - [x] JSON.STRAPPEND - append to strings
 - [x] JSON.STRLEN - get string length
 
-#### Phase 5: Array Commands
-- [ ] JSON.ARRAPPEND - append to array
-- [ ] JSON.ARRINDEX - find index of value
-- [ ] JSON.ARRINSERT - insert at index
-- [ ] JSON.ARRLEN - get array length
-- [ ] JSON.ARRPOP - pop from array
-- [ ] JSON.ARRTRIM - trim array to range
+#### Phase 5: Array Commands - COMPLETE
+- [x] JSON.ARRAPPEND - append to array
+- [x] JSON.ARRINDEX - find index of value
+- [x] JSON.ARRINSERT - insert at index
+- [x] JSON.ARRLEN - get array length
+- [x] JSON.ARRPOP - pop from array
+- [x] JSON.ARRTRIM - trim array to range
 
 #### Phase 6: Object Commands
 - [ ] JSON.OBJKEYS - get object keys
